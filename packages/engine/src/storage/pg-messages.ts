@@ -67,18 +67,25 @@ export function insertMessage(
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
     createdAt?: string;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   },
 ): void {
   const msgs = ctx.cache.messages.get(msg.sessionId) ?? [];
   const id = msg.id ?? crypto.randomUUID();
   const now = new Date().toISOString();
   const existingIdx = msgs.findIndex((m) => m.id === id);
+  const platformMessageIdsJson = msg.platformMessageIds != null ? JSON.stringify(msg.platformMessageIds) : null;
   const row = {
     id, sessionId: msg.sessionId, role: msg.role, content: msg.content,
     toolCalls: msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : undefined,
     tokenCount: msg.tokenCount ?? 0, createdAt: msg.createdAt ?? now,
     parts: msg.parts,
     metadata: msg.metadata,
+    platformMessageId: msg.platformMessageId ?? null,
+    platformMessageIds: msg.platformMessageIds ?? null,
+    platformChatId: msg.platformChatId ?? null,
   };
   if (existingIdx >= 0) {
     const prev = msgs[existingIdx]!;
@@ -88,21 +95,27 @@ export function insertMessage(
       createdAt: prev.createdAt,
       parts: msg.parts ?? prev.parts,
       metadata: msg.metadata ?? prev.metadata,
+      platformMessageId: msg.platformMessageId ?? prev.platformMessageId ?? null,
+      platformMessageIds: msg.platformMessageIds ?? prev.platformMessageIds ?? null,
+      platformChatId: msg.platformChatId ?? prev.platformChatId ?? null,
     };
   } else {
     msgs.push(row);
   }
   ctx.cache.messages.set(msg.sessionId, msgs);
   ctx.write(
-    `INSERT INTO messages (id,session_id,role,content,tool_calls,token_count,plan,parts,metadata,created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+    `INSERT INTO messages (id,session_id,role,content,tool_calls,token_count,plan,parts,metadata,created_at,platform_message_id,platform_message_ids,platform_chat_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),$10,$11,$12)
      ON CONFLICT (id) DO UPDATE SET
        content = EXCLUDED.content,
        tool_calls = COALESCE(EXCLUDED.tool_calls, messages.tool_calls),
        token_count = EXCLUDED.token_count,
        plan = COALESCE(EXCLUDED.plan, messages.plan),
        parts = COALESCE(EXCLUDED.parts, messages.parts),
-       metadata = COALESCE(EXCLUDED.metadata, messages.metadata)`,
+       metadata = COALESCE(EXCLUDED.metadata, messages.metadata),
+       platform_message_id = COALESCE(EXCLUDED.platform_message_id, messages.platform_message_id),
+       platform_message_ids = COALESCE(EXCLUDED.platform_message_ids, messages.platform_message_ids),
+       platform_chat_id = COALESCE(EXCLUDED.platform_chat_id, messages.platform_chat_id)`,
     [
       id, msg.sessionId, msg.role, msg.content,
       msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : null,
@@ -110,6 +123,9 @@ export function insertMessage(
       msg.plan || null,
       msg.parts ? JSON.stringify(msg.parts) : null,
       msg.metadata ? JSON.stringify(msg.metadata) : null,
+      msg.platformMessageId ?? null,
+      platformMessageIdsJson,
+      msg.platformChatId ?? null,
     ]
   );
 }
@@ -122,6 +138,9 @@ export function updateMessage(
     content?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   },
 ): void {
   const msgs = ctx.cache.messages.get(sessionId) ?? [];
@@ -133,6 +152,9 @@ export function updateMessage(
       content: patch.content ?? cur.content,
       parts: patch.parts ?? cur.parts,
       metadata: patch.metadata ?? cur.metadata,
+      platformMessageId: patch.platformMessageId ?? cur.platformMessageId ?? null,
+      platformMessageIds: patch.platformMessageIds ?? cur.platformMessageIds ?? null,
+      platformChatId: patch.platformChatId ?? cur.platformChatId ?? null,
     };
     ctx.cache.messages.set(sessionId, msgs);
   }
@@ -142,6 +164,9 @@ export function updateMessage(
   if (patch.content !== undefined) { sets.push(`content = $${n++}`); vals.push(patch.content); }
   if (patch.parts !== undefined) { sets.push(`parts = $${n++}`); vals.push(JSON.stringify(patch.parts)); }
   if (patch.metadata !== undefined) { sets.push(`metadata = $${n++}`); vals.push(JSON.stringify(patch.metadata)); }
+  if (patch.platformMessageId !== undefined) { sets.push(`platform_message_id = $${n++}`); vals.push(patch.platformMessageId); }
+  if (patch.platformMessageIds !== undefined) { sets.push(`platform_message_ids = $${n++}`); vals.push(patch.platformMessageIds != null ? JSON.stringify(patch.platformMessageIds) : null); }
+  if (patch.platformChatId !== undefined) { sets.push(`platform_chat_id = $${n++}`); vals.push(patch.platformChatId); }
   if (sets.length === 0) return;
   vals.push(messageId, sessionId);
   ctx.write(`UPDATE messages SET ${sets.join(', ')} WHERE id = $${n} AND session_id = $${n + 1}`, vals);
@@ -267,7 +292,10 @@ export async function getMessagesPage(
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const result = await ctx.pool.query(
     `SELECT id, session_id as "sessionId", role, content, tool_calls as "toolCalls",
-            token_count as "tokenCount", parts, metadata, created_at as "createdAt"
+            token_count as "tokenCount", parts, metadata, created_at as "createdAt",
+            platform_message_id as "platformMessageId",
+            platform_message_ids as "platformMessageIds",
+            platform_chat_id as "platformChatId"
      FROM messages
      WHERE session_id = $1
        AND role IN ('user', 'assistant')
@@ -293,7 +321,11 @@ export async function getMessagesPage(
     if (typeof metadata === 'string') {
       try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
     }
-    return { ...raw, parts, metadata } as unknown as Record<string, unknown>;
+    let platformMessageIds = raw['platformMessageIds'];
+    if (typeof platformMessageIds === 'string') {
+      try { platformMessageIds = JSON.parse(platformMessageIds); } catch { platformMessageIds = null; }
+    }
+    return { ...raw, parts, metadata, platformMessageIds: platformMessageIds ?? null } as unknown as Record<string, unknown>;
   });
   return { messages, total, hasMore };
 }

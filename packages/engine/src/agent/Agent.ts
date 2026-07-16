@@ -1991,7 +1991,17 @@ export class Agent {
       toolCalls: null,
       createdAt: new Date().toISOString(),
       tokenCount: 0,
-    };
+      ...(messagingChannelInbound && options?.sourceMessageId ? {
+        metadata: {
+          ...(options?.sourceChannel ? { channel: options.sourceChannel } : {}),
+          // Store platform IDs in metadata — persistUserMessage extracts these
+          // into dedicated DB columns (platform_message_id, platform_chat_id).
+          // Using Record<string, unknown> cast because MessageMetadata is strict.
+          ...({ platformMessageId: Number(options.sourceMessageId) } as Record<string, unknown>),
+          ...(options?.channelId ? { platformChatId: Number(options.channelId) } as Record<string, unknown> : {}),
+        } as Record<string, unknown>,
+      } : {}),
+    } as Message;
 
     if (!options?.retry && !options?.voiceContinuation) {
       if (!options?.userMessagePersisted) {

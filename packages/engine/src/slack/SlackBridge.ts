@@ -129,6 +129,21 @@ export class SlackBridge extends EventEmitter {
     );
 
     toolExecutor.setChannelPermissionRequestHandler(handler);
+
+    // Abort the active turn when a permission prompt times out — prevents prompt loops.
+    this.permissionCoordinator.onTimeout(() => {
+      if (agent.processing) {
+        agent.cancel();
+        const channel = this.lastChannelByUser.get(userId);
+        if (channel && this.app) {
+          void this.app.client.chat.postMessage({
+            channel,
+            thread_ts: this.lastThreadByUser.get(userId),
+            text: '⏱ Permission timed out — run stopped. Send a new message to resume.',
+          }).catch(() => {});
+        }
+      }
+    });
   }
 
   setAgentFactory(factory: (userId: string) => Agent): void {

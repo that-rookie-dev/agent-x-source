@@ -10,7 +10,6 @@ import { IconSparkles, tablerNavProps } from '../icons/tabler';
 // import ExtensionIcon from '@mui/icons-material/Extension';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-// import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
 import StorageIcon from '@mui/icons-material/Storage';
 import GroupsIcon from '@mui/icons-material/Groups';
@@ -54,7 +53,6 @@ const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
   // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
-  // { id: 'channels', icon: CellTowerIcon, label: 'Channels' },
 ];
 
 const MODE_CYCLE = ['dark', 'light', 'system'] as const;

@@ -17,6 +17,13 @@ export type MessagingPermissionSendPrompt = (
 ) => Promise<void>;
 
 /**
+ * Called when a permission prompt times out without a user response.
+ * The host should abort the active agent turn to prevent the agent from
+ * continuing and firing more permission prompts in a loop.
+ */
+export type MessagingPermissionTimeoutCallback = () => void;
+
+/**
  * Shared permission prompt lifecycle for Telegram, Slack, and Discord:
  * Allow Once / Always Allow / Deny / Instruct (custom text).
  */
@@ -24,6 +31,12 @@ export class MessagingPermissionCoordinator {
   private pending = new Map<string, (result: PermissionHandlerResult) => void>();
   private requesters = new Map<string, string>();
   private awaitingInstruct = new Map<string, string>();
+  private timeoutCallback?: MessagingPermissionTimeoutCallback;
+
+  /** Register a callback fired when a permission prompt times out without response. */
+  onTimeout(cb: MessagingPermissionTimeoutCallback): void {
+    this.timeoutCallback = cb;
+  }
 
   createHandler(
     sendPrompt: MessagingPermissionSendPrompt,
@@ -49,6 +62,9 @@ export class MessagingPermissionCoordinator {
           this.pending.delete(permId);
           this.requesters.delete(permId);
           this.clearInstructForPerm(permId);
+          // Fire the timeout callback so the host can abort the active turn,
+          // preventing the agent from continuing and firing more prompts.
+          try { this.timeoutCallback?.(); } catch { /* best-effort */ }
           resolve('deny');
         }, 120_000);
 

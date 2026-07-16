@@ -640,6 +640,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
     createdAt?: string;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   }): void {
     insertMessageImpl(this.messageCtx(), msg);
   }
@@ -648,6 +651,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
     content?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   }): void {
     updateMessageImpl(this.messageCtx(), sessionId, messageId, patch);
   }

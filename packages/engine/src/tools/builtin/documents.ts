@@ -1,8 +1,24 @@
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, isAbsolute } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { isAgentInternalPath } from '@agentx/shared';
+
+/**
+ * Resolve a user-supplied filename against the agent's scope path.
+ * Strips leading "/" from absolute paths so they are treated as relative
+ * to the workspace, preventing EROFS errors when the agent passes "/file.md".
+ * App-internal paths (data/tmp/files) are preserved as-is so internal file
+ * processing can use absolute paths to the Agent-X sandbox directories.
+ */
+function resolveScopedPath(scopePath: string, file: string): string {
+  if (isAbsolute(file) && isAgentInternalPath(file)) {
+    return resolve(file);
+  }
+  const safe = isAbsolute(file) ? file.slice(1) : file;
+  return resolve(scopePath, safe);
+}
 
 /**
  * Create a CSV file from structured data.
@@ -15,7 +31,7 @@ export async function csvCreate(args: Record<string, unknown>, context: ToolExec
 
   if (!file) return { success: false, output: 'file is required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
 
   if (content) {
@@ -57,7 +73,7 @@ export async function pdfCreate(args: Record<string, unknown>, context: ToolExec
 
   if (!file || !content) return { success: false, output: 'file and content required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
 
   const pdf = buildPdf(title, author, content);
@@ -76,7 +92,7 @@ export async function docxCreate(args: Record<string, unknown>, context: ToolExe
 
   if (!file || !content) return { success: false, output: 'file and content required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
 
   const docx = buildDocx(title, author, content);
@@ -95,7 +111,7 @@ export async function pptxCreate(args: Record<string, unknown>, context: ToolExe
   if (!file) return { success: false, output: 'file is required', error: 'MISSING_INPUT' };
   if (!slides || slides.length === 0) return { success: false, output: 'slides array required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
 
   const pptx = buildPptx(title, slides);
@@ -115,7 +131,7 @@ export async function xlsxCreate(args: Record<string, unknown>, context: ToolExe
   if (!file) return { success: false, output: 'file is required', error: 'MISSING_INPUT' };
   if (!headers || !rows) return { success: false, output: 'headers and rows required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
 
   const xlsx = buildXlsx(sheetName, headers, rows);
@@ -534,7 +550,7 @@ export async function pdfRead(args: Record<string, unknown>, context: ToolExecut
   const file = args['path'] as string ?? args['file'] as string;
   if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   if (!existsSync(filePath)) {
     return { success: false, output: `File not found: ${file}`, error: 'FILE_NOT_FOUND' };
   }
@@ -722,7 +738,7 @@ export async function docxRead(args: Record<string, unknown>, context: ToolExecu
   const file = args['path'] as string ?? args['file'] as string;
   if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   if (!existsSync(filePath)) {
     return { success: false, output: `File not found: ${file}`, error: 'FILE_NOT_FOUND' };
   }
@@ -757,7 +773,7 @@ export async function xlsxRead(args: Record<string, unknown>, context: ToolExecu
   const file = args['path'] as string ?? args['file'] as string;
   if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   if (!existsSync(filePath)) {
     return { success: false, output: `File not found: ${file}`, error: 'FILE_NOT_FOUND' };
   }
@@ -846,7 +862,7 @@ export async function pptxRead(args: Record<string, unknown>, context: ToolExecu
   const file = args['path'] as string ?? args['file'] as string;
   if (!file) return { success: false, output: 'path is required', error: 'MISSING_INPUT' };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   if (!existsSync(filePath)) {
     return { success: false, output: `File not found: ${file}`, error: 'FILE_NOT_FOUND' };
   }
@@ -982,7 +998,7 @@ export async function docMarkdown(args: Record<string, unknown>, context: ToolEx
     if (section.code) md += '```\n' + section.code + '\n```\n\n';
   }
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, md, 'utf-8');
   return { success: true, output: `Markdown written to ${file}` };
@@ -1011,7 +1027,7 @@ ${body}
 </body>
 </html>`;
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, html, 'utf-8');
   return { success: true, output: `HTML written to ${file}` };
@@ -1025,7 +1041,7 @@ export async function docJson(args: Record<string, unknown>, context: ToolExecut
     return { success: false, output: 'file and data are required', error: 'MISSING_INPUT' };
   }
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
   return { success: true, output: `JSON written to ${file}` };
@@ -1061,7 +1077,7 @@ export async function docYaml(args: Record<string, unknown>, context: ToolExecut
     }).join('\n');
   };
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, toYaml(data) + '\n', 'utf-8');
   return { success: true, output: `YAML written to ${file}` };
@@ -1075,7 +1091,7 @@ export async function docDiagram(args: Record<string, unknown>, context: ToolExe
     return { success: false, output: 'file and definition are required', error: 'MISSING_INPUT' };
   }
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, definition, 'utf-8');
   return { success: true, output: `Mermaid diagram written to ${file}\n\nTip: Use https://mermaid.live to render it.` };
@@ -1099,7 +1115,7 @@ export async function docLatex(args: Record<string, unknown>, context: ToolExecu
   }
   latex += '\\end{document}\n';
 
-  const filePath = resolve(context.scopePath, file);
+  const filePath = resolveScopedPath(context.scopePath, file);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, latex, 'utf-8');
   return { success: true, output: `LaTeX written to ${file}` };

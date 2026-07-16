@@ -18,7 +18,7 @@ import {
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
-import { getEngine, createAgent, destroyAgent } from './engine.js';
+import { getEngine, createAgent, destroyAgent, setCurrentClientSituation } from './engine.js';
 import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
@@ -361,7 +361,10 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
     case 'client_situation':
       if (session) {
         const situation = normalizeClientSituation(msg.clientSituation ?? msg);
-        if (situation) session.clientSituation = situation;
+        if (situation) {
+          session.clientSituation = situation;
+          setCurrentClientSituation(situation);
+        }
       }
       break;
     case 'session_end':

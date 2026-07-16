@@ -42,6 +42,12 @@ export interface StorableMessage extends RecordMeta, Record<string, unknown> {
   tokenCount: number;
   parts?: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
+  /** External platform message_id (e.g. Telegram message_id) for inbound user messages. */
+  platformMessageId?: number | null;
+  /** JSON array of external platform message_ids for multi-chunk assistant replies. */
+  platformMessageIds?: number[] | null;
+  /** External platform chat/channel ID (e.g. Telegram chat_id). */
+  platformChatId?: number | null;
 }
 
 export interface StorableMessageInput {
@@ -53,6 +59,9 @@ export interface StorableMessageInput {
   parts?: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
   updatedAt?: string;
+  platformMessageId?: number | null;
+  platformMessageIds?: number[] | null;
+  platformChatId?: number | null;
 }
 
 export interface StorableTokenLog extends RecordMeta {
@@ -140,6 +149,9 @@ export interface StorageAdapter {
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
     createdAt?: string;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   }): void;
 
   insertPart?(sessionId: string, part: {
@@ -200,7 +212,14 @@ export interface StorageAdapter {
   updateMessage?(
     sessionId: string,
     messageId: string,
-    patch: { content?: string; parts?: Array<Record<string, unknown>>; metadata?: Record<string, unknown> },
+    patch: {
+      content?: string;
+      parts?: Array<Record<string, unknown>>;
+      metadata?: Record<string, unknown>;
+      platformMessageId?: number | null;
+      platformMessageIds?: number[] | null;
+      platformChatId?: number | null;
+    },
   ): void;
 
   /** Checkpoints (optional — primarily Postgres-backed). */

@@ -1,6 +1,7 @@
 import {
   isChannelSessionId,
   normalizePermissionHandlerResult,
+  isAgentInternalPath,
   type PermissionDecision,
   type PermissionRule,
   type ToolDefinition,
@@ -12,6 +13,20 @@ import { isIntegrationToolId } from '../../integrations/action-classifier.js';
 import { buildIntegrationActionPreview } from '../../integrations/action-preview.js';
 import type { ToolRegistry } from '../../tools/ToolRegistry.js';
 import type { PermissionPromptHook, PermissionRequestHandler } from '../../tools/ToolExecutor.js';
+
+const PATH_KEYS = ['path', 'filePath', 'file', 'target', 'from', 'to', 'cwd', 'output', 'source', 'archive', 'file1', 'file2', 'database'];
+
+function allPathsAreAgentInternal(args: Record<string, unknown>): boolean {
+  let hasPath = false;
+  for (const key of PATH_KEYS) {
+    const val = args[key];
+    if (typeof val === 'string' && val.trim()) {
+      hasPath = true;
+      if (!isAgentInternalPath(val)) return false;
+    }
+  }
+  return hasPath;
+}
 
 export interface PermissionResult {
   decision: 'allow' | 'allow_once' | 'allow_always' | 'deny' | 'ask';
@@ -72,6 +87,11 @@ export class ToolPermissionService {
 
     const permissionExempt = isPermissionExemptTool(toolId);
     if (permissionExempt || ruleResult === 'allow') {
+      return { decision: 'allow' };
+    }
+
+    // Internal app files/tmp are app-owned scratch/deliverable directories — never prompt.
+    if (allPathsAreAgentInternal(args)) {
       return { decision: 'allow' };
     }
 

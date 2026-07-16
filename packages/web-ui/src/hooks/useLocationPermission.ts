@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   formatResolvedLocationLabel,
   resolveClientLocation,
+  resolvedLocationToSituation,
   type LocationUiState,
   type ResolvedClientLocation,
 } from '../utils/resolve-client-location';
@@ -71,6 +72,10 @@ export function useLocationPermission(autoRequest = true) {
     () => (resolved ? formatResolvedLocationLabel(resolved) : 'Requesting permission…'),
     [resolved],
   );
+  const clientSituation = useMemo(
+    () => (resolved ? resolvedLocationToSituation(resolved) : null),
+    [resolved],
+  );
 
   return {
     state,
@@ -80,6 +85,7 @@ export function useLocationPermission(autoRequest = true) {
     locationMethod: resolved?.locationMethod,
     vpnSuspected: resolved?.vpnSuspected ?? false,
     resolved: state !== 'checking',
+    clientSituation,
     refresh,
   };
 }

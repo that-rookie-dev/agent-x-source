@@ -1,12 +1,29 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, statSync, renameSync, rmSync, cpSync, copyFileSync } from 'node:fs';
-import { resolve, dirname, basename, extname } from 'node:path';
+import { resolve, dirname, basename, extname, isAbsolute } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { isAgentInternalPath } from '@agentx/shared';
 import { IS_WINDOWS } from '../platform.js';
 import { getAICommentMarker } from './markers.js';
 
+/**
+ * Resolve a user-supplied path against the agent's scope path.
+ * Strips leading "/" from absolute paths so they are treated as relative
+ * to the workspace, preventing the agent from escaping scope when it
+ * passes "/file.md" or "/etc/passwd" instead of "file.md".
+ * App-internal paths (data/tmp/files) are preserved as-is so internal file
+ * processing can use absolute paths to the Agent-X sandbox directories.
+ */
+function resolveScopedPath(scopePath: string, file: string): string {
+  if (isAbsolute(file) && isAgentInternalPath(file)) {
+    return resolve(file);
+  }
+  const safe = isAbsolute(file) ? file.slice(1) : file;
+  return resolve(scopePath, safe);
+}
+
 export async function fileRead(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const filePath = resolve(context.scopePath, args['path'] as string);
+  const filePath = resolveScopedPath(context.scopePath, args['path'] as string);
   try {
     const content = readFileSync(filePath, 'utf-8');
     const MAX_CHARS = 50000;
@@ -35,7 +52,7 @@ export async function fileRead(args: Record<string, unknown>, context: ToolExecu
 
 export async function fileWrite(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const rawPath = args['path'];
-  const filePath = resolve(context.scopePath, typeof rawPath === 'string' && rawPath.trim() ? rawPath : '.');
+  const filePath = resolveScopedPath(context.scopePath, typeof rawPath === 'string' && rawPath.trim() ? rawPath : '.');
   const rawContent = args['content'];
   if (typeof rawContent !== 'string') {
     return { success: false, output: 'Missing or invalid required argument: content', error: 'INVALID_ARGS' };
@@ -60,7 +77,7 @@ export async function fileWrite(args: Record<string, unknown>, context: ToolExec
 }
 
 export async function fileDelete(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const filePath = resolve(context.scopePath, args['path'] as string);
+  const filePath = resolveScopedPath(context.scopePath, args['path'] as string);
   try {
     if (!existsSync(filePath)) {
       return { success: false, output: 'File does not exist', error: 'NOT_FOUND' };
@@ -74,7 +91,7 @@ export async function fileDelete(args: Record<string, unknown>, context: ToolExe
 
 export async function folderCreate(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const rawPath = args['path'];
-  const dirPath = resolve(context.scopePath, typeof rawPath === 'string' && rawPath.trim() ? rawPath : '.');
+  const dirPath = resolveScopedPath(context.scopePath, typeof rawPath === 'string' && rawPath.trim() ? rawPath : '.');
   try {
     mkdirSync(dirPath, { recursive: true });
     return { success: true, output: `Created directory ${dirPath}` };
@@ -84,7 +101,7 @@ export async function folderCreate(args: Record<string, unknown>, context: ToolE
 }
 
 export async function folderDelete(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const dirPath = resolve(context.scopePath, args['path'] as string);
+  const dirPath = resolveScopedPath(context.scopePath, args['path'] as string);
   try {
     if (!existsSync(dirPath)) {
       return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
@@ -114,7 +131,7 @@ function formatDate(mtime: Date): string {
 }
 
 export async function folderList(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const dirPath = resolve(context.scopePath, (args['path'] as string) ?? '.');
+  const dirPath = resolveScopedPath(context.scopePath, (args['path'] as string) ?? '.');
   try {
     if (!existsSync(dirPath)) {
       return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
@@ -166,8 +183,8 @@ export async function folderList(args: Record<string, unknown>, context: ToolExe
 }
 
 export async function folderMove(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const source = resolve(context.scopePath, args['from'] as string);
-  const destination = resolve(context.scopePath, args['to'] as string);
+  const source = resolveScopedPath(context.scopePath, args['from'] as string);
+  const destination = resolveScopedPath(context.scopePath, args['to'] as string);
   try {
     if (!existsSync(source)) {
       return { success: false, output: 'Source does not exist', error: 'NOT_FOUND' };
@@ -183,7 +200,7 @@ export async function folderMove(args: Record<string, unknown>, context: ToolExe
 export async function fileFind(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const pattern = args['pattern'] as string;
   const searchPath = (args['path'] as string) ?? '.';
-  const cwd = resolve(context.scopePath, searchPath);
+  const cwd = resolveScopedPath(context.scopePath, searchPath);
 
   try {
     const escaped = pattern.replace(/"/g, '\\"');
@@ -202,8 +219,8 @@ export async function fileFind(args: Record<string, unknown>, context: ToolExecu
 }
 
 export async function fileCopy(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const from = resolve(context.scopePath, args['from'] as string);
-  const to = resolve(context.scopePath, args['to'] as string);
+  const from = resolveScopedPath(context.scopePath, args['from'] as string);
+  const to = resolveScopedPath(context.scopePath, args['to'] as string);
   try {
     if (!existsSync(from)) {
       return { success: false, output: 'Source does not exist', error: 'NOT_FOUND' };
@@ -222,8 +239,8 @@ export async function fileCopy(args: Record<string, unknown>, context: ToolExecu
 }
 
 export async function fileDiff(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const file1 = resolve(context.scopePath, args['file1'] as string);
-  const file2 = resolve(context.scopePath, args['file2'] as string);
+  const file1 = resolveScopedPath(context.scopePath, args['file1'] as string);
+  const file2 = resolveScopedPath(context.scopePath, args['file2'] as string);
   if (!existsSync(file1)) return { success: false, output: `File not found: ${file1}`, error: 'NOT_FOUND' };
   if (!existsSync(file2)) return { success: false, output: `File not found: ${file2}`, error: 'NOT_FOUND' };
   try {
@@ -240,7 +257,7 @@ export async function fileDiff(args: Record<string, unknown>, context: ToolExecu
 }
 
 export async function fileMetadata(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const filePath = resolve(context.scopePath, args['path'] as string);
+  const filePath = resolveScopedPath(context.scopePath, args['path'] as string);
   if (!existsSync(filePath)) {
     return { success: false, output: 'Path does not exist', error: 'NOT_FOUND' };
   }
@@ -263,7 +280,7 @@ export async function fileMetadata(args: Record<string, unknown>, context: ToolE
 }
 
 export async function fileOpen(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const filePath = resolve(context.scopePath, args['path'] as string);
+  const filePath = resolveScopedPath(context.scopePath, args['path'] as string);
   if (!existsSync(filePath)) {
     return { success: false, output: 'File does not exist', error: 'NOT_FOUND' };
   }
@@ -323,7 +340,7 @@ function buildTree(
 }
 
 export async function folderTree(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const dirPath = resolve(context.scopePath, (args['path'] as string) ?? '.');
+  const dirPath = resolveScopedPath(context.scopePath, (args['path'] as string) ?? '.');
   const depth = Math.min((args['depth'] as number) ?? 3, 6);
   if (!existsSync(dirPath)) {
     return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
@@ -339,7 +356,7 @@ export async function folderTree(args: Record<string, unknown>, context: ToolExe
 }
 
 export async function folderOpen(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const dirPath = resolve(context.scopePath, args['path'] as string);
+  const dirPath = resolveScopedPath(context.scopePath, args['path'] as string);
   if (!existsSync(dirPath)) {
     return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
   }
@@ -353,8 +370,8 @@ export async function folderOpen(args: Record<string, unknown>, context: ToolExe
 }
 
 export async function archiveCreate(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const output = resolve(context.scopePath, args['output'] as string);
-  const source = (args['source'] as string).split(' ').map(s => resolve(context.scopePath, s));
+  const output = resolveScopedPath(context.scopePath, args['output'] as string);
+  const source = (args['source'] as string).split(' ').map(s => resolveScopedPath(context.scopePath, s));
   const format = (args['format'] as string) ?? 'tar.gz';
   try {
     for (const src of source) {
@@ -377,8 +394,8 @@ export async function archiveCreate(args: Record<string, unknown>, context: Tool
 }
 
 export async function archiveExtract(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const archive = resolve(context.scopePath, args['archive'] as string);
-  const outputDir = args['output'] ? resolve(context.scopePath, args['output'] as string) : dirname(archive) + '/' + basename(archive).replace(/\.(tar\.gz|tgz|zip)$/, '');
+  const archive = resolveScopedPath(context.scopePath, args['archive'] as string);
+  const outputDir = args['output'] ? resolveScopedPath(context.scopePath, args['output'] as string) : dirname(archive) + '/' + basename(archive).replace(/\.(tar\.gz|tgz|zip)$/, '');
   if (!existsSync(archive)) {
     return { success: false, output: 'Archive not found', error: 'NOT_FOUND' };
   }
@@ -424,7 +441,7 @@ export async function fileReadBatch(
   for (let i = 0; i < Math.min(paths.length, maxFiles); i++) {
     const rel = String(paths[i]);
     try {
-      const filePath = resolve(context.scopePath, rel);
+      const filePath = resolveScopedPath(context.scopePath, rel);
       const content = readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
       files.push({

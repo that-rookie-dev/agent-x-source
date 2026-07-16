@@ -50,7 +50,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   private permissionCoordinator = new MessagingPermissionCoordinator();
   private channelPermissionHandler: PermissionRequestHandler | null = null;
   private pendingResponses = new Map<string, (text: string) => void>();
-  private messageQueue: Array<{ text: string; chatId: number; voiceReply?: boolean }> = [];
+  private messageQueue: Array<{ text: string; chatId: number; voiceReply?: boolean; platformMessageId?: number }> = [];
   private static readonly MAX_QUEUE_DEPTH = 25;
   /** Base turn timeout — scheduling/automation turns need more than 2 minutes. */
   private static readonly TURN_TIMEOUT_MS = 300_000;
@@ -402,6 +402,20 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
     toolExecutor.setChannelPermissionRequestHandler(this.channelPermissionHandler);
 
+    // When a permission prompt times out (user didn't respond in 120s), abort the
+    // entire agent turn. This prevents the agent from continuing and firing more
+    // permission prompts in a loop — which is the #1 source of prompt spam on channels.
+    this.permissionCoordinator.onTimeout(() => {
+      const chatId = activeChatId();
+      if (this.agent?.processing) {
+        getLogger().info('TELEGRAM', `Permission timed out — aborting active turn chat=${chatId ?? 'unknown'}`);
+        this.agent.cancel();
+        if (chatId != null) {
+          void this.bridge.sendToChat(chatId, '⏱ Permission timed out — run stopped. Send a new message to resume.').catch(() => {});
+        }
+      }
+    });
+
     this.bridge.onCallback('perm', (data: string, chatId: number, fromUserId?: number) => {
       const parts = data.split(':');
       const permId = parts[1];
@@ -553,13 +567,24 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   }
 
   private setupMessageHandling(): void {
-    this.bridge.setMessageHandler((text: string, chatId: number) => {
-      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}`);
+    this.bridge.setMessageHandler((text: string, chatId: number, messageId?: number) => {
+      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}${messageId != null ? ` msgId=${messageId}` : ''}`);
       try {
         this.trackActiveChat(chatId);
         this.focusManager?.onActivity('telegram');
       } catch (e) {
         getLogger().warn('TELEGRAM', `Inbound setup skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      // "stop" / "abort" / "cancel" as a plain text message cancels the active run.
+      // This is in addition to the /cancel slash command — users on mobile often
+      // type "stop" without the slash prefix.
+      const trimmed = text.trim().toLowerCase();
+      if ((trimmed === 'stop' || trimmed === 'abort' || trimmed === 'cancel') && this.agent?.processing) {
+        getLogger().info('TELEGRAM', `Stop command received — cancelling active run chat=${chatId}`);
+        this.agent.cancel();
+        void this.bridge.sendToChat(chatId, '⏹ Stopped. Send a new message when you\'re ready.').catch(() => {});
+        return;
       }
 
       const userKey = this.telegramUserKey(chatId);
@@ -581,23 +606,23 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         getLogger().warn('TELEGRAM', `Clarification waiter stale chat=${chatId} — enqueueing as new message`);
       }
 
-      this.enqueueMessage(text, chatId);
+      this.enqueueMessage(text, chatId, false, messageId);
     });
   }
 
-  private enqueueMessage(text: string, chatId: number, voiceReply = false): void {
+  private enqueueMessage(text: string, chatId: number, voiceReply = false, platformMessageId?: number): void {
     if (this.messageQueue.length >= TelegramChannelPlugin.MAX_QUEUE_DEPTH) {
       void this.bridge.sendToChat(chatId, '⚠️ Too many pending messages. Please wait for the current request to finish.');
       return;
     }
-    this.messageQueue.push({ text, chatId, voiceReply });
+    this.messageQueue.push({ text, chatId, voiceReply, platformMessageId });
     void this.processQueue().catch((e) => {
       getLogger().error('TELEGRAM', `Inbound queue failed: ${e instanceof Error ? e.message : String(e)}`);
     });
   }
 
   private async dispatchInbound(
-    item: { text: string; chatId: number; voiceReply?: boolean },
+    item: { text: string; chatId: number; voiceReply?: boolean; platformMessageId?: number },
     agent: Agent,
     attempt = 0,
   ): Promise<Message> {
@@ -642,6 +667,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         void agent.sendMessage(item.text, {
           sourceChannel: 'telegram',
           channelId: String(item.chatId),
+          sourceMessageId: item.platformMessageId != null ? String(item.platformMessageId) : undefined,
         })
           .then(resolve)
           .catch(reject);
@@ -739,14 +765,26 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           const response = await this.dispatchInbound(item, agent);
           const text = extractAssistantReplyText(response);
           getLogger().info('TELEGRAM', `Reply ready chat=${item.chatId} len=${text.length}`);
+          let replyMessageIds: number[] = [];
           if (text) {
             if (item.voiceReply) {
               await this.sendVoiceReply(item.chatId, text);
             } else {
-              await this.bridge.sendToChat(item.chatId, text);
+              replyMessageIds = await this.bridge.sendToChat(item.chatId, text);
             }
           } else {
-            await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
+            replyMessageIds = await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
+          }
+          // Persist the Telegram message_ids of the assistant reply so we can
+          // delete them from Telegram when the conversation is cleared.
+          if (replyMessageIds.length > 0 && response?.id) {
+            try {
+              const store = agent.sessionManager?.getStorageAdapter();
+              store?.updateMessage?.(agent.sessionId, response.id, {
+                platformMessageIds: replyMessageIds,
+                platformChatId: item.chatId,
+              });
+            } catch { /* best-effort */ }
           }
         } catch (err) {
           let errMsg = err instanceof Error ? err.message : String(err);

@@ -126,6 +126,21 @@ export class DiscordBridge {
     );
 
     toolExecutor.setChannelPermissionRequestHandler(handler);
+
+    // Abort the active turn when a permission prompt times out — prevents prompt loops.
+    this.permissionCoordinator.onTimeout(() => {
+      if (agent.processing) {
+        agent.cancel();
+        const channelId = this.lastChannelByUser.get(userId);
+        if (channelId && this.client) {
+          void this.client.channels.fetch(channelId).then((ch) => {
+            if (ch?.isTextBased()) {
+              void (ch as TextChannel).send('⏱ Permission timed out — run stopped. Send a new message to resume.').catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      }
+    });
   }
 
   attach(agent: Agent): void {

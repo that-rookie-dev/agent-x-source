@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { basename, extname } from 'node:path';
+import { basename, extname, resolve, isAbsolute } from 'node:path';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { isAgentInternalPath } from '@agentx/shared';
 import { getChannelServiceInstance } from '../../services/ServiceContext.js';
 import type { ChannelId, OutboundMessage } from '../../services/channel/IChannelService.js';
 
@@ -34,10 +35,21 @@ function mimeFromPath(filePath: string): string {
   return EXT_TO_MIME[ext] ?? 'application/octet-stream';
 }
 
-function readAttachment(filePath: string): { name: string; content: Buffer; contentType: string } {
-  const content = readFileSync(filePath);
-  const name = basename(filePath) || 'attachment';
-  return { name, content, contentType: mimeFromPath(filePath) };
+function resolveAttachmentPath(filePath: string, scopePath: string): string {
+  // App-internal paths (data/tmp/files) are always allowed — resolve them as-is.
+  if (isAbsolute(filePath) && isAgentInternalPath(filePath)) {
+    return filePath;
+  }
+  // Relative paths and workspace-scoped absolute paths resolve against the agent scope.
+  // ToolExecutor's ScopeGuard has already validated the path before this point.
+  return resolve(scopePath, filePath);
+}
+
+function readAttachment(filePath: string, scopePath: string): { name: string; content: Buffer; contentType: string } {
+  const resolved = resolveAttachmentPath(filePath, scopePath);
+  const content = readFileSync(resolved);
+  const name = basename(resolved) || 'attachment';
+  return { name, content, contentType: mimeFromPath(resolved) };
 }
 
 function buildOutboundMessage(
@@ -72,14 +84,21 @@ function resolveChannel(
   expectedChannel: ChannelId,
   explicitRecipient?: string,
 ): ResolvedChannel {
-  const channel = context.sourceChannel as ChannelId | undefined;
-  if (channel && channel !== expectedChannel) {
-    return { channel: expectedChannel, error: `This tool is for ${expectedChannel}; the active channel is ${channel}.` };
-  }
   if (!SUPPORTED_CHANNELS.includes(expectedChannel)) {
     return { channel: expectedChannel, error: `Unsupported channel: ${expectedChannel}` };
   }
-  const threadId = explicitRecipient ?? context.sourceThreadId;
+  const activeChannel = context.sourceChannel as ChannelId | undefined;
+  // Cross-channel routing: if the user explicitly asks to send to a DIFFERENT channel
+  // than the one they're on (e.g. "send to Telegram" while on Slack), allow it as long
+  // as a recipient/thread is provided. Only block if no recipient and channel mismatch.
+  if (activeChannel && activeChannel !== expectedChannel && !explicitRecipient) {
+    // Same-channel default: use the active thread
+    if (activeChannel && SUPPORTED_CHANNELS.includes(activeChannel)) {
+      // User is on a different channel — they need to specify a recipient for the target channel
+      return { channel: expectedChannel, error: `To send to ${expectedChannel} from ${activeChannel}, provide a recipient (chat_id, channel, or email address).` };
+    }
+  }
+  const threadId = explicitRecipient ?? (activeChannel === expectedChannel ? context.sourceThreadId : undefined);
   return { channel: expectedChannel, threadId };
 }
 
@@ -109,7 +128,7 @@ async function sendToChannel(
   let attachment: { name: string; content: Buffer; contentType: string } | undefined;
   if (attachmentPath) {
     try {
-      attachment = readAttachment(attachmentPath);
+      attachment = readAttachment(attachmentPath, context.scopePath);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return { success: false, output: `Failed to read attachment: ${msg}`, error: 'FILE_READ_ERROR' };

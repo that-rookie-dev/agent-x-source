@@ -7,6 +7,8 @@
 import { Router } from 'express';
 import { getLogger } from '@agentx/shared';
 import type { ProviderId } from '@agentx/shared';
+import { channelSessionIdForBinding, type ChannelBindingId } from '@agentx/shared';
+import { getActiveTelegramBridge } from '@agentx/engine';
 import { getEngine, ensureChannelAgent } from '../../engine.js';
 import {
   discoverTelegramBot,
@@ -433,6 +435,94 @@ export function createChannelsRouter(): Router {
     }
   });
 
+
+  // ═══ Channel conversation clear ═══
+  // Wipes all messages, tool executions, and agent memory for a specific channel
+  // session so the user can start fresh without any history context.
+  // For Telegram, also deletes the bot's messages from the Telegram chat using
+  // the stored platform message IDs (metadata.platformMessageIds / platformMessageId).
+  r.post('/api/channels/:channelId/clear', async (req, res) => {
+    try {
+      const channelId = req.params['channelId'] as ChannelBindingId;
+      const validChannels: ChannelBindingId[] = ['telegram', 'discord', 'slack', 'email'];
+      if (!validChannels.includes(channelId)) {
+        res.status(400).json({ error: `Invalid channel: ${channelId}` });
+        return;
+      }
+
+      const eng = getEngine();
+      const sessionId = channelSessionIdForBinding(channelId);
+      const logger = getLogger('channels');
+      const store = eng.sessionManager.getStorageAdapter();
+
+      // 1. Read messages BEFORE purging so we can extract platform message IDs
+      //    for deletion from the external channel (Telegram).
+      let deletedFromPlatform = 0;
+      if (channelId === 'telegram') {
+        const tgBridge = getActiveTelegramBridge();
+        if (tgBridge && store?.getMessages) {
+          const messages = store.getMessages(sessionId);
+          for (const msg of messages) {
+            const chatId = msg.platformChatId;
+            if (chatId == null || !Number.isFinite(chatId)) continue;
+            // Assistant replies store an array of message_ids (one per chunk).
+            const replyIds = msg.platformMessageIds;
+            if (replyIds && Array.isArray(replyIds)) {
+              for (const mid of replyIds) {
+                try { await tgBridge.deleteMessage(chatId, mid); deletedFromPlatform++; } catch { /* best-effort */ }
+              }
+            }
+            // User inbound messages store a single message_id.
+            const userMsgId = msg.platformMessageId;
+            if (userMsgId != null && Number.isFinite(userMsgId)) {
+              try { await tgBridge.deleteMessage(chatId, userMsgId); deletedFromPlatform++; } catch { /* best-effort */ }
+            }
+          }
+        }
+      }
+
+      // 2. Purge all session content from the DB (messages, parts, checkpoints, etc.)
+      if (store?.purgeSessionContent) {
+        store.purgeSessionContent(sessionId);
+      } else if (store?.deleteMessages) {
+        store.deleteMessages(sessionId);
+      }
+
+      // 3. Delete tool executions for this session
+      try {
+        (store as { query?: (sql: string, params: unknown[]) => void })?.query?.(
+          'DELETE FROM tool_executions WHERE session_id = $1',
+          [sessionId],
+        );
+      } catch {
+        // Some storage adapters may not expose raw query — try via pool if available
+        try {
+          const pool = (eng.sessionManager as unknown as { pool?: { query: (sql: string, params: unknown[]) => Promise<unknown> } }).pool;
+          if (pool) await pool.query('DELETE FROM tool_executions WHERE session_id = $1', [sessionId]);
+        } catch { /* best-effort */ }
+      }
+
+      // 4. Clear the in-memory agent history and evict from cache
+      const map = eng.channelAgents;
+      const cachedAgent = map?.get(channelId);
+      if (cachedAgent) {
+        cachedAgent.clearHistory();
+        cachedAgent.rebuildContext();
+        cachedAgent.rebuildSystemPrompt();
+        // Evict from cache so next access creates a fresh agent
+        map?.delete(channelId);
+        if (channelId === 'telegram') eng.channelAgent = null;
+      }
+
+      const platformNote = deletedFromPlatform > 0 ? ` (also deleted ${deletedFromPlatform} message(s) from Telegram)` : '';
+      logger.info('CHANNELS', `Cleared conversation for ${channelId} (session: ${sessionId})${platformNote}`);
+      res.json({ success: true, message: `Cleared all messages and tool executions for ${channelId}${platformNote}` });
+    } catch (e) {
+      const logger = getLogger('channels');
+      logger.warn('CHANNELS', `Failed to clear channel: ${e instanceof Error ? e.message : String(e)}`);
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to clear channel' });
+    }
+  });
 
   return r;
 }

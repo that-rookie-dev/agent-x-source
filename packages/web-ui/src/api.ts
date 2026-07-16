@@ -577,6 +577,12 @@ export const system = {
   dirs: (path?: string) => request<{ current: string; parent: string | null; dirs: Array<{ name: string; path: string }> }>(`/filesystem/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 };
 
+// ─── Client Situation (location + timezone) ───
+export const clientSituation = {
+  set: (situation: ClientSituation) => request<{ ok: boolean; situation: ClientSituation | null }>('/client-situation', { method: 'POST', body: JSON.stringify({ situation }) }),
+  get: () => request<{ situation: ClientSituation | null }>('/client-situation'),
+};
+
 // ─── Session Settings ───
 export type AgentMode = 'agent' | 'plan';
 
@@ -850,6 +856,8 @@ export const bridges = {
     stop: () => request<{ ok: boolean }>('/email/stop', { method: 'POST' }),
     status: () => request<BridgeStatus>('/email/status'),
   },
+  clearConversation: (channelId: string) =>
+    request<{ success: boolean; message: string }>(`/channels/${channelId}/clear`, { method: 'POST' }),
 };
 
 export interface TelegramDiscoverResponse {
@@ -1737,6 +1745,41 @@ export const localModel = {
     request<{ installed: string | null; activeModelId: string | null; enabled: boolean; model: { id: string; displayName: string; huggingFaceId: string; sizeGB: number; downloadedAt: string | null } | null }>(
       '/local-model/status',
     ),
+};
+
+// ─── Schema Migrations ───
+export interface AppliedMigrationInfo {
+  version: number;
+  name: string;
+  appliedAt: string;
+}
+
+export interface PendingMigrationInfo {
+  version: number;
+  name: string;
+}
+
+export interface MigrationStatus {
+  applied: AppliedMigrationInfo[];
+  pending: PendingMigrationInfo[];
+  currentVersion: number;
+  appliedVersion: number;
+  totalMigrations: number;
+  upToDate: boolean;
+}
+
+export interface MigrationRunResult {
+  ok: boolean;
+  applied: number;
+  skipped: number;
+  currentVersion: number;
+  appliedMigrations: AppliedMigrationInfo[];
+  error?: string;
+}
+
+export const migrations = {
+  status: () => request<MigrationStatus>('/migrations/status'),
+  run: () => request<MigrationRunResult>('/migrations/run', { method: 'POST' }),
 };
 
 export const voice = {

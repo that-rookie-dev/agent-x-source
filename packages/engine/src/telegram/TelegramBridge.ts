@@ -37,7 +37,7 @@ export class TelegramBridge {
   private connected = false;
   private commandHandler: ((cmd: string, args: string[], chatId: number) => Promise<string | null>) | null = null;
   private callbackHandlers: Map<string, (data: string, chatId: number, fromUserId?: number) => void> = new Map();
-  private messageHandler: ((text: string, chatId: number) => void) | null = null;
+  private messageHandler: ((text: string, chatId: number, messageId?: number) => void) | null = null;
   private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
   /** Fired once when the first private DM claims an empty allowlist (sole owner). */
   private ownerClaimHandler: ((userId: number, chatId: number) => void) | null = null;
@@ -75,8 +75,9 @@ export class TelegramBridge {
    * Register a message handler that intercepts ALL non-command messages.
    * When set, the bridge will NOT call agent.sendMessage directly — instead it delegates to this handler.
    * The handler is responsible for processing the message and sending a response.
+   * The messageId parameter is the Telegram message_id of the inbound user message.
    */
-  setMessageHandler(handler: (text: string, chatId: number) => void): void {
+  setMessageHandler(handler: (text: string, chatId: number, messageId?: number) => void): void {
     this.messageHandler = handler;
   }
 
@@ -416,7 +417,7 @@ export class TelegramBridge {
     // If a message handler is registered (e.g., daemon queue), delegate to it
     if (this.messageHandler) {
       await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
-      this.messageHandler(text, chatId);
+      this.messageHandler(text, chatId, msg.message_id as number | undefined);
       return;
     }
 
@@ -529,8 +530,8 @@ export class TelegramBridge {
   /**
    * Send a message to a specific chat (public API for daemon use).
    */
-  async sendToChat(chatId: number, text: string): Promise<void> {
-    await this.sendMessage(chatId, text);
+  async sendToChat(chatId: number, text: string): Promise<number[]> {
+    return this.sendMessage(chatId, text);
   }
 
   /** Refresh Telegram "typing…" indicator (expires after ~5s). */
@@ -659,10 +660,11 @@ export class TelegramBridge {
     return false;
   }
 
-  async sendMessage(chatId: number, text: string): Promise<void> {
+  async sendMessage(chatId: number, text: string): Promise<number[]> {
     // Use the TelegramRenderer for native MarkdownV2 formatting + chunking
     const renderer = getRenderer('telegram');
     const results = renderer.renderMarkdown(text);
+    const sentMessageIds: number[] = [];
 
     for (const result of results) {
       const payload = result.payload as { text: string; parse_mode?: string; reply_markup?: unknown };
@@ -681,11 +683,17 @@ export class TelegramBridge {
           if (!plain.ok) {
             throw new Error(plain.description ?? 'Failed to send Telegram message');
           }
+          const mid = plain.result?.message_id as number | undefined;
+          if (mid != null) sentMessageIds.push(mid);
         } else {
           throw new Error(apiResult.description ?? 'Failed to send Telegram message');
         }
+      } else {
+        const mid = apiResult.result?.message_id as number | undefined;
+        if (mid != null) sentMessageIds.push(mid);
       }
     }
+    return sentMessageIds;
   }
 
   /**

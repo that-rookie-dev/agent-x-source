@@ -8,9 +8,9 @@ import { Router } from 'express';
 import os from 'node:os';
 import { join } from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolveRuntimeSettings, getLogger } from '@agentx/shared';
+import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolveRuntimeSettings, getLogger, normalizeClientSituation } from '@agentx/shared';
 import type { AgentXConfig } from '@agentx/shared';
-import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings } from '../../engine.js';
+import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
 import { setIngestionAppVisible, getIngestionGovernorState } from '../../ingestion-governor.js';
 import { redactConfigForClient, mergeConfigPreservingSecrets } from '../../config-redaction.js';
 import { refreshIngestionWorkerGenerator } from '../../ingestion-worker-ref.js';
@@ -328,6 +328,30 @@ export function createSystemRouter(): Router {
       res.json({ ok: true });
     } catch (e) {
       res.status(400).json({ error: 'invalid-log-entry' });
+    }
+  });
+
+  // ─── Client Situation (location + timezone) ─────────────────────────
+  // The UI reports the user's device location/timezone at launch and whenever it changes.
+  // Channel agents (Telegram, Slack, Discord, email) use this as the source of truth
+  // because they don't receive per-turn clientSituation like the chat UI does.
+  r.post('/api/client-situation', (req, res) => {
+    try {
+      const situation = normalizeClientSituation(req.body?.situation ?? req.body);
+      setCurrentClientSituation(situation);
+      res.json({ ok: true, situation: getCurrentClientSituation() });
+    } catch (e: unknown) {
+      getLogger().error('POST_CLIENT_SITUATION', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'failed' });
+    }
+  });
+
+  r.get('/api/client-situation', (_req, res) => {
+    try {
+      res.json({ situation: getCurrentClientSituation() });
+    } catch (e: unknown) {
+      getLogger().error('GET_CLIENT_SITUATION', e instanceof Error ? e : String(e));
+      res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'failed' });
     }
   });
 

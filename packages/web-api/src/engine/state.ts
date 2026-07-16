@@ -38,7 +38,7 @@ import {
   type IJobQueue,
   type ServiceContext,
 } from '@agentx/engine';
-import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding } from '@agentx/shared';
+import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding, ClientSituation } from '@agentx/shared';
 import { resolveRuntimeSettings, getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -82,6 +82,8 @@ export interface EngineState {
   channelSessionBindings?: Partial<Record<ChannelBindingId, ChannelSessionBinding>>;
   /** Session-scoped agents for channel inbound (does not replace the active UI agent). */
   boundSessionAgents?: Map<string, Agent>;
+  /** Latest client situation from the app (location + timezone). Used by channel agents. */
+  clientSituation: ClientSituation | null;
   dek: Buffer | null;
   integrationHub: IntegrationHub;
 }
@@ -330,6 +332,7 @@ export function getEngine(): EngineState {
     emailBridge: null,
     redisRuntime: null,
     webhookRuntime: null,
+    clientSituation: null,
     dek: null,
     integrationHub,
   };
@@ -378,6 +381,22 @@ export function isStorageDeferred(): boolean {
 export async function awaitEngineStorageReady(): Promise<void> {
   const eng = getEngine();
   await eng.storageReady;
+}
+
+/** Store the latest client situation from the app UI (location + timezone). */
+export function setCurrentClientSituation(situation: ClientSituation | null): void {
+  const eng = getEngine();
+  eng.clientSituation = situation;
+  // Sync to the active UI agent and all channel agents so every surface uses the current app location.
+  if (eng.agent) eng.agent.setClientSituation(situation);
+  for (const agent of eng.channelAgents?.values() ?? []) {
+    agent.setClientSituation(situation);
+  }
+}
+
+/** Retrieve the latest client situation recorded from the app UI. */
+export function getCurrentClientSituation(): ClientSituation | null {
+  return getEngine().clientSituation;
 }
 
 export function setEngineDEK(dek: Buffer | null): void {

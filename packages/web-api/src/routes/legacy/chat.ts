@@ -6,7 +6,7 @@
  */
 import { Router } from 'express';
 import { getLogger, normalizeClientSituation } from '@agentx/shared';
-import { getEngine, getOrCreateAgent } from '../../engine.js';
+import { getEngine, getOrCreateAgent, setCurrentClientSituation } from '../../engine.js';
 import {
   runAgentTurnAsync,
   cancelActiveSessionTurn,
@@ -44,7 +44,11 @@ export function createChatRouter(): Router {
       };
       const clientSituation = normalizeClientSituation(clientSituationRaw);
       const eng = getEngine();
-      
+      if (clientSituation) {
+        // Keep the engine's source-of-truth location in sync for channel agents.
+        setCurrentClientSituation(clientSituation);
+      }
+
       // Auto-create agent if none exists
       if (!eng.agent) {
         getOrCreateAgent();
@@ -221,6 +225,7 @@ export function createChatRouter(): Router {
         clientSituation?: unknown;
       };
       const clientSituation = normalizeClientSituation(clientSituationRaw);
+      if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
       // Auto-create agent if none exists (first message in session)
       if (!eng.agent) {
@@ -371,6 +376,7 @@ export function createChatRouter(): Router {
         clientSituation?: unknown;
       };
       const clientSituation = normalizeClientSituation(clientSituationRaw);
+      if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
       const agent = eng.agent;
       if (!agent) { res.status(400).json({ error: 'no-session' }); return; }
@@ -423,6 +429,7 @@ export function createChatRouter(): Router {
         clientSituation?: unknown;
       };
       const clientSituation = normalizeClientSituation(clientSituationRaw);
+      if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
       const agent = eng.agent;
       if (!agent) { res.status(400).json({ error: 'no-session' }); return; }

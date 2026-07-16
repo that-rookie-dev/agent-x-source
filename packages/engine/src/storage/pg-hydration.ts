@@ -129,7 +129,10 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
 
     const messages = await ctx.pool.query(
       `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",
-              token_count as "tokenCount",parts,metadata,created_at as "createdAt"
+              token_count as "tokenCount",parts,metadata,created_at as "createdAt",
+              platform_message_id as "platformMessageId",
+              platform_message_ids as "platformMessageIds",
+              platform_chat_id as "platformChatId"
        FROM messages ORDER BY created_at ASC`,
     );
     for (const row of messages.rows) {
@@ -142,7 +145,12 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
       if (typeof metadata === 'string') {
         try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
       }
-      const msg = { ...raw, parts, metadata } as StorableMessage;
+      // Parse platform_message_ids JSON array if present
+      let platformMessageIds = raw['platformMessageIds'];
+      if (typeof platformMessageIds === 'string') {
+        try { platformMessageIds = JSON.parse(platformMessageIds); } catch { platformMessageIds = null; }
+      }
+      const msg = { ...raw, parts, metadata, platformMessageIds: platformMessageIds ?? null } as StorableMessage;
       const msgs = ctx.cache.messages.get(msg.sessionId) ?? [];
       msgs.push(msg);
       ctx.cache.messages.set(msg.sessionId, msgs);

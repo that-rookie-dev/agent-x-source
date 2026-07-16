@@ -16,6 +16,9 @@ import {
   healDatabaseStore,
   PostgresStorageAdapter,
   resetCatalogSeedInflight,
+  runMigrations,
+  MIGRATION_FILES,
+  type MigrationResult,
 } from '@agentx/engine';
 import { REDACTED_SECRET } from '../../config-redaction.js';
 import { startEmbeddedPostgresViaBridge } from '../../pg-lifecycle-bridge.js';
@@ -492,6 +495,102 @@ export function createSettingsRouter(): Router {
     } catch (e: unknown) {
       getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
       res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
+    }
+  });
+
+  // ═══ Migration status & upgrade ═══
+  // Returns which schema migrations are applied and which are pending.
+  // Used by the DockingStation upgrade UI to show pending migrations.
+  r.get('/api/migrations/status', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager?.getStorageAdapter() as PostgresStorageAdapter | undefined;
+      if (!store) {
+        res.status(503).json({ error: 'Storage not initialized' });
+        return;
+      }
+      const pool = store.getPool();
+      if (!pool) {
+        res.status(503).json({ error: 'Database pool not available' });
+        return;
+      }
+
+      // Query applied migrations from the tracking table
+      const { rows } = await pool.query<{ version: number; name: string; applied_at: string }>(
+        `SELECT version, name, applied_at FROM core_schema_migrations ORDER BY version ASC`,
+      );
+      const appliedSet = new Set(rows.map((r) => r.version));
+
+      const applied = rows.map((r) => ({
+        version: r.version,
+        name: r.name,
+        appliedAt: r.applied_at,
+      }));
+      const pending = MIGRATION_FILES
+        .filter((m) => !appliedSet.has(m.version))
+        .map((m) => ({
+          version: m.version,
+          name: m.name,
+        }));
+
+      const currentVersion = MIGRATION_FILES.length > 0
+        ? Math.max(...MIGRATION_FILES.map((m) => m.version))
+        : 0;
+      const appliedVersion = rows.length > 0
+        ? Math.max(...rows.map((r) => r.version))
+        : 0;
+
+      res.json({
+        applied,
+        pending,
+        currentVersion,
+        appliedVersion,
+        totalMigrations: MIGRATION_FILES.length,
+        upToDate: pending.length === 0,
+      });
+    } catch (e: unknown) {
+      getLogger().error('GET_API_MIGRATIONS_STATUS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'migration-status-failed' });
+    }
+  });
+
+  // Runs all pending schema migrations. Returns the result with details
+  // about which migrations were applied.
+  r.post('/api/migrations/run', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager?.getStorageAdapter() as PostgresStorageAdapter | undefined;
+      if (!store) {
+        res.status(503).json({ error: 'Storage not initialized' });
+        return;
+      }
+      const pool = store.getPool();
+      if (!pool) {
+        res.status(503).json({ error: 'Database pool not available' });
+        return;
+      }
+
+      const result: MigrationResult = await runMigrations(pool, MIGRATION_FILES, (line) => {
+        getLogger().info('MIGRATION_UPGRADE', line);
+      });
+
+      res.json({
+        ok: true,
+        applied: result.applied,
+        skipped: result.skipped,
+        currentVersion: result.currentVersion,
+        appliedMigrations: result.appliedMigrations.map((m) => ({
+          version: m.version,
+          name: m.name,
+          appliedAt: m.applied_at,
+        })),
+      });
+    } catch (e: unknown) {
+      getLogger().error('POST_API_MIGRATIONS_RUN', e instanceof Error ? e : String(e));
+      res.status(500).json({
+        ok: false,
+        error: e instanceof Error ? e.message : 'migration-run-failed',
+      });
     }
   });
 

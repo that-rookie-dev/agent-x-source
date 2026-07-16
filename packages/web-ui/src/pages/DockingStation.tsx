@@ -10,10 +10,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors, alphaColor } from '../theme';
 import { Footer } from '../components/Footer';
+import { MigrationUpgrade } from '../components/MigrationUpgrade';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { usePageVisible } from '../hooks/usePageVisible';
-import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
+import { webuiActive, agent, crewCatalog, crews, clientSituation as clientSituationApi, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
 function computeTotalCrewCatalogCount(
@@ -84,6 +85,7 @@ export function DockingStation() {
   const [rosterCrews, setRosterCrews] = useState<Crew[]>([]);
   const introStartedRef = useRef(false);
   const introPlayedRef = useRef(false);
+  const lastSentClientSituationRef = useRef<string | null>(null);
   const pageVisible = usePageVisible();
 
   useEffect(() => {
@@ -153,6 +155,16 @@ export function DockingStation() {
     return () => clearInterval(interval);
   }, [pageVisible]);
 
+  // Sync the app launch location/timezone to the server so channel agents (Telegram, Slack, etc.)
+  // use the same context as the desktop/web UI instead of stale or inferred location.
+  useEffect(() => {
+    if (!serverOnline || !location.clientSituation) return;
+    const key = `${location.clientSituation.latitude ?? 'x'},${location.clientSituation.longitude ?? 'x'},${location.clientSituation.locationLabel ?? 'x'},${location.clientSituation.timezone}`;
+    if (lastSentClientSituationRef.current === key) return;
+    lastSentClientSituationRef.current = key;
+    clientSituationApi.set(location.clientSituation).catch(() => {});
+  }, [serverOnline, location.clientSituation]);
+
   useEffect(() => {
     const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
     setLines(built);
@@ -219,6 +231,7 @@ export function DockingStation() {
         : 'On demand';
 
   return (
+    <MigrationUpgrade>
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column',
       overflow: 'hidden', bgcolor: colors.bg.primary,
@@ -482,6 +495,7 @@ export function DockingStation() {
 
       <Footer />
     </Box>
+    </MigrationUpgrade>
   );
 }
 

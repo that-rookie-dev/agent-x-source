@@ -27,7 +27,6 @@ function ChatPanelFallback() {
 // surface — they load on first navigation and stay cached afterwards.
 const ToolsPanel = lazy(() => import('../components/ToolsPanel').then(m => ({ default: m.ToolsPanel })));
 const PluginsPanel = lazy(() => import('../components/PluginsPanel').then(m => ({ default: m.PluginsPanel })));
-const ChannelsPanel = lazy(() => import('../components/ChannelsPanel').then(m => ({ default: m.ChannelsPanel })));
 const SettingsPanel = lazy(() => import('../components/SettingsPanel').then(m => ({ default: m.SettingsPanel })));
 const AutomationPanel = lazy(() => import('../components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
 const RagStudioPanel = lazy(() => import('../components/RagStudioPanel').then(m => ({ default: m.RagStudioPanel })));
@@ -38,7 +37,7 @@ const McpStorePage = lazy(() => import('../components/integrations/McpStorePage'
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
 const MarkdownPanel = lazy(() => import('../components/MarkdownPanel').then(m => ({ default: m.MarkdownPanel })));
 
-export type PanelId = 'dashboard' | 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown';
+export type PanelId = 'dashboard' | 'chat' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -202,7 +201,6 @@ export function Console() {
                 {activePanel === 'agent-x' && <AgentXCoreChat />}
                 {activePanel === 'tools' && <ToolsPanel />}
                 {activePanel === 'plugins' && <PluginsPanel />}
-                {activePanel === 'channels' && <ChannelsPanel />}
                 {activePanel === 'settings' && <SettingsPanel />}
                 {activePanel === 'automation' && <AutomationPanel />}
                 {activePanel === 'rag-studio' && <RagStudioPanel />}

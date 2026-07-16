@@ -304,13 +304,24 @@ export function createAiSdkTools(
   }
 
   // Helpers shared by dedicated tools and tool_call bridge (avoids toolkit stubs)
+  // Guard: only one ask_clarification per turn — additional calls in the same turn
+  // would overwrite the resolve/reject handlers and lose the first promise.
+  let clarificationInProgress = false;
   const runAskClarification = async (args: Record<string, unknown>): Promise<string> => {
-    const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
-    if (!shouldUseQuestionnaireClarification(questionnaire)) {
-      return `[TOOL ERROR] ${TEXT_CLARIFICATION_REJECTED_MESSAGE}`;
+    if (clarificationInProgress) {
+      return '[TOOL ERROR] Another clarification is already in progress this turn. Ask one question at a time — wait for the user to answer before asking the next.';
     }
-    const response = await waitForClarification(questionnaire);
-    return `User response: ${response}`;
+    clarificationInProgress = true;
+    try {
+      const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
+      if (!shouldUseQuestionnaireClarification(questionnaire)) {
+        return `[TOOL ERROR] ${TEXT_CLARIFICATION_REJECTED_MESSAGE}`;
+      }
+      const response = await waitForClarification(questionnaire);
+      return `User response: ${response}`;
+    } finally {
+      clarificationInProgress = false;
+    }
   };
 
   const runDelegateToSubagent = async (args: Record<string, unknown>): Promise<string> => {
