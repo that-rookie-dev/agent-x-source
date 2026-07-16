@@ -25,6 +25,7 @@ import { REDACTED_SECRET } from '../../config-redaction.js';
 import { startEmbeddedPostgresViaBridge } from '../../pg-lifecycle-bridge.js';
 import type { DbExtensionCheck } from '../../db-extension-checks.js';
 import { pathExists } from './shared.js';
+import { bootstrapAutomationFromEngine } from '../../automation/index.js';
 
 // ───── Module-local helpers (only used by settings/db routes) ─────
 
@@ -203,6 +204,29 @@ export function createSettingsRouter(): Router {
     }
   });
 
+  r.get('/api/settings/permissions/tools', (_req, res) => {
+    try {
+      const eng = getEngine();
+      const cfg = eng.configManager.load();
+      const overrides = cfg.permissions ?? {};
+      const allTools = eng.toolkit.registry.list();
+      const tools = allTools.map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        category: t.category,
+        riskLevel: t.riskLevel,
+        defaultDecision: (t.riskLevel === 'low' ? 'allow' : 'ask') as 'allow' | 'ask',
+        currentDecision: (overrides[t.id] ?? (t.riskLevel === 'low' ? 'allow' : 'ask')) as 'allow' | 'deny' | 'ask',
+        overridden: t.id in overrides,
+      }));
+      res.json({ tools, permissions: overrides });
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_PERMISSIONS_TOOLS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'permissions-tools-load-failed' });
+    }
+  });
+
   r.post('/api/settings/permissions', (req, res) => {
     try {
       const { permissions } = req.body as { permissions?: Record<string, unknown> };
@@ -311,6 +335,15 @@ export function createSettingsRouter(): Router {
         }
 
         await persistPostgresBackend(resolvedBackend, connectionString);
+      }
+
+      // Re-bootstrap automation in case it wasn't initialized at startup
+      // (e.g. first-run deferred config). Safe to call multiple times —
+      // it's a no-op if the service is already running.
+      try {
+        await bootstrapAutomationFromEngine();
+      } catch (e) {
+        getLogger().warn('SETTINGS_DB_UPDATE', `Automation bootstrap failed: ${e instanceof Error ? e.message : String(e)}`);
       }
 
       res.json({ ok: true, backend: resolvedBackend });
@@ -478,6 +511,18 @@ export function createSettingsRouter(): Router {
         return;
       }
       log('Storage provision complete.');
+
+      // Now that storage is ready and config is saved, bootstrap the automation
+      // service. This is critical for the first-run setup wizard flow: at initial
+      // startup the config isn't ready yet so bootstrapAutomationFromEngine() is
+      // a no-op. We retry here once the wizard has provisioned PostgreSQL.
+      try {
+        log('Initializing automation service…');
+        await bootstrapAutomationFromEngine();
+      } catch (e) {
+        logError('automation-bootstrap', e);
+      }
+
       send('complete', { ok: true, backend: resolvedBackend });
       res.end();
     } catch (e: unknown) {

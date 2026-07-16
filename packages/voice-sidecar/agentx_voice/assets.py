@@ -69,6 +69,21 @@ def _promote_tmp(tmp_target: Path, target: Path) -> None:
     tmp_target.rename(target)
 
 
+def _flatten_dir(root: Path) -> None:
+    """Move all files from subdirectories into the root directory, then remove empty dirs."""
+    for path in root.rglob("*"):
+        if path.is_file() and path.parent != root:
+            dest = root / path.name
+            shutil.move(str(path), str(dest))
+    # Remove now-empty subdirectories
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_dir():
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
+
 def copy_bundled_asset(asset_id: str, data_dir: Path, spec: dict[str, Any]) -> dict[str, object]:
     bundled = bundled_asset_dir(asset_id)
     if bundled is None:
@@ -135,7 +150,7 @@ def download_from_hf(spec: dict[str, Any], source: dict[str, Any], data_dir: Pat
                     if path.is_file()
                 )
                 if isinstance(expected_mb, (int, float)) and expected_mb > 0:
-                    pct = min(88, 20 + int((total / (expected_mb * 1024 * 1024)) * 68))
+                    pct = min(85, 10 + int((total / (expected_mb * 1024 * 1024)) * 75))
                     emit_progress(pct, f"Downloading {asset_id} · {total // (1024 * 1024)} MB")
                 else:
                     emit_progress(40, f"Downloading {asset_id} · {total // (1024 * 1024)} MB")
@@ -143,20 +158,29 @@ def download_from_hf(spec: dict[str, Any], source: dict[str, Any], data_dir: Pat
                 pass
             time.sleep(1.5)
 
-    emit_progress(15, f"Starting download for {asset_id}")
+    emit_progress(5, f"Starting download for {asset_id}")
     watcher = threading.Thread(target=watch_size, daemon=True)
     watcher.start()
     try:
-        snapshot_download(
-            repo_id=str(source["repo"]),
-            revision=str(source.get("revision") or "main"),
-            local_dir=str(tmp_target),
-            local_dir_use_symlinks=False,
-        )
+        download_kwargs: dict[str, Any] = {
+            "repo_id": str(source["repo"]),
+            "revision": str(source.get("revision") or "main"),
+            "local_dir": str(tmp_target),
+            "local_dir_use_symlinks": False,
+        }
+        # allow_patterns lets us download only specific files from large repos
+        # (e.g. a single voice from a multi-language repo).
+        allow_patterns = source.get("allowPatterns")
+        if isinstance(allow_patterns, list) and allow_patterns:
+            download_kwargs["allow_patterns"] = [str(p) for p in allow_patterns]
+        snapshot_download(**download_kwargs)
     finally:
         stop_event.set()
         watcher.join(timeout=2)
-    emit_progress(92, f"Finalizing {asset_id}")
+    emit_progress(90, f"Finalizing {asset_id}")
+    # If flatten is requested, move all files from subdirectories to the root of tmp_target
+    if source.get("flatten"):
+        _flatten_dir(tmp_target)
     _promote_tmp(tmp_target, target)
     return _finalize_asset(asset_id, spec, target)
 

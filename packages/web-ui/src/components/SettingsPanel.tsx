@@ -3,6 +3,10 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { PanelHeader } from './PanelHeader';
 import PersonIcon from '@mui/icons-material/Person';
@@ -71,6 +75,7 @@ export function SettingsPanel() {
   const [personaLoading, setPersonaLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [confirmSave, setConfirmSave] = useState(false);
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
 
@@ -90,12 +95,18 @@ export function SettingsPanel() {
     }
   }, [activeTab, persona]);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!cfg) return;
     if (persona && !persona.description?.trim()) {
       setMessage('description_required');
       return;
     }
+    setConfirmSave(true);
+  };
+
+  const executeSave = async () => {
+    if (!cfg) return;
+    setConfirmSave(false);
     setSaving(true); setMessage('');
     try {
       const { permissions, ...rest } = cfg;
@@ -251,6 +262,33 @@ export function SettingsPanel() {
           {saving ? 'Saving…' : 'Commit'}
         </Button>
       </Box>
+
+      <Dialog open={confirmSave} onClose={() => setConfirmSave(false)}
+        PaperProps={{ sx: { bgcolor: settingsTheme.bg.void, border: `1px solid ${settingsTheme.border.default}`, maxWidth: 420 } }}>
+        <DialogTitle sx={{ fontSize: '0.8rem', fontFamily: "'JetBrains Mono', monospace", color: settingsTheme.accent.hud, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
+          Save Configuration?
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.text.primary, ...settingsMonoSx, lineHeight: 1.6 }}>
+            This will apply all settings changes to the running agent, including tool permissions, model selection, channels, and persona.
+            Changes take effect immediately for new sessions.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button size="small" onClick={() => setConfirmSave(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim, '&:hover': { color: settingsTheme.text.primary } }}>
+            Cancel
+          </Button>
+          <Button size="small" variant="contained" onClick={executeSave}
+            sx={{
+              bgcolor: settingsTheme.accent.hud, color: settingsTheme.bg.void,
+              fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase',
+              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px',
+              '&:hover': { bgcolor: settingsTheme.accent.signal },
+            }}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

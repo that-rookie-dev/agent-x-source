@@ -468,6 +468,16 @@ export function BentoDashboard() {
                         </Typography>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        {s.turnStatus?.status === 'running' && (
+                          <Box sx={{
+                            px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
+                            fontFamily: MONO, fontWeight: 700, lineHeight: 1.2,
+                            bgcolor: alphaColor(colors.accent.blue, 0.15), color: colors.accent.blue,
+                            border: `1px solid ${alphaColor(colors.accent.blue, 0.3)}`,
+                          }}>
+                            RUNNING
+                          </Box>
+                        )}
                         {isActive && <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.green }} />}
                         <Typography sx={{ fontSize: '0.55rem', fontFamily: MONO, color: colors.text.dim }}>
                           {s.messageCount} msg

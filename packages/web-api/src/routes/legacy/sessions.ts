@@ -45,9 +45,19 @@ import {
   syncHostCrewHonorificToSession,
 } from '../../host-crew-session.js';
 import { getSessionDir, pathExists, ensureSessionDir, atomicWriteFileSync } from './shared.js';
+import { turnRegistry } from '../../turn-registry.js';
 
 export function createSessionsRouter(): Router {
   const r = Router();
+
+  /** Compute a lightweight turn-status snapshot for a session, if any active/recent turn exists. */
+  function getTurnStatusForSession(sessionId: string): { status: string; turnId: string; startedAt: number } | null {
+    try {
+      const rec = turnRegistry.getBySessionId(sessionId);
+      if (!rec) return null;
+      return { status: rec.status, turnId: rec.turnId, startedAt: rec.startedAt };
+    } catch { return null; }
+  }
 
   function resolveSessionAgent(sessionId: string): Agent | null {
     const eng = getEngine();
@@ -175,6 +185,7 @@ export function createSessionsRouter(): Router {
           hostCrewCatalogId: hostDisplay?.hostCrewCatalogId ?? null,
           hostCrewCategoryId: hostDisplay?.hostCrewCategoryId ?? null,
           crewId: hostCrewId,
+          turnStatus: getTurnStatusForSession(id),
         };
       });
 
@@ -641,6 +652,24 @@ export function createSessionsRouter(): Router {
         }));
       } catch { /* best-effort */ }
 
+      // Expose current turn state so the UI can show a "turn active" indicator
+      // when returning to a session whose agent is still processing in the
+      // background (e.g. after navigating away mid-turn).
+      let turnState: { phase: string; stage?: string; step?: number; turnId?: string | null; startedAt?: number | null } | null = null;
+      try {
+        const agent = eng.agent;
+        if (agent && agent.sessionId === sessionId) {
+          const snap = agent.getTurnStateSnapshot();
+          turnState = {
+            phase: snap.phase,
+            stage: snap.stage,
+            step: snap.step,
+            turnId: snap.turnId,
+            startedAt: snap.startedAt,
+          };
+        }
+      } catch { /* best-effort */ }
+
       res.json({
         session,
         messages,
@@ -651,6 +680,7 @@ export function createSessionsRouter(): Router {
         turnFeedback: loadTurnFeedbackForSession(eng, sessionId),
         resumeState,
         backgroundTasks,
+        turnState,
         messagesMeta: perRole != null ? { total: messageTotal, truncated: messagesTruncated, perRole } : undefined,
       });
     } catch (e: unknown) {

@@ -438,10 +438,11 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     setShowJumpPill, setHasOlderMessages,
     setSessionRestoring, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId,
     setParentSessionId, setCrewWorkers, setBypassPermissionsState,
+    setTurnActivity, setCurrentStep,
     currentSessionIdRef, cwdRef, chatReturnToRef, skipRestoreRef, pendingFolderActionRef, titleGeneratedRef,
     sessionRestoringRef, isInitialLoadRef, lastTurnFeedbackCandidateRef, rateLimitSeenRef,
     crewMissionSessionIdRef, tokenInputRef, tokenOutputRef, isAtBottomRef, messagesContainerRef,
-    jumpSuppressScrollTopRef, resetScrollState,
+    jumpSuppressScrollTopRef, turnActiveRef, activeTurnIdRef, resetScrollState,
   });
 
   const filteredSessionList = useMemo(() => {

@@ -192,11 +192,15 @@ export function createChatRouter(): Router {
       const unsubTurn = turnRegistry.subscribe(turn.turnId, finishTurn);
 
       req.on('close', () => {
+        // Client disconnected (e.g. navigated away from chat page).
+        // We intentionally do NOT cancel the agent here so that turns continue
+        // running in the background. The turn registry tracks completion and
+        // the UI re-syncs via /api/sessions/:id/restore + /api/agent/turn-state
+        // when the user returns to the chat.
         finished = true;
         unsubTurn();
         clearInterval(heartbeat);
         unsub();
-        try { agent.cancel(); } catch { /* ignore */ }
       });
 
       runAgentTurnAsync(agent, fullText, augmentedInstruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {

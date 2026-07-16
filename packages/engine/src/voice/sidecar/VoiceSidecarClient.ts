@@ -18,24 +18,19 @@ export interface VoiceSidecarClientOptions {
   baseUrl: string;
   authToken: string;
   timeoutMs?: number;
-  /** First StyleTTS load + synthesis can exceed the default request timeout. */
-  ttsTimeoutMs?: number;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-const DEFAULT_TTS_TIMEOUT_MS = 10 * 60_000;
 
 export class VoiceSidecarClient {
   private readonly baseUrl: string;
   private readonly authToken: string;
   private readonly timeoutMs: number;
-  private readonly ttsTimeoutMs: number;
 
   constructor(options: VoiceSidecarClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.authToken = options.authToken;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.ttsTimeoutMs = options.ttsTimeoutMs ?? DEFAULT_TTS_TIMEOUT_MS;
   }
 
   health(timeoutMs = 2_000): Promise<VoiceSidecarHealth> {
@@ -43,8 +38,7 @@ export class VoiceSidecarClient {
   }
 
   warm(request: VoiceSidecarWarmRequest): Promise<VoiceSidecarHealth> {
-    const timeoutMs = request.ttsEngine === 'styletts2' ? this.ttsTimeoutMs : 120_000;
-    return this.request<VoiceSidecarHealth>('POST', '/warm', request, timeoutMs);
+    return this.request<VoiceSidecarHealth>('POST', '/warm', request, 120_000);
   }
 
   transcribe(request: VoiceSidecarTranscribeRequest): Promise<VoiceSidecarTranscribeResponse> {
@@ -64,13 +58,11 @@ export class VoiceSidecarClient {
   }
 
   synthesize(request: VoiceSidecarSynthesizeRequest): Promise<VoiceSidecarSynthesizeResponse> {
-    const timeoutMs = request.engine === 'styletts2' ? this.ttsTimeoutMs : this.timeoutMs;
-    return this.request<VoiceSidecarSynthesizeResponse>('POST', '/tts/synthesize', request, timeoutMs);
+    return this.request<VoiceSidecarSynthesizeResponse>('POST', '/tts/synthesize', request, this.timeoutMs);
   }
 
   synthesizeStream(request: VoiceSidecarStreamSynthesizeRequest): Promise<VoiceSidecarStreamSynthesizeResponse> {
-    const timeoutMs = request.engine === 'styletts2' ? this.ttsTimeoutMs : this.timeoutMs;
-    return this.request<VoiceSidecarStreamSynthesizeResponse>('POST', '/tts/stream', request, timeoutMs);
+    return this.request<VoiceSidecarStreamSynthesizeResponse>('POST', '/tts/stream', request, this.timeoutMs);
   }
 
   async cancel(request: VoiceSidecarCancelRequest): Promise<void> {

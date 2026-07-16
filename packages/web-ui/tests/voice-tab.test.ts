@@ -16,12 +16,6 @@ describe('VoiceTab mergeVoiceConfig', () => {
     expect(cfg.mode?.channels).toBe('off');
   });
 
-  it('selects styletts2 default voice id when engine is styletts2', () => {
-    const cfg = mergeVoiceConfig({ tts: { engine: 'styletts2' } });
-    expect(cfg.tts?.engine).toBe('styletts2');
-    expect(cfg.tts?.voiceId).toBe('styletts2-default');
-  });
-
   it('keeps kokoro voice id for kokoro engine', () => {
     const cfg = mergeVoiceConfig({ tts: { engine: 'kokoro', voiceId: 'kokoro-bm' } });
     expect(cfg.tts?.voiceId).toBe('kokoro-bm');

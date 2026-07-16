@@ -33,7 +33,7 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
       engine: 'kokoro',
       fillerEngine: 'kokoro',
       ...input?.tts,
-      voiceId: input?.tts?.voiceId ?? ((input?.tts?.engine ?? 'kokoro') === 'styletts2' ? 'styletts2-default' : 'kokoro-af'),
+      voiceId: input?.tts?.voiceId ?? 'kokoro-af',
     },
     sidecar: { autoStart: false, idleUnloadMinutes: 5, ...input?.sidecar },
     fillers: { enabled: true, speakToolProgress: true, ...input?.fillers },
@@ -43,24 +43,16 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
 }
 
 export function applyVoicePreset(config: VoiceConfig): VoiceConfig {
-  // Preserve the user's TTS engine choice; only fill in defaults when unset.
-  const engine = config.tts?.engine ?? 'kokoro';
   return mergeVoiceConfig({
     ...config,
     enabled: true,
     stt: { modelId: 'faster-whisper-base.en', computeType: 'int8', device: 'auto' },
     tts: {
-      engine,
-      voiceId: config.tts?.voiceId ?? (engine === 'styletts2' ? 'styletts2-default' : 'kokoro-af'),
+      engine: 'kokoro',
+      voiceId: config.tts?.voiceId ?? 'kokoro-af',
       fillerEngine: 'kokoro',
     },
   });
-}
-
-export const STYLETTS2_ASSET_IDS = ['styletts2', 'styletts2-default'] as const;
-
-export function isStyleTts2Installed(installedIds: Set<string>): boolean {
-  return STYLETTS2_ASSET_IDS.every((id) => installedIds.has(id));
 }
 
 export function isVoiceKitReady(

@@ -7,22 +7,22 @@ import Collapse from '@mui/material/Collapse';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import LinearProgress from '@mui/material/LinearProgress';
 import Switch from '@mui/material/Switch';
-import ToggleButton from '@mui/material/ToggleButton';
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import MicIcon from '@mui/icons-material/Mic';
 import { voice, type VoiceCapabilityStatus, type VoiceConfig, type VoiceSetupStatus } from '../../api';
 import {
   applyVoicePreset,
-  isStyleTts2Installed,
   isVoiceKitReady,
   mergeVoiceConfig,
   VOICE_DEPLOY_STEPS,
 } from '../../voice/voice-config';
 import { VOICE_WARMUP_MIN_RAM_GB } from '@agentx/shared/browser';
 import { markVoiceOutputUnlocked } from '../../voice/support';
-import { useStyleTtsSupported, useVoiceWarmupSupported, useSystemCapabilities, useCapabilitiesReady } from '../../hooks/useSystemCapabilities';
+import { useVoiceWarmupSupported, useSystemCapabilities, useCapabilitiesReady } from '../../hooks/useSystemCapabilities';
+import {
+  useAllVoiceAssetDownloads,
+} from '../../hooks/useVoiceAssetDownloads';
 import {
   settingsBtnGhostSx,
   settingsBtnPrimarySx,
@@ -31,10 +31,10 @@ import {
   settingsOverlineSx,
   settingsStatusBadgeSx,
   settingsTheme,
-  settingsToggleGroupSx,
 } from '../../styles/settings-theme';
 import { SettingsCard } from './SettingsCard';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
+import { TtsModelRow } from './TtsModelRow';
 import { VoiceMicTestPanel } from '../VoiceMicTestPanel';
 import { useVoiceOptional } from '../voice/VoiceProvider';
 
@@ -79,10 +79,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [ttsDownloading, setTtsDownloading] = useState(false);
-  const [ttsDownloadProgress, setTtsDownloadProgress] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const styleTtsSupported = useStyleTtsSupported();
   const voiceWarmupSupported = useVoiceWarmupSupported();
   const systemCaps = useSystemCapabilities();
   const capabilitiesReady = useCapabilitiesReady();
@@ -92,7 +89,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const kitReady = isVoiceKitReady(installedAssetIds, capabilities);
   const sysStatus = voiceSysStatus(loading, kitReady, deploying, capabilities);
   const ttsEngine = voiceConfig.tts?.engine ?? 'kokoro';
-  const styleTtsReady = isStyleTts2Installed(installedAssetIds);
+  const kokoroInstalled = installedAssetIds.has('kokoro-82m');
 
   const load = async () => {
     setLoading(true);
@@ -118,6 +115,21 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     };
   }, []);
 
+  // Reload installed assets when any TTS download completes or errors
+  const allDownloads = useAllVoiceAssetDownloads();
+  const completedAssetIds = allDownloads.filter((d) => d.status === 'complete').map((d) => d.assetId);
+  const completedKey = completedAssetIds.join(',');
+  const seenCompletedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (completedKey === '') return;
+    const currentCompleted = new Set(completedAssetIds);
+    const newCompletions = [...currentCompleted].filter((id) => !seenCompletedRef.current.has(id));
+    if (newCompletions.length > 0) {
+      seenCompletedRef.current = currentCompleted;
+      void load();
+    }
+  }, [completedKey]);
+
   const patch = (patchValue: VoiceConfig) => {
     onChange(mergeVoiceConfig({
       ...voiceConfig,
@@ -139,14 +151,6 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       setError(err instanceof Error ? err.message : 'Failed to save voice settings');
     }
   };
-
-  useEffect(() => {
-    if (styleTtsSupported || ttsEngine !== 'styletts2') return;
-    void persistVoice({
-      ...voiceConfig,
-      tts: { ...voiceConfig.tts, engine: 'kokoro', voiceId: 'kokoro-af' },
-    });
-  }, [styleTtsSupported, ttsEngine]);
 
   useEffect(() => {
     if (!capabilitiesReady || voiceWarmupSupported || voiceConfig.sidecar?.autoStart !== true) return;
@@ -214,13 +218,14 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     setError(null);
     markVoiceOutputUnlocked();
     try {
-      if (ttsEngine === 'styletts2') {
-        await voice.installStyleTts();
-      }
+      // Generate a random greeting from the LLM, then speak it
+      const greeting = await voice.greeting();
+      const defaultVoiceId = 'kokoro-af';
       const result = await voice.preview(
-        'Voice comms online. Agent-X standing by.',
+        greeting.text,
         ttsEngine,
-        voiceConfig.tts?.voiceId ?? (ttsEngine === 'styletts2' ? 'styletts2-default' : 'kokoro-af'),
+        voiceConfig.tts?.voiceId ?? defaultVoiceId,
+        voiceConfig.tts?.style,
       );
       const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
       await audio.play();
@@ -231,54 +236,15 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     }
   };
 
-  const waitForAssetDownload = async (assetId: string): Promise<void> => {
-    for (;;) {
-      const status = await voice.downloadStatus(assetId);
-      if (status.status === 'complete') return;
-      if (status.status === 'error' || status.status === 'cancelled') {
-        throw new Error(status.error ?? `Download failed for ${assetId}`);
-      }
-      setTtsDownloadProgress(status.progress ?? 0);
-      await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
-    }
-  };
-
-  const switchTtsEngine = async (engine: 'kokoro' | 'styletts2') => {
+  const selectTtsEngine = async (engine: 'kokoro') => {
     if (engine === ttsEngine) return;
-    if (engine === 'styletts2' && !styleTtsSupported) return;
     setError(null);
-    if (engine === 'styletts2' && !styleTtsReady) {
-      setTtsDownloading(true);
-      setTtsDownloadProgress(0);
-      try {
-        if (!installedAssetIds.has('styletts2')) {
-          await voice.downloadAsset('styletts2');
-          await waitForAssetDownload('styletts2');
-        } else {
-          setTtsDownloadProgress(50);
-          await voice.installStyleTts();
-        }
-        await load();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'StyleTTS 2 setup failed');
-        setTtsDownloading(false);
-        return;
-      }
-      setTtsDownloading(false);
-    } else if (engine === 'styletts2') {
-      try {
-        await voice.installStyleTts();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'StyleTTS 2 runtime install failed');
-        return;
-      }
-    }
     await persistVoice({
       ...voiceConfig,
       tts: {
         ...voiceConfig.tts,
         engine,
-        voiceId: engine === 'styletts2' ? 'styletts2-default' : 'kokoro-af',
+        voiceId: 'kokoro-af',
       },
     });
   };
@@ -329,7 +295,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             </Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
-              TTS · {ttsEngine === 'styletts2' ? 'StyleTTS 2' : 'Kokoro'}
+              TTS · Kokoro
             </Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
@@ -520,47 +486,25 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
 
       {voiceConfig.enabled && (
       <SettingsCard title="Voice engine" subtitle="Speech synthesis model for spoken replies">
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          value={ttsEngine}
-          onChange={(_, next) => { if (next) void switchTtsEngine(next as 'kokoro' | 'styletts2'); }}
-          disabled={!kitReady || ttsDownloading}
-          sx={{ ...settingsToggleGroupSx, mb: 2 }}
-        >
-          <ToggleButton value="kokoro">Kokoro</ToggleButton>
-          {styleTtsSupported && <ToggleButton value="styletts2">StyleTTS 2</ToggleButton>}
-        </ToggleButtonGroup>
-        {ttsDownloading && (
-          <Box sx={{ mb: 1.5 }}>
-            <Typography sx={{ ...settingsHelperSx, mb: 0.5 }}>
-              Downloading StyleTTS 2 (~900 MB) · {Math.round(ttsDownloadProgress)}%
-            </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={ttsDownloadProgress}
-              sx={{
-                height: 4,
-                borderRadius: 1,
-                bgcolor: `${settingsTheme.border.default}`,
-                '& .MuiLinearProgress-bar': { bgcolor: settingsTheme.accent.hud },
-              }}
-            />
-          </Box>
-        )}
-        <Typography sx={{ ...settingsHelperSx, mb: 2 }}>
-          Kokoro is fast and lightweight (installed with the kit).
-          {styleTtsSupported
-            ? (styleTtsReady ? ' StyleTTS 2 is ready for more expressive speech.' : ' StyleTTS 2 downloads on first selection (~900 MB).')
-            : ' StyleTTS 2 requires 16 GB+ system RAM and is hidden on this machine.'}
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+        <TtsModelRow
+          name="Kokoro"
+          description="Fast, natural local TTS. Installed with the voice kit and used for fillers."
+          sizeMB={330}
+          installed={kokoroInstalled}
+          isDefault={ttsEngine === 'kokoro'}
+          canSelect={kitReady}
+          downloadAssetId={null}
+          onSelect={() => { void selectTtsEngine('kokoro'); }}
+          onDownload={() => {}}
+        />
+
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2, mb: 2 }}>
           <Button
             onClick={() => { void previewVoice(); }}
             disabled={previewing || !kitReady}
             sx={settingsBtnGhostSx}
           >
-            {previewing ? 'Transmitting…' : 'Test speaker'}
+            {previewing ? 'Generating…' : 'Test speaker'}
           </Button>
         </Box>
         <VoiceMicTestPanel compact />

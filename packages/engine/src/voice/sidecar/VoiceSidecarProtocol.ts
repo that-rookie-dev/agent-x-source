@@ -2,7 +2,7 @@ export type FasterWhisperComputeType = 'auto' | 'int8' | 'int8_float16' | 'float
 
 export type VoiceComputeDevice = 'auto' | 'cpu' | 'cuda';
 
-export type TtsEngine = 'kokoro' | 'styletts2';
+export type TtsEngine = 'kokoro';
 
 export interface VoiceSidecarHealth {
   ok: boolean;

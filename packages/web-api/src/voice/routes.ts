@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { resolve } from 'node:path';
 import { mkdirSync, readFileSync } from 'node:fs';
-import os from 'node:os';
-import { buildPublicSystemCapabilities } from '@agentx/shared';
-import { VOICE_ASSET_CATALOG, mergeVoiceConfig } from '@agentx/engine';
+import { VOICE_ASSET_CATALOG, mergeVoiceConfig, registerAliasAssets, loadVoiceModelsManifest } from '@agentx/engine';
 import { getEngine } from '../engine.js';
 import {
   voiceInfo,
@@ -14,7 +12,6 @@ import {
   voiceDataDir,
   getAssetManager,
   getVoiceSidecarManager,
-  ensureStyleTtsPythonInstalled,
   installVoiceDependencies,
 } from './shared.js';
 import {
@@ -63,10 +60,6 @@ function createVoiceRoutesRouter(): Router {
     if (!asset) {
       return res.status(404).json({ error: 'Voice asset not found' });
     }
-    if ((assetId === 'styletts2' || assetId === 'styletts2-default') &&
-      !buildPublicSystemCapabilities(os.totalmem()).styleTtsSupported) {
-      return res.status(400).json({ error: 'StyleTTS 2 requires at least 16 GB system RAM' });
-    }
 
     const existing = voiceJobStatuses.get(assetId);
     if (existing?.status === 'running') {
@@ -79,22 +72,20 @@ function createVoiceRoutesRouter(): Router {
         status: progress.status,
         progress: progress.progress,
         error: progress.error,
+        detail: progress.detail,
+        downloadedMB: progress.downloadedMB,
+        totalMB: progress.totalMB,
       });
     })
       .then(async (installed) => {
-        if (assetId === 'styletts2') {
-          try {
-            await ensureStyleTtsPythonInstalled();
-          } catch (error) {
-            voiceError('StyleTTS 2 Python install failed after model download', error, { assetId });
-            voiceJobStatuses.set(assetId, {
-              status: 'error',
-              error: formatExecError(error),
-            });
-            return;
-          }
-        }
         addDownloadedAsset(installed);
+        // Register alias assets (e.g. kokoro-af for kokoro-82m)
+        try {
+          const manifest = loadVoiceModelsManifest();
+          await registerAliasAssets(manifest, assetId, voiceDataDir(), getVoiceConfig, addDownloadedAsset);
+        } catch (error) {
+          voiceError('Failed to register alias assets after download', error, { assetId });
+        }
         voiceJobStatuses.set(assetId, { status: 'complete', progress: 100 });
       })
       .catch((error) => {
@@ -116,7 +107,9 @@ function createVoiceRoutesRouter(): Router {
 
   router.get('/voice/assets/download-status/:assetId', (req, res) => {
     const assetId = String(req.params.assetId ?? '');
-    const job = getAssetManager().getJob(assetId) ?? voiceJobStatuses.get(assetId);
+    // Check voiceJobStatuses first — it's always current for the specific download.
+    // getAssetManager().getJob() may have stale state from a previous download.
+    const job = voiceJobStatuses.get(assetId) ?? getAssetManager().getJob(assetId);
     res.json(job ?? { status: 'not_started' });
   });
 
@@ -156,15 +149,6 @@ function createVoiceRoutesRouter(): Router {
       });
 
     res.json({ ok: true, jobId, status: 'running' });
-  });
-
-  router.post('/voice/install-styletts', async (_req, res) => {
-    try {
-      await ensureStyleTtsPythonInstalled();
-      res.json({ ok: true });
-    } catch (error) {
-      res.status(500).json({ error: formatExecError(error) });
-    }
   });
 
   router.post('/voice/setup', (_req, res) => {
@@ -256,9 +240,38 @@ function createVoiceRoutesRouter(): Router {
     }
   });
 
+  router.post('/voice/greeting', async (_req, res) => {
+    try {
+      const engine = getEngine();
+      const config = engine.configManager.load();
+      const { createAiSdkModel } = await import('@agentx/engine');
+      const { generateText } = await import('ai');
+      const model = createAiSdkModel(config);
+      const result = await generateText({
+        model,
+        prompt: 'Generate a single short, friendly spoken greeting (1-2 sentences, under 30 words) as if you are an AI agent announcing that voice comms are online. Be creative and varied — do not repeat the same greeting. Output only the greeting text, no quotes or labels.',
+        temperature: 1.2,
+        maxOutputTokens: 60,
+      });
+      const greeting = result.text.trim().replace(/^["']|["']$/g, '').slice(0, 200);
+      res.json({ text: greeting });
+    } catch {
+      // Fallback greetings if LLM is not available
+      const fallbacks = [
+        'Voice comms online. Agent-X standing by.',
+        'Audio channel established. Ready when you are.',
+        'Voice systems activated. How can I help you today?',
+        'Speaker test complete. I can hear you loud and clear.',
+        'Voice link secured. What would you like to work on?',
+      ];
+      const greeting = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      res.json({ text: greeting, fallback: true });
+    }
+  });
+
   router.post('/voice/preview', async (req, res) => {
     const text = String(req.body?.text ?? '').trim();
-    const engine = req.body?.engine === 'styletts2' ? 'styletts2' : 'kokoro';
+    const engine = 'kokoro';
     const voiceId = typeof req.body?.voiceId === 'string' ? req.body.voiceId : undefined;
     if (!text) {
       return res.status(400).json({ error: 'Preview text is required' });
@@ -268,12 +281,6 @@ function createVoiceRoutesRouter(): Router {
     }
 
     try {
-      if (engine === 'styletts2') {
-        if (!buildPublicSystemCapabilities(os.totalmem()).styleTtsSupported) {
-          return res.status(400).json({ error: 'StyleTTS 2 requires at least 16 GB system RAM' });
-        }
-        await ensureStyleTtsPythonInstalled();
-      }
       const tmpDir = resolve(voiceDataDir(), 'tmp');
       mkdirSync(tmpDir, { recursive: true });
       const outputPath = resolve(tmpDir, `preview-${Date.now()}.wav`);
@@ -294,49 +301,6 @@ function createVoiceRoutesRouter(): Router {
       });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Voice preview failed' });
-    }
-  });
-
-  /** Generate a short greeting via the default LLM provider for TTS playback. */
-  router.post('/voice/greeting', async (req, res) => {
-    const callsign = String(req.body?.callsign ?? '').trim();
-    if (!callsign) {
-      return res.status(400).json({ error: 'Callsign is required' });
-    }
-    try {
-      const eng = getEngine();
-      const cfg = eng.configManager.load();
-      const providerId = cfg.provider.activeProvider;
-      if (!providerId) {
-        return res.json({ text: `Hello ${callsign}, Agent-X is online and ready.` });
-      }
-      const providerCfg = cfg.provider.providers[providerId];
-      const apiKey = providerCfg?.apiKey || providerCfg?.profiles?.[providerCfg?.activeProfile ?? '']?.apiKey;
-      if (!apiKey) {
-        return res.json({ text: `Hello ${callsign}, Agent-X is online and ready.` });
-      }
-      const { ProviderFactory } = await import('@agentx/engine');
-      const provider = ProviderFactory.create(providerId, apiKey, providerCfg?.baseUrl);
-      const modelId = cfg.provider.activeModel || 'gpt-4o-mini';
-
-      const prompt = `Generate a single short greeting sentence (max 20 words) welcoming the user to Agent-X.
-Address them as "${callsign}". Be warm, confident, and slightly sci-fi in tone.
-Output ONLY the greeting sentence — no quotes, no labels, no markdown.`;
-
-      const chunks: string[] = [];
-      for await (const chunk of provider.complete({
-        messages: [{ role: 'user', content: prompt }],
-        model: modelId,
-        stream: true,
-        maxTokens: 60,
-        temperature: 0.7,
-      })) {
-        if (chunk.type === 'text_delta' && chunk.content) chunks.push(chunk.content);
-      }
-      const text = chunks.join('').trim().replace(/^["']|["']$/g, '').slice(0, 200);
-      res.json({ text: text || `Hello ${callsign}, Agent-X is online and ready.` });
-    } catch {
-      res.json({ text: `Hello ${callsign}, Agent-X is online and ready.` });
     }
   });
 

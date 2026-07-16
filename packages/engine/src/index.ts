@@ -34,6 +34,7 @@ export { Agent, AgentFacade } from './agent/Agent.js';
 export type { AgentOptions } from './agent/Agent.js';
 export type { CheckpointAction, FailureRecord, TaskExecutorResult, TaskPlan, TaskStep } from './agent/TaskExecutor.js';
 export type { PartPersistFn } from './agent/AiSdkStreamHandler.js';
+export { createAiSdkModel } from './agent/AiSdkBridge.js';
 export { ResponseFormatter } from './agent/ResponseFormatter.js';
 export type { FormattedSegment } from './agent/ResponseFormatter.js';
 export { SubAgentManager } from './agent/SubAgentManager.js';

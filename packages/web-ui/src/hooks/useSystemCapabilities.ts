@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   isNeuralBrainSupported,
-  isStyleTtsSupported,
   isVoiceWarmupSupported,
 } from '@agentx/shared/browser';
 import { cachedApiCall } from '../perf/api-cache';
@@ -10,7 +9,6 @@ interface SystemCapabilitiesResponse {
   totalMemoryGB?: number;
   localModelSupported?: boolean;
   neuralBrainSupported?: boolean;
-  styleTtsSupported?: boolean;
   voiceWarmupSupported?: boolean;
 }
 
@@ -18,7 +16,6 @@ export interface SystemCapabilities {
   totalMemoryGB: number;
   localModelSupported: boolean;
   neuralBrainSupported: boolean;
-  styleTtsSupported: boolean;
   voiceWarmupSupported: boolean;
 }
 
@@ -30,7 +27,6 @@ export function useSystemCapabilities(): SystemCapabilities | null {
         totalMemoryGB,
         localModelSupported: window.agentx.localModelSupported,
         neuralBrainSupported: window.agentx.neuralBrainSupported ?? isNeuralBrainSupported(totalMemoryGB),
-        styleTtsSupported: window.agentx.styleTtsSupported ?? isStyleTtsSupported(totalMemoryGB),
         voiceWarmupSupported: window.agentx.voiceWarmupSupported ?? isVoiceWarmupSupported(totalMemoryGB),
       };
     }
@@ -49,9 +45,6 @@ export function useSystemCapabilities(): SystemCapabilities | null {
           neuralBrainSupported: typeof data.neuralBrainSupported === 'boolean'
             ? data.neuralBrainSupported
             : isNeuralBrainSupported(totalMemoryGB),
-          styleTtsSupported: typeof data.styleTtsSupported === 'boolean'
-            ? data.styleTtsSupported
-            : isStyleTtsSupported(totalMemoryGB),
           voiceWarmupSupported: typeof data.voiceWarmupSupported === 'boolean'
             ? data.voiceWarmupSupported
             : isVoiceWarmupSupported(totalMemoryGB),
@@ -62,7 +55,6 @@ export function useSystemCapabilities(): SystemCapabilities | null {
           totalMemoryGB: 0,
           localModelSupported: false,
           neuralBrainSupported: false,
-          styleTtsSupported: false,
           voiceWarmupSupported: false,
         });
       });
@@ -89,11 +81,6 @@ export function useNeuralBrainSupported(): boolean {
     return window.agentx.neuralBrainSupported;
   }
   return caps?.neuralBrainSupported ?? false;
-}
-
-export function useStyleTtsSupported(): boolean {
-  const caps = useSystemCapabilities();
-  return caps?.styleTtsSupported ?? (window.agentx?.styleTtsSupported ?? false);
 }
 
 export function useVoiceWarmupSupported(): boolean {

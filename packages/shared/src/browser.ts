@@ -152,12 +152,10 @@ export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNee
 
 export {
   NEURAL_BRAIN_MIN_RAM_GB,
-  STYLETTS2_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
   VOICE_WARMUP_MIN_RAM_GB,
   getSystemMemoryGB,
   isNeuralBrainSupported,
-  isStyleTtsSupported,
   isLocalModelSupported,
   isVoiceWarmupSupported,
   buildPublicSystemCapabilities,

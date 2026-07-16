@@ -77,13 +77,10 @@ async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabil
 
   const sttInstalled = selectedSttModelId ? isVoiceAssetInstalled(config, selectedSttModelId) : false;
   const kokoroInstalled = isVoiceAssetInstalled(config, 'kokoro-82m');
-  const styleTts2Installed = isVoiceAssetInstalled(config, 'styletts2');
   const selectedVoiceInstalled = selectedVoiceId ? isVoiceAssetInstalled(config, selectedVoiceId) : false;
-  const selectedTtsInstalled = selectedTtsEngine === 'styletts2'
-    ? styleTts2Installed && selectedVoiceInstalled
-    : kokoroInstalled && selectedVoiceInstalled;
+  const selectedTtsInstalled = kokoroInstalled && selectedVoiceInstalled;
   const vadInstalled = isVoiceAssetInstalled(config, 'silero-vad');
-  const sidecarDepsInstalled = kokoroInstalled || styleTts2Installed || sttInstalled || vadInstalled;
+  const sidecarDepsInstalled = kokoroInstalled || sttInstalled || vadInstalled;
   const canRunBase = pythonAvailable && ffmpegAvailable && sidecarDepsInstalled && sttInstalled && selectedTtsInstalled && vadInstalled;
 
   let sidecarState: VoiceCapabilityStatus['sidecar'] = {
@@ -114,7 +111,6 @@ async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabil
       selectedVoiceId,
       selectedVoiceInstalled,
       kokoroInstalled,
-      styleTts2Installed,
     },
     vadInstalled,
     gpuAvailable: detectCudaEnv(),

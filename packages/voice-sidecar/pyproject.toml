@@ -14,9 +14,6 @@ voice = [
   "numpy",
   "soundfile",
 ]
-styletts2 = [
-  "styletts2",
-]
 dev = [
   "pytest",
 ]

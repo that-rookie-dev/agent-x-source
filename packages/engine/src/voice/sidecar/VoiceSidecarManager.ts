@@ -12,7 +12,6 @@ export interface VoiceSidecarManagerOptions {
   moduleName?: string;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
-  ttsTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }
@@ -100,7 +99,6 @@ export class VoiceSidecarManager {
       baseUrl,
       authToken: this.authToken,
       timeoutMs: this.options.requestTimeoutMs,
-      ttsTimeoutMs: this.options.ttsTimeoutMs,
     });
 
     await this.waitForReady(this.client, this.options.startupTimeoutMs ?? 20_000);

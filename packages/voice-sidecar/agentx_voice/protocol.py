@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-TtsEngine = Literal["kokoro", "styletts2"]
+TtsEngine = Literal["kokoro"]
 
 
 @dataclass(frozen=True)

@@ -17,6 +17,7 @@
     "@agentx/engine": "workspace:*",
     "@agentx/shared": "workspace:*",
     "@huggingface/transformers": "^3.8.1",
+    "ai": "^6.0.205",
     "cron-parser": "^4.9.0",
     "express": "^4.21.0",
     "helmet": "^8.2.0",

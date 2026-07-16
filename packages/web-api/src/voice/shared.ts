@@ -242,50 +242,7 @@ async function installVoiceDependencies(onProgress?: (detail: string, progress: 
   resetVoiceService();
 }
 
-/** StyleTTS 2 Python runtime — separate from model weights; installed on demand. */
-async function isStyleTtsPythonInstalled(): Promise<boolean> {
-  const venvPy = existsSync(venvPython()) ? venvPython() : null;
-  if (!venvPy) return false;
-  try {
-    await execVoiceCommand(venvPy, ['-c', 'import styletts2'], {
-      label: 'check-styletts2-import',
-      timeout: 15_000,
-      env: pythonEnv(),
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureStyleTtsPythonInstalled(onProgress?: (detail: string) => void): Promise<void> {
-  if (await isStyleTtsPythonInstalled()) {
-    voiceInfo('StyleTTS 2 Python package already installed');
-    return;
-  }
-
-  const venvPy = await ensureVoiceVenv();
-  onProgress?.('Installing StyleTTS 2 Python runtime…');
-  voiceInfo('Installing StyleTTS 2 Python package');
-
-  await execVoiceCommand(venvPy, ['-m', 'pip', 'install', 'styletts2'], {
-    label: 'pip-install-styletts2',
-    timeout: 30 * 60_000,
-    env: pythonEnv(),
-    onOutput: (_stream, line) => {
-      if (line.includes('Collecting') || line.includes('Downloading') || line.includes('Installing')) {
-        onProgress?.(line);
-        voiceInfo('StyleTTS pip progress', { line });
-      }
-    },
-  });
-
-  voiceState.assetManager = null;
-  voiceState.sidecarManager = null;
-  voiceInfo('StyleTTS 2 Python package installed');
-}
-
-const voiceJobStatuses = new Map<string, { status: 'pending' | 'running' | 'verifying' | 'complete' | 'error' | 'cancelled'; progress?: number; error?: string }>();
+const voiceJobStatuses = new Map<string, { status: 'pending' | 'running' | 'verifying' | 'complete' | 'error' | 'cancelled'; progress?: number; error?: string; detail?: string; downloadedMB?: number; totalMB?: number }>();
 
 interface VoiceSetupStatus {
   phase: 'idle' | 'runtime' | 'download' | 'complete' | 'error';
@@ -397,8 +354,6 @@ export {
   activePython,
   ensureVoiceVenv,
   installVoiceDependencies,
-  isStyleTtsPythonInstalled,
-  ensureStyleTtsPythonInstalled,
   voiceJobStatuses,
   voiceState,
   type VoiceSetupStatus,

@@ -15,6 +15,10 @@ export interface VoiceModelSource {
   ref?: string;
   url?: string;
   archive?: 'zip' | 'tar.gz';
+  /** HuggingFace snapshot_download allow_patterns — only download specific files from a large repo */
+  allowPatterns?: string[];
+  /** Flatten subdirectory structure after download (move all files to root) */
+  flatten?: boolean;
 }
 
 export interface VoiceModelManifestEntry {

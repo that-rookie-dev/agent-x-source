@@ -80,34 +80,6 @@
       "sources": [
         { "type": "hf", "repo": "Systran/faster-whisper-small.en", "revision": "main" }
       ]
-    },
-    {
-      "id": "styletts2",
-      "tier": "optional",
-      "kind": "tts-model",
-      "target": "models/tts/styletts2/styletts2",
-      "displayName": "StyleTTS 2",
-      "sizeMB": 900,
-      "license": "Check model license before distribution",
-      "sha256": null,
-      "alsoInstalls": ["styletts2-default"],
-      "sources": [
-        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
-      ]
-    },
-    {
-      "id": "styletts2-default",
-      "tier": "optional",
-      "kind": "tts-voice",
-      "target": "models/tts/styletts2/styletts2",
-      "displayName": "StyleTTS 2 Default Reference",
-      "sizeMB": 1,
-      "license": "Check model license before distribution",
-      "sha256": null,
-      "aliasOf": "styletts2",
-      "sources": [
-        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
-      ]
     }
   ]
 }

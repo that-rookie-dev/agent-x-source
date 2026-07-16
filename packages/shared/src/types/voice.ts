@@ -17,7 +17,7 @@ export type FasterWhisperComputeType = 'auto' | 'int8' | 'int8_float16' | 'float
 
 export type VoiceComputeDevice = 'auto' | 'cpu' | 'cuda';
 
-export type TtsEngine = 'kokoro' | 'styletts2';
+export type TtsEngine = 'kokoro';
 
 export interface VoiceSurfaceConfig {
   web?: 'off' | 'push-to-talk' | 'duplex';
@@ -118,7 +118,6 @@ export interface VoiceCapabilityStatus {
     selectedVoiceId?: string;
     selectedVoiceInstalled: boolean;
     kokoroInstalled: boolean;
-    styleTts2Installed: boolean;
   };
   vadInstalled: boolean;
   gpuAvailable?: boolean;

@@ -52,6 +52,9 @@ export interface UseChatSessionLifecycleInputs {
   setParentSessionId: React.Dispatch<React.SetStateAction<string | null>>;
   setCrewWorkers: React.Dispatch<React.SetStateAction<any[]>>;
   setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
+  // Turn-activity setters (used to re-activate indicator when restoring a session whose agent is still running)
+  setTurnActivity: React.Dispatch<React.SetStateAction<{ stage: string; step: number; elapsedMs: number } | null>>;
+  setCurrentStep: React.Dispatch<React.SetStateAction<string | null>>;
   // Refs
   currentSessionIdRef: React.MutableRefObject<string | null>;
   cwdRef: React.MutableRefObject<string>;
@@ -70,6 +73,9 @@ export interface UseChatSessionLifecycleInputs {
   isAtBottomRef: React.MutableRefObject<boolean>;
   messagesContainerRef: React.MutableRefObject<HTMLDivElement | null>;
   jumpSuppressScrollTopRef: React.MutableRefObject<number | null>;
+  // Turn-activity refs
+  turnActiveRef: React.MutableRefObject<boolean>;
+  activeTurnIdRef: React.MutableRefObject<string | null>;
   // Scroll helper
   resetScrollState: () => void;
 }
@@ -111,6 +117,8 @@ export function useChatSessionLifecycle({
   setParentSessionId,
   setCrewWorkers,
   setBypassPermissionsState,
+  setTurnActivity,
+  setCurrentStep,
   currentSessionIdRef,
   cwdRef,
   chatReturnToRef,
@@ -127,6 +135,8 @@ export function useChatSessionLifecycle({
   isAtBottomRef,
   messagesContainerRef,
   jumpSuppressScrollTopRef,
+  turnActiveRef,
+  activeTurnIdRef,
   resetScrollState,
 }: UseChatSessionLifecycleInputs) {
   // ─── Stable refs for handler dependencies ───
@@ -182,7 +192,7 @@ export function useChatSessionLifecycle({
 
   // ─── Shared restore helper (used by both session-restore effect and handleSelectSession) ───
   const restoreSessionData = useCallback(async (sid: string, sessionInfo?: SessionInfo) => {
-    const { messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta } = await sessions.restore(sid, {
+    const { messages: historyMsgs, session, scopePath, turnFeedback, messagesMeta, turnState } = await sessions.restore(sid, {
       perRole: coreSessionRef.current ? CORE_SESSION_MESSAGES_PER_ROLE : CHAT_INITIAL_MESSAGES_PER_ROLE,
     });
     if (currentSessionIdRef.current !== sid) return;
@@ -243,7 +253,26 @@ export function useChatSessionLifecycle({
     const restoredCwd = scopePath || session?.scopePath || '';
     if (restoredCwd) setCwd(restoredCwd);
     loadTodos();
-    isInitialLoadRef.current = false;
+
+    // If the backend reports an active turn for this session (agent still
+    // processing in the background after navigation), re-activate the turn
+    // indicator so the user sees the agent is working when they return.
+    const turnPhase = turnState?.phase;
+    if (turnPhase && turnPhase !== 'idle' && turnPhase !== 'done' && turnPhase !== 'cancelled') {
+      turnActiveRef.current = true;
+      activeTurnIdRef.current = turnState?.turnId ?? null;
+      setStreaming(true);
+      setTurnActivity({
+        stage: turnState?.stage ?? 'working',
+        step: turnState?.step ?? 0,
+        elapsedMs: turnState?.startedAt ? Date.now() - turnState.startedAt : 0,
+      });
+      setCurrentStep(turnState?.stage ?? 'Working…');
+      // Allow SSE telemetry events to flow (otherwise isInitialLoadRef would gate them).
+      isInitialLoadRef.current = false;
+    } else {
+      isInitialLoadRef.current = false;
+    }
     if (!session.title || session.title === 'New Session' || session.title === 'Child Session') {
       generateTitle(sid, visible);
     }
@@ -271,7 +300,7 @@ export function useChatSessionLifecycle({
         } catch { /* best-effort */ }
       })();
     }
-  }, [currentSessionIdRef, navigate, setMessages, setHasOlderMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setCurrentSessionTitle, setParentSessionId, setCurrentSessionId, setShowJumpPill, jumpSuppressScrollTopRef, setTokenTotal, setTokenUsed, setCompactionCount, setTokenInput, setTokenOutput, tokenInputRef, tokenOutputRef, setCwd, loadTodos, generateTitle, setCrewList, setCrewWorkers, crewMissionSessionIdRef, isAtBottomRef, messagesContainerRef, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setChildSessionDrawer, coreSessionRef, locationRef, crewListRef]);
+  }, [currentSessionIdRef, navigate, setMessages, setHasOlderMessages, setIsCrewPrivateSession, setCrewPrivateHost, setPrivateHostCrewId, setCurrentSessionTitle, setParentSessionId, setCurrentSessionId, setShowJumpPill, jumpSuppressScrollTopRef, setTokenTotal, setTokenUsed, setCompactionCount, setTokenInput, setTokenOutput, tokenInputRef, tokenOutputRef, setCwd, loadTodos, generateTitle, setCrewList, setCrewWorkers, crewMissionSessionIdRef, isAtBottomRef, messagesContainerRef, setSessionRestoring, sessionRestoringRef, isInitialLoadRef, setChildSessionDrawer, coreSessionRef, locationRef, crewListRef, setStreaming, setTurnActivity, setCurrentStep, turnActiveRef, activeTurnIdRef]);
 
   // ─── Session-restore effect (mount/URL change) ───
   useEffect(() => {

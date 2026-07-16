@@ -220,13 +220,28 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   return server.listen(port, HOST, async () => {
+    // Each bootstrap step is independent so a failure in one (e.g. channels
+    // config not ready during deferred first-run setup) doesn't skip the
+    // others (e.g. automation service initialization).
     try {
       await awaitEngineStorageReady();
+    } catch (e) {
+      getLogger().warn('STARTUP', `Engine storage ready failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
       await applyChannelsConfig();
-      bootstrapAutomationFromEngine();
+    } catch (e) {
+      getLogger().warn('STARTUP', `Channels config apply failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      await bootstrapAutomationFromEngine();
+    } catch (e) {
+      getLogger().warn('STARTUP', `Automation bootstrap failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
       initAgentXOverviewBridge();
     } catch (e) {
-      getLogger().warn('STARTUP', `Post-storage bootstrap failed: ${e instanceof Error ? e.message : String(e)}`);
+      getLogger().warn('STARTUP', `Agent-X overview bridge init failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     getLogger().info('SERVER', `Agent-X web API listening on ${HOST}:${port} (v${VERSION})`);
   });

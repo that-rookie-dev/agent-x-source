@@ -492,6 +492,7 @@ export const sessions = {
       turnFeedback?: Array<Record<string, unknown>>;
       resumeState?: Record<string, unknown> | null;
       messagesMeta?: { total: number; truncated: boolean; perRole: number };
+      turnState?: { phase: string; stage?: string; step?: number; turnId?: string | null; startedAt?: number | null } | null;
     }>(`/sessions/${id}/restore`, {
       method: 'POST',
       body: JSON.stringify(opts?.perRole ? { perRole: opts.perRole } : {}),
@@ -594,6 +595,21 @@ export const settingsPermissions = {
   get: () => request<{ permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions'),
   update: (permissions: Record<string, 'allow' | 'deny' | 'ask'>) =>
     request<{ ok: boolean }>('/settings/permissions', { method: 'POST', body: JSON.stringify({ permissions }) }),
+};
+
+export interface PermissionToolEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  riskLevel: string;
+  defaultDecision: 'allow' | 'ask';
+  currentDecision: 'allow' | 'deny' | 'ask';
+  overridden: boolean;
+}
+
+export const settingsPermissionTools = {
+  list: () => request<{ tools: PermissionToolEntry[]; permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions/tools'),
 };
 
 // ─── System ───
@@ -1165,7 +1181,7 @@ export interface AgentXConfig {
   voice?: VoiceConfig;
 }
 
-export type TtsEngine = 'kokoro' | 'styletts2';
+export type TtsEngine = 'kokoro';
 
 export interface VoiceConfig {
   enabled?: boolean;
@@ -1236,7 +1252,6 @@ export interface VoiceCapabilityStatus {
     selectedVoiceId?: string;
     selectedVoiceInstalled: boolean;
     kokoroInstalled: boolean;
-    styleTts2Installed: boolean;
   };
   vadInstalled: boolean;
   gpuAvailable?: boolean;
@@ -1500,6 +1515,8 @@ export interface SessionInfo {
   title?: string;
   scopePath?: string;
   parentId?: string;
+  /** Lightweight turn status from the turn registry (null if no recent turn). */
+  turnStatus?: { status: 'running' | 'complete' | 'error' | 'cancelled'; turnId: string; startedAt: number } | null;
 }
 
 export interface ChildSessionInfo {
@@ -1816,15 +1833,13 @@ export const voice = {
       body: JSON.stringify({ assetId }),
     }),
   downloadStatus: (assetId: string) =>
-    request<{ status: string; progress?: number; error?: string }>(`/voice/assets/download-status/${assetId}`),
+    request<{ status: string; progress?: number; error?: string; detail?: string; downloadedMB?: number; totalMB?: number }>(`/voice/assets/download-status/${assetId}`),
   cancelDownload: (assetId: string) =>
     request<{ ok: boolean }>(`/voice/assets/download/${assetId}/cancel`, { method: 'POST' }),
   deleteAsset: (assetId: string) =>
     request<{ ok: boolean }>(`/voice/assets/${assetId}`, { method: 'DELETE' }),
   installSidecar: () =>
     request<{ ok: boolean }>('/voice/install-sidecar', { method: 'POST' }),
-  installStyleTts: () =>
-    request<{ ok: boolean }>('/voice/install-styletts', { method: 'POST' }, 35 * 60_000),
   setup: () =>
     request<{ ok: boolean; status: VoiceSetupStatus }>('/voice/setup', { method: 'POST' }),
   setupStatus: () =>
@@ -1845,7 +1860,13 @@ export const voice = {
         method: 'POST',
         body: JSON.stringify({ text, engine, voiceId, style }),
       },
-      engine === 'styletts2' ? 10 * 60_000 : 60_000,
+      60_000,
+    ),
+  greeting: () =>
+    request<{ text: string; fallback?: boolean }>(
+      '/voice/greeting',
+      { method: 'POST' },
+      30_000,
     ),
   generateGreeting: (callsign: string) =>
     request<{ text: string }>('/voice/greeting', {

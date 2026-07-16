@@ -321,6 +321,9 @@ importers:
       '@huggingface/transformers':
         specifier: ^3.8.1
         version: 3.8.1
+      ai:
+        specifier: ^6.0.205
+        version: 6.0.205(zod@3.25.76)
       cron-parser:
         specifier: ^4.9.0
         version: 4.9.0

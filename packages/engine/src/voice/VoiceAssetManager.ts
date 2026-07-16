@@ -11,6 +11,12 @@ export interface VoiceAssetDownloadProgress {
   status: 'pending' | 'running' | 'verifying' | 'complete' | 'error' | 'cancelled';
   progress?: number;
   error?: string;
+  /** Human-readable progress detail, e.g. "Downloading kokoro · 42 MB" */
+  detail?: string;
+  /** Downloaded megabytes so far (parsed from Python progress detail) */
+  downloadedMB?: number;
+  /** Total expected size in megabytes (from catalog entry) */
+  totalMB?: number;
 }
 
 export interface VoiceAssetManagerOptions {
@@ -73,33 +79,39 @@ export class VoiceAssetManager {
     }
 
     this.cancelFlags.delete(asset.id);
-    const job: VoiceAssetDownloadProgress = { assetId: asset.id, status: 'running', progress: 10 };
+    const totalMB = asset.sizeMB;
+    const job: VoiceAssetDownloadProgress = { assetId: asset.id, status: 'running', progress: 0, totalMB };
     this.jobs.set(asset.id, job);
     onProgress?.(job);
 
     try {
       if (this.cancelFlags.has(asset.id)) throw new Error('Download cancelled');
 
-      this.jobs.set(asset.id, { ...job, progress: 15 });
+      this.jobs.set(asset.id, { ...job, progress: 2 });
       onProgress?.(this.jobs.get(asset.id)!);
 
       const { stdout } = await this.execPythonWithProgress(
         ['-m', 'agentx_voice.assets', 'download', '--asset-id', asset.id, '--data-dir', this.dataDir],
         60 * 60_000,
         (progress, detail) => {
-          const mapped = Math.min(90, 15 + Math.round(progress * 0.75));
+          // Map Python progress (0-100) to TS progress (5-90) smoothly
+          const mapped = Math.min(90, 5 + Math.round(progress * 0.85));
+          const downloadedMB = parseDownloadedMB(detail);
           this.jobs.set(asset.id, {
             assetId: asset.id,
             status: 'running',
             progress: mapped,
             error: detail,
+            detail,
+            downloadedMB,
+            totalMB,
           });
           onProgress?.(this.jobs.get(asset.id)!);
         },
       );
       if (this.cancelFlags.has(asset.id)) throw new Error('Download cancelled');
 
-      this.jobs.set(asset.id, { assetId: asset.id, status: 'running', progress: 75 });
+      this.jobs.set(asset.id, { assetId: asset.id, status: 'running', progress: 92 });
       onProgress?.(this.jobs.get(asset.id)!);
 
       let result: PythonAssetResult;
@@ -109,7 +121,7 @@ export class VoiceAssetManager {
         getLogger().warn('VOICE', `Failed to parse python asset result: ${error instanceof Error ? error.message : String(error)}`);
         result = {} as PythonAssetResult;
       }
-      this.jobs.set(asset.id, { assetId: asset.id, status: 'verifying', progress: 90 });
+      this.jobs.set(asset.id, { assetId: asset.id, status: 'verifying', progress: 95 });
       onProgress?.(this.jobs.get(asset.id)!);
 
       const installedPath = this.assetPath(asset);
@@ -145,8 +157,14 @@ export class VoiceAssetManager {
         return join(this.dataDir, 'models', 'stt', asset.id);
       case 'tts-model':
         return join(this.dataDir, 'models', 'tts', asset.engine ?? 'kokoro', asset.id);
-      case 'tts-voice':
-        return join(this.dataDir, 'models', 'tts', asset.engine ?? 'kokoro', asset.id === 'kokoro-af' ? 'kokoro-82m' : asset.id);
+      case 'tts-voice': {
+        // Voice aliases resolve to their parent model directory.
+        const voiceParentMap: Record<string, string> = {
+          'kokoro-af': 'kokoro-82m',
+        };
+        const parentId = voiceParentMap[asset.id] ?? asset.id;
+        return join(this.dataDir, 'models', 'tts', asset.engine ?? 'kokoro', parentId);
+      }
       case 'vad-model':
         return join(this.dataDir, 'models', 'vad', asset.id);
       default:
@@ -303,4 +321,11 @@ async function walkFiles(dir: string): Promise<string[]> {
     else if (entry.isFile()) out.push(path);
   }
   return out;
+}
+
+/** Extract downloaded MB from Python progress detail strings like "Downloading kokoro · 42 MB" */
+function parseDownloadedMB(detail?: string): number | undefined {
+  if (!detail) return undefined;
+  const match = detail.match(/(\d+)\s*MB/);
+  return match ? Number(match[1]) : undefined;
 }

@@ -94,7 +94,7 @@ const voiceDownloadedAssetSchema = z.object({
     'vad-model',
     'helper-binary',
   ]),
-  engine: z.enum(['faster-whisper', 'kokoro', 'styletts2']).optional(),
+  engine: z.enum(['faster-whisper', 'kokoro']).optional(),
   version: z.string().optional(),
   installedAt: z.string(),
   sizeBytes: z.number().optional(),
@@ -114,7 +114,7 @@ export const voiceConfigSchema = z.object({
     device: z.enum(['auto', 'cpu', 'cuda']).optional(),
   }).optional(),
   tts: z.object({
-    engine: z.enum(['kokoro', 'styletts2']).default('kokoro'),
+    engine: z.literal('kokoro').default('kokoro'),
     voiceId: z.string().optional(),
     style: z.object({
       emotion: z.string().optional(),

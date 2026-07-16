@@ -41,6 +41,11 @@ class KokoroTts:
         voice_id = str(request.get("voiceId") or "kokoro-af")
         kokoro_voice = _map_voice_id(voice_id)
 
+        # If the requested voice isn't loaded locally, fall back to the default
+        # instead of letting the pipeline try to download it from HuggingFace.
+        if kokoro_voice not in pipeline.voices:
+            kokoro_voice = "af_heart"
+
         try:
             import numpy as np
             import soundfile as sf
@@ -72,6 +77,9 @@ class KokoroTts:
         pipeline = self._load()
         voice_id = str(request.get("voiceId") or "kokoro-af")
         kokoro_voice = _map_voice_id(voice_id)
+        # Fall back to default voice if the requested one isn't loaded locally.
+        if kokoro_voice not in pipeline.voices:
+            kokoro_voice = "af_heart"
         sample_rate = 24_000
 
         try:
