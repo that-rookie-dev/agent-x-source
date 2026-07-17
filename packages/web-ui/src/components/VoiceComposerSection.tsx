@@ -14,6 +14,7 @@ import { VoiceControl } from './VoiceControl';
 import { VoiceDeniedBanner } from './VoiceDeniedBanner';
 import { VoiceOnboardingCard, dismissVoiceOnboarding, isVoiceOnboardingDismissed } from './VoiceOnboardingCard';
 import { VoicePermissionDialog } from './VoicePermissionDialog';
+import { VoiceToolPermissionModal } from './voice/VoiceToolPermissionModal';
 import { VoicePlaybackControls } from './VoicePlaybackControls';
 import { VoiceSessionBar } from './VoiceSessionBar';
 
@@ -73,19 +74,28 @@ export const VoiceComposerSection = React.forwardRef<ChatInputBarHandle, VoiceCo
     prevSessionRef.current = chatSessionId;
   }, [chatSessionId, session]);
 
+  const fetchVoiceState = useCallback(async () => {
+    try {
+      const cfg = await voice.getConfig();
+      const caps = await voice.capabilities();
+      const nextWebMode = cfg.mode?.web ?? 'off';
+      setVoiceConfig(cfg);
+      setCanRunWeb(Boolean(caps.capabilities.canRunWeb));
+      setShowOnboarding(Boolean(cfg.enabled) && nextWebMode !== 'off' && !isVoiceOnboardingDismissed() && mic.state !== 'granted');
+    } catch {
+      setVoiceConfig(null);
+    }
+  }, [mic.state]);
+
   useEffect(() => {
-    void (async () => {
-      try {
-        const cfg = await voice.getConfig();
-        const caps = await voice.capabilities();
-        setVoiceConfig(cfg);
-        setCanRunWeb(Boolean(caps.capabilities.canRunWeb));
-        setShowOnboarding(Boolean(cfg.enabled) && webMode !== 'off' && !isVoiceOnboardingDismissed() && mic.state !== 'granted');
-      } catch {
-        setVoiceConfig(null);
-      }
-    })();
-  }, [mic.state, webMode]);
+    void fetchVoiceState();
+  }, [fetchVoiceState, webMode]);
+
+  useEffect(() => {
+    const onVoiceUpdated = () => { void fetchVoiceState(); };
+    window.addEventListener('agentx:voice-updated', onVoiceUpdated);
+    return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
+  }, [fetchVoiceState]);
 
   const requestMicWithPreprompt = useCallback(async () => {
     if (!hasSeenMicPreprompt()) {
@@ -285,6 +295,11 @@ export const VoiceComposerSection = React.forwardRef<ChatInputBarHandle, VoiceCo
         onRequest={() => { void handlePrepromptContinue(); }}
         onClose={() => setPrepromptOpen(false)}
         onOpenSettings={() => { void mic.openSettings(); }}
+      />
+      <VoiceToolPermissionModal
+        open={Boolean(session.permissionPrompt)}
+        prompt={session.permissionPrompt}
+        onRespond={session.respondToPermission}
       />
     </>
   );

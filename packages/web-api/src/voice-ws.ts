@@ -1,7 +1,9 @@
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { VoiceService, WebSocketVoiceTransport } from '@agentx/engine';
+import { VoiceService, WebSocketVoiceTransport, mergeVoiceConfig } from '@agentx/engine';
+import { XaiRealtimeEngine } from './voice/engines/XaiRealtimeEngine.js';
+import type { VoiceEngineSession } from './voice/engines/types.js';
 import { VoiceStreamSpeakPipeline, VoiceTurnTimingTracker } from './voice-turn-tts.js';
 import {
   VoiceBlockStreamExtractor,
@@ -93,6 +95,7 @@ interface VoiceWsSession {
 }
 
 const activeSessions = new Map<WebSocket, VoiceWsSession>();
+const activeEngineSessions = new Map<WebSocket, VoiceEngineSession>();
 
 async function sendSessionAudio(
   session: VoiceWsSession,
@@ -282,9 +285,14 @@ export function setupVoiceWebSocket(_server: Server): void {
 
 async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBinary: boolean): Promise<void> {
   const session = activeSessions.get(ws);
+  const engineSession = activeEngineSessions.get(ws);
   if (isBinary) {
-    if (!session?.recording) return;
     const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+    if (engineSession) {
+      engineSession.onBinaryAudio(chunk);
+      return;
+    }
+    if (!session?.recording) return;
     session.audioChunks.push(chunk);
 
     if (session.mode === 'duplex') {
@@ -300,6 +308,11 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
     msg = JSON.parse(String(data));
   } catch {
     sendError(ws, 'Invalid JSON control frame');
+    return;
+  }
+
+  if (msg.type !== 'session_start' && engineSession) {
+    await engineSession.onClientMessage(msg);
     return;
   }
 
@@ -452,21 +465,49 @@ async function resolveVoiceChatSessionId(preferred?: string): Promise<string | u
 }
 
 async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
-  const prior = activeSessions.get(ws);
-  if (prior) {
-    prior.unsub?.();
-    void prior.transport.close();
-    getVoiceService().closeSession(prior.sessionId);
+  const priorLocal = activeSessions.get(ws);
+  if (priorLocal) {
+    priorLocal.unsub?.();
+    void priorLocal.transport.close();
+    getVoiceService().closeSession(priorLocal.sessionId);
     activeSessions.delete(ws);
   }
+  const priorEngine = activeEngineSessions.get(ws);
+  if (priorEngine) {
+    priorEngine.onDisconnect();
+    activeEngineSessions.delete(ws);
+  }
 
-  const service = getVoiceService();
-  const config = service.getConfig();
-  if (!config.enabled) {
+  const voiceConfig = mergeVoiceConfig(getEngine().configManager.load().voice);
+  if (!voiceConfig.enabled) {
     sendError(ws, 'Voice is disabled');
     return;
   }
 
+  const mode = msg.mode === 'duplex' ? 'duplex' : 'push-to-talk';
+  const voiceOnly = Boolean(msg.voiceOnly);
+  const chatSessionId = voiceOnly
+    ? '__channel__:voice'
+    : (typeof msg.chatSessionId === 'string' ? msg.chatSessionId : undefined);
+  const voiceWsSessionId = String(msg.sessionId ?? randomUUID());
+  const clientSituation = normalizeClientSituation(msg.clientSituation);
+
+  if (voiceConfig.engine === 'realtime_xai') {
+    const transport = new WebSocketVoiceTransport({ ws, sessionId: voiceWsSessionId, mode, engine: 'realtime_xai' });
+    const engine = new XaiRealtimeEngine();
+    const session = await engine.createSession({
+      ws,
+      transport,
+      sessionId: voiceWsSessionId,
+      mode,
+      chatSessionId,
+      clientSituation,
+    });
+    activeEngineSessions.set(ws, session);
+    return;
+  }
+
+  const service = getVoiceService();
   try {
     await service.start();
   } catch (err) {
@@ -480,15 +521,8 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   }
   void service.warmFillerCache();
 
-  const mode = msg.mode === 'duplex' ? 'duplex' : 'push-to-talk';
-  const voiceOnly = Boolean(msg.voiceOnly);
-  const chatSessionId = voiceOnly
-    ? '__channel__:voice'
-    : (typeof msg.chatSessionId === 'string' ? msg.chatSessionId : undefined);
-  const voiceWsSessionId = String(msg.sessionId ?? randomUUID());
-  const clientSituation = normalizeClientSituation(msg.clientSituation);
   const voiceSession = service.createSession({ transport: 'web', mode, sessionId: voiceWsSessionId });
-  const transport = new WebSocketVoiceTransport({ ws, sessionId: voiceWsSessionId, mode });
+  const transport = new WebSocketVoiceTransport({ ws, sessionId: voiceWsSessionId, mode, engine: 'stt_llm_tts' });
   activeSessions.set(ws, {
     sessionId: voiceSession.sessionId,
     chatSessionId,
@@ -1060,6 +1094,11 @@ function extractAssistantText(message: unknown): string {
 }
 
 function cleanupSession(ws: WebSocket): void {
+  const engineSession = activeEngineSessions.get(ws);
+  if (engineSession) {
+    engineSession.onDisconnect();
+    activeEngineSessions.delete(ws);
+  }
   const session = activeSessions.get(ws);
   if (!session) return;
   if (session.pendingPermission) {
@@ -1100,14 +1139,19 @@ function notifyDuplexListening(ws: WebSocket): void {
 }
 
 export function countActiveVoiceWebSocketSessions(): number {
-  return activeSessions.size;
+  return activeSessions.size + activeEngineSessions.size;
 }
 
 export async function shutdownVoiceWebSocket(): Promise<void> {
   for (const ws of activeSessions.keys()) {
     ws.close();
   }
+  for (const [ws, session] of activeEngineSessions.entries()) {
+    session.onDisconnect();
+    try { ws.close(); } catch { /* ignore */ }
+  }
   activeSessions.clear();
+  activeEngineSessions.clear();
   try {
     await getVoiceService().stop();
   } catch { /* sidecar may never have started */ }

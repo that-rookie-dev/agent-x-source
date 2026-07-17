@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -7,6 +7,8 @@ import Collapse from '@mui/material/Collapse';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import LinearProgress from '@mui/material/LinearProgress';
 import Switch from '@mui/material/Switch';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import MicIcon from '@mui/icons-material/Mic';
@@ -53,9 +55,13 @@ function voiceSysStatus(
   kitReady: boolean,
   deploying: boolean,
   capabilities: VoiceCapabilityStatus | null,
+  engine: string,
 ): { label: string; state: 'active' | 'idle' | 'warn' } {
   if (loading) return { label: 'CHECKING', state: 'idle' };
   if (deploying) return { label: 'CALIBRATING', state: 'warn' };
+  if (engine === 'realtime_xai') {
+    return capabilities?.realtimeXai?.configured ? { label: 'ONLINE', state: 'active' } : { label: 'SETUP', state: 'warn' };
+  }
   if (!capabilities?.pythonAvailable || !capabilities?.ffmpegAvailable) return { label: 'OFFLINE', state: 'idle' };
   if (!kitReady) return { label: 'SETUP', state: 'warn' };
   return { label: 'ONLINE', state: 'active' };
@@ -73,6 +79,7 @@ function deployPhaseLabel(phase: VoiceSetupStatus['phase']): string {
 
 export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const voiceConfig = useMemo(() => mergeVoiceConfig(value), [value]);
+  const engine = voiceConfig.engine ?? 'stt_llm_tts';
   const [capabilities, setCapabilities] = useState<VoiceCapabilityStatus | null>(null);
   const [installedAssetIds, setInstalledAssetIds] = useState<Set<string>>(new Set());
   const [deploying, setDeploying] = useState(false);
@@ -82,6 +89,15 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [xaiApiKeyInput, setXaiApiKeyInput] = useState('');
+  const [xaiVoices, setXaiVoices] = useState<Array<{ id: string; name: string; language?: string }>>([]);
+  const [xaiValidating, setXaiValidating] = useState(false);
+  const [xaiStatus, setXaiStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
+  const [xaiModel, setXaiModel] = useState(voiceConfig.xai?.model ?? 'grok-voice-latest');
+
+  useEffect(() => {
+    setXaiModel(voiceConfig.xai?.model ?? 'grok-voice-latest');
+  }, [voiceConfig.xai?.model]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const voiceWarmupSupported = useVoiceWarmupSupported();
   const systemCaps = useSystemCapabilities();
@@ -90,11 +106,12 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
   const wakePhraseLabel = voiceCtx?.wakePhrase ?? 'your agent';
 
   const kitReady = isVoiceKitReady(installedAssetIds, capabilities);
-  const sysStatus = voiceSysStatus(loading, kitReady, deploying, capabilities);
+  const sysStatus = voiceSysStatus(loading, kitReady, deploying, capabilities, engine);
   const ttsEngine = voiceConfig.tts?.engine ?? 'kokoro';
   const kokoroInstalled = installedAssetIds.has('kokoro-onnx');
 
-  const load = async () => {
+  const load = useCallback(async (overrideEngine?: string) => {
+    const effEngine = overrideEngine ?? engine;
     setLoading(true);
     setError(null);
     try {
@@ -104,18 +121,38 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       ]);
       setCapabilities(capRes.capabilities);
       setInstalledAssetIds(new Set(catalogRes.installed.map((asset) => asset.assetId)));
+      if (effEngine === 'realtime_xai') {
+        try {
+          const voiceRes = await voice.xaiVoices();
+          setXaiVoices(voiceRes.voices);
+        } catch {
+          setXaiVoices([]);
+        }
+      } else {
+        setXaiVoices([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load voice status');
     } finally {
       setLoading(false);
     }
-  };
+  }, [engine]);
+
+  // Keep a ref so callers (selectEngine) can invoke the latest load after await
+  const loadRef = useRef(load);
+  loadRef.current = load;
 
   useEffect(() => {
     void load();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
+  }, []);
+
+  useEffect(() => {
+    const onVoiceUpdated = () => { void loadRef.current(); };
+    window.addEventListener('agentx:voice-updated', onVoiceUpdated);
+    return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
   }, []);
 
   // Reload installed assets when any TTS download completes or errors
@@ -138,6 +175,8 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       ...voiceConfig,
       ...patchValue,
       mode: { ...voiceConfig.mode, ...patchValue.mode },
+      engine: patchValue.engine ?? voiceConfig.engine,
+      xai: { ...voiceConfig.xai, ...patchValue.xai },
       stt: { ...voiceConfig.stt, ...patchValue.stt },
       tts: { ...voiceConfig.tts, ...patchValue.tts },
       sidecar: { ...voiceConfig.sidecar, ...patchValue.sidecar },
@@ -223,17 +262,27 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     try {
       const line = randomTestLine(lastTestLine);
       setLastTestLine(line);
-      const defaultVoiceId = 'kokoro-af';
-      const result = await voice.preview(
-        line,
-        ttsEngine,
-        voiceConfig.tts?.voiceId ?? defaultVoiceId,
-        voiceConfig.tts?.style,
-      );
-      const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
-      await audio.play();
+      if (engine === 'realtime_xai') {
+        const result = await voice.preview(
+          line,
+          'realtime_xai',
+          voiceConfig.xai?.voice ?? 'eve',
+        );
+        const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+        await audio.play();
+      } else {
+        const defaultVoiceId = 'kokoro-af';
+        const result = await voice.preview(
+          line,
+          ttsEngine,
+          voiceConfig.tts?.voiceId ?? defaultVoiceId,
+          voiceConfig.tts?.style,
+        );
+        const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+        await audio.play();
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Voice test failed — deploy the voice kit first.');
+      setError(err instanceof Error ? err.message : engine === 'realtime_xai' ? 'Voice test failed — check xAI API key.' : 'Voice test failed — deploy the voice kit first.');
     } finally {
       setPreviewing(false);
     }
@@ -264,14 +313,106 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     });
   };
 
-  const missingRuntime = capabilities && (!capabilities.pythonAvailable || !capabilities.ffmpegAvailable);
+  const selectEngine = async (nextEngine: 'stt_llm_tts' | 'realtime_xai') => {
+    if (nextEngine === engine) return;
+    setError(null);
+    setXaiStatus('idle');
+    setCapabilities(null);
+    const isXai = nextEngine === 'realtime_xai';
+    const currentWeb = voiceConfig.mode?.web;
+    const nextWeb = voiceConfig.enabled
+      ? (isXai ? 'duplex' : 'push-to-talk')
+      : currentWeb;
+    await persistVoice({
+      ...voiceConfig,
+      engine: nextEngine,
+      mode: { ...voiceConfig.mode, web: nextWeb ?? 'off' },
+    });
+    // Reload with the new engine explicitly — loadRef.current may still
+    // reference the old engine closure, so pass the override.
+    await loadRef.current(nextEngine);
+  };
+
+  const hasXaiKey = Boolean(voiceConfig.xai?.apiKey);
+
+  const revokeXaiKey = async () => {
+    setError(null);
+    setXaiStatus('idle');
+    setXaiApiKeyInput('');
+    await persistVoice({
+      ...voiceConfig,
+      engine: 'stt_llm_tts',
+      mode: { ...voiceConfig.mode, web: 'push-to-talk' },
+      xai: { ...voiceConfig.xai, apiKey: '' },
+    });
+  };
+
+  const validateXaiKey = async () => {
+    setXaiValidating(true);
+    setError(null);
+    try {
+      const res = await voice.validateXai(xaiApiKeyInput.trim() || undefined);
+      if (res.valid) {
+        setXaiStatus('valid');
+        await persistVoice({
+          ...voiceConfig,
+          xai: {
+            ...voiceConfig.xai,
+            apiKey: xaiApiKeyInput,
+          },
+        });
+        try {
+          const voiceRes = await voice.xaiVoices();
+          setXaiVoices(voiceRes.voices);
+        } catch {
+          setXaiVoices([]);
+        }
+      } else {
+        setXaiStatus('invalid');
+        setError(res.error ?? 'Invalid xAI API key');
+      }
+    } catch (err) {
+      setXaiStatus('invalid');
+      setError(err instanceof Error ? err.message : 'xAI validation failed');
+    } finally {
+      setXaiValidating(false);
+    }
+  };
+
+  const selectXaiVoice = async (voiceId: string) => {
+    if (voiceId === voiceConfig.xai?.voice) return;
+    setError(null);
+    await persistVoice({
+      ...voiceConfig,
+      xai: {
+        ...voiceConfig.xai,
+        voice: voiceId,
+      },
+    });
+  };
+
+  const selectXaiModel = async (model: string) => {
+    if (model === voiceConfig.xai?.model) return;
+    setXaiModel(model);
+    setError(null);
+    await persistVoice({
+      ...voiceConfig,
+      xai: {
+        ...voiceConfig.xai,
+        model,
+      },
+    });
+  };
+
+  const missingRuntime = !loading && engine === 'stt_llm_tts' && capabilities && (!capabilities.pythonAvailable || !capabilities.ffmpegAvailable);
+  const xaiConfigured = engine === 'realtime_xai' && Boolean(capabilities?.realtimeXai?.configured);
 
   return (
     <Box>
       <SettingsSectionHeader
         icon={<MicIcon sx={{ fontSize: 16 }} />}
         title="Voice Comms"
-        subtitle="Local speech only — nothing leaves your machine"
+        subtitle={engine === 'realtime_xai' ? 'xAI Grok Voice Agent — audio streams to xAI' : 'Local speech only — nothing leaves your machine'}
         action={loading ? (
           <CircularProgress size={12} sx={{ color: settingsTheme.text.dim }} />
         ) : (
@@ -281,7 +422,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         )}
       />
 
-      {error && <Alert severity="error" sx={{ mb: 2, fontSize: '0.72rem' }}>{error}</Alert>}
+      {error && !loading && <Alert severity="error" sx={{ mb: 2, fontSize: '0.72rem' }}>{error}</Alert>}
 
       {missingRuntime && (
         <Alert severity="warning" sx={{ mb: 2, fontSize: '0.72rem' }}>
@@ -292,9 +433,13 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       )}
 
       <SettingsCard
-        title={loading ? 'Voice systems' : kitReady ? 'Voice systems' : 'Deployment protocol'}
+        title={
+          engine === 'realtime_xai'
+            ? (loading ? 'xAI Voice' : xaiConfigured ? 'xAI Voice' : 'xAI setup')
+            : (loading ? 'Voice systems' : kitReady ? 'Voice systems' : 'Deployment protocol')
+        }
         accent={settingsTheme.accent.hud}
-        active={!loading && !kitReady}
+        active={engine === 'realtime_xai' ? (!loading && !xaiConfigured) : (!loading && !kitReady)}
       >
         {loading ? (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.5 }}>
@@ -303,6 +448,24 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               Checking status…
             </Typography>
           </Box>
+        ) : engine === 'realtime_xai' ? (
+          xaiConfigured ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+                Provider · xAI
+              </Typography>
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.dim }}>·</Typography>
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+                Voice · {voiceConfig.xai?.voice ?? 'eve'}
+              </Typography>
+            </Box>
+          ) : (
+            <Box sx={{ mb: 2 }}>
+              <Typography sx={{ ...settingsHelperSx, fontSize: '0.62rem', mb: 0.5 }}>
+                Add your xAI API key in the Voice engine section below, then validate it.
+              </Typography>
+            </Box>
+          )
         ) : kitReady ? (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
@@ -328,7 +491,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         )}
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-          {!loading && !kitReady && (
+          {!loading && engine === 'stt_llm_tts' && !kitReady && (
             <Button
               onClick={() => { void deployKit(); }}
               disabled={deploying || Boolean(missingRuntime)}
@@ -418,8 +581,15 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             <Switch
               size="small"
               checked={Boolean(voiceConfig.enabled)}
-              onChange={(e) => { void persistVoice({ ...voiceConfig, enabled: e.target.checked, mode: { ...voiceConfig.mode, web: e.target.checked ? 'push-to-talk' : 'off' } }); }}
-              disabled={!kitReady}
+              onChange={(e) => {
+                const isXai = engine === 'realtime_xai';
+                void persistVoice({
+                  ...voiceConfig,
+                  enabled: e.target.checked,
+                  mode: { ...voiceConfig.mode, web: e.target.checked ? (isXai ? 'duplex' : 'push-to-talk') : 'off' },
+                });
+              }}
+              disabled={engine === 'stt_llm_tts' ? !kitReady : !xaiConfigured}
             />
           )}
           label={<Typography sx={{ fontSize: '0.72rem', ...settingsMonoSx }}>Enable voice module</Typography>}
@@ -428,7 +598,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           {voiceConfig.enabled
             ? 'Footer mic (status), chat voice mode, and wake word are available.'
             : 'Turned off — all voice icons and controls are hidden across Agent-X.'}
-          {!kitReady && ' Deploy the voice kit first.'}
+          {engine === 'stt_llm_tts' ? (!kitReady && ' Deploy the voice kit first.') : (!xaiConfigured && ' Connect your xAI API key first.')}
         </Typography>
       </SettingsCard>
 
@@ -446,7 +616,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
                   wakeWord: { ...voiceConfig.wakeWord, enabled: e.target.checked },
                 });
               }}
-              disabled={!kitReady}
+              disabled={engine === 'realtime_xai' ? true : !kitReady}
             />
           )}
           label={<Typography sx={{ fontSize: '0.72rem', ...settingsMonoSx }}>Wake word ("{wakePhraseLabel}")</Typography>}
@@ -458,7 +628,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       </SettingsCard>
       )}
 
-      {voiceConfig.enabled && (
+      {voiceConfig.enabled && engine === 'stt_llm_tts' && (
       <SettingsCard
         title="Voice engine warm-up"
         subtitle={voiceWarmupSupported
@@ -500,18 +670,179 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       )}
 
       {voiceConfig.enabled && (
-      <SettingsCard title="Voice engine" subtitle="Speech synthesis model for spoken replies">
-        <TtsModelRow
-          name="Kokoro"
-          description="Fast, natural local TTS. Installed with the voice kit and used for fillers."
-          sizeMB={330}
-          installed={kokoroInstalled}
-          isDefault={ttsEngine === 'kokoro'}
-          canSelect={kitReady}
-          downloadAssetId={null}
-          onSelect={() => { void selectTtsEngine('kokoro'); }}
-          onDownload={() => {}}
-        />
+      <SettingsCard title="Voice engine" subtitle="Choose the engine that powers voice sessions">
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 1.5, mb: 2 }}>
+          <Box
+            onClick={() => { void selectEngine('stt_llm_tts'); }}
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: `1.5px solid ${engine === 'stt_llm_tts' ? settingsTheme.accent.hud : settingsTheme.border.default}`,
+              bgcolor: engine === 'stt_llm_tts' ? `${alphaColor(settingsTheme.accent.hud, '0a')}` : 'transparent',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s, background-color 0.15s',
+              '&:hover': engine !== 'stt_llm_tts' ? { borderColor: `${settingsTheme.accent.hud}88` } : {},
+            }}
+          >
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', color: settingsTheme.text.primary, mb: 0.5 }}>
+              Local STT + LLM + TTS
+            </Typography>
+            <Typography sx={{ ...settingsHelperSx, fontSize: '0.58rem' }}>
+              Runs entirely on your machine with the Agent-X voice kit.
+            </Typography>
+          </Box>
+          <Box
+            onClick={() => { void selectEngine('realtime_xai'); }}
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: `1.5px solid ${engine === 'realtime_xai' ? settingsTheme.accent.hud : settingsTheme.border.default}`,
+              bgcolor: engine === 'realtime_xai' ? `${alphaColor(settingsTheme.accent.hud, '0a')}` : 'transparent',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s, background-color 0.15s',
+              '&:hover': engine !== 'realtime_xai' ? { borderColor: `${settingsTheme.accent.hud}88` } : {},
+            }}
+          >
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', color: settingsTheme.text.primary, mb: 0.5 }}>
+              xAI Grok Voice Agent
+            </Typography>
+            <Typography sx={{ ...settingsHelperSx, fontSize: '0.58rem' }}>
+              Low-latency speech-to-speech via xAI realtime API.
+            </Typography>
+          </Box>
+        </Box>
+
+        {engine === 'realtime_xai' ? (
+        <>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 2 }}>
+            {hasXaiKey ? (
+              <>
+                <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', color: settingsTheme.accent.signal }}>
+                  xAI API key is configured.
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button
+                    onClick={() => { void revokeXaiKey(); }}
+                    sx={settingsBtnGhostSx}
+                  >
+                    Revoke API key
+                  </Button>
+                  {xaiStatus === 'valid' && (
+                    <Typography sx={{ ...settingsHelperSx, color: settingsTheme.accent.signal, alignSelf: 'center' }}>
+                      API key is valid.
+                    </Typography>
+                  )}
+                </Box>
+              </>
+            ) : (
+              <>
+                <TextField
+                  label="xAI API key"
+                  type="password"
+                  size="small"
+                  fullWidth
+                  value={xaiApiKeyInput}
+                  onChange={(e) => setXaiApiKeyInput(e.target.value)}
+                  placeholder="sk-..."
+                  sx={{ input: { fontFamily: 'monospace', fontSize: '0.65rem' } }}
+                />
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button
+                    onClick={() => { void validateXaiKey(); }}
+                    disabled={xaiValidating || !xaiApiKeyInput.trim()}
+                    sx={settingsBtnPrimarySx}
+                  >
+                    {xaiValidating ? <CircularProgress size={12} sx={{ mr: 0.75, color: colors.bg.primary }} /> : null}
+                    {xaiValidating ? 'Validating…' : 'Validate & save key'}
+                  </Button>
+                  {xaiStatus === 'invalid' && (
+                    <Typography sx={{ ...settingsHelperSx, color: settingsTheme.accent.alert, alignSelf: 'center' }}>
+                      Key validation failed.
+                    </Typography>
+                  )}
+                </Box>
+              </>
+            )}
+            <Typography sx={{ ...settingsHelperSx }}>
+              Your key is stored in the encrypted Agent-X config and used server-side.
+            </Typography>
+          </Box>
+
+          <Box sx={{ mb: 2 }}>
+            <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Model</Typography>
+            <TextField
+              select
+              size="small"
+              fullWidth
+              value={xaiModel}
+              onChange={(e) => { void selectXaiModel(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontSize: '0.7rem', ...(settingsMonoSx as object) } }}
+            >
+              <MenuItem value="grok-voice-latest" sx={{ fontSize: '0.7rem', ...(settingsMonoSx as object) }}>
+                grok-voice-latest
+              </MenuItem>
+              <MenuItem value="grok-voice-think-fast-1.0" sx={{ fontSize: '0.7rem', ...(settingsMonoSx as object) }}>
+                grok-voice-think-fast-1.0
+              </MenuItem>
+            </TextField>
+          </Box>
+
+          <Box sx={{ mb: 1 }}>
+            <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Voice</Typography>
+            {xaiVoices.length === 0 ? (
+              <Typography sx={{ ...settingsHelperSx }}>
+                {hasXaiKey ? 'Loading available voices…' : 'Validate your API key to load available voices.'}
+              </Typography>
+            ) : (
+            <Box sx={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+              gap: 0.75,
+            }}>
+              {xaiVoices.map((v) => {
+                const isSelected = (voiceConfig.xai?.voice ?? 'eve') === v.id;
+                return (
+                  <Box
+                    key={v.id}
+                    onClick={() => { void selectXaiVoice(v.id); }}
+                    sx={{
+                      cursor: 'pointer',
+                      p: 1,
+                      borderRadius: 1,
+                      border: `1px solid ${isSelected ? settingsTheme.accent.hud : settingsTheme.border.default}`,
+                      bgcolor: isSelected ? `${alphaColor(settingsTheme.accent.hud, '0a')}` : 'transparent',
+                      transition: 'border-color 0.15s, background-color 0.15s',
+                      '&:hover': !isSelected ? { borderColor: `${settingsTheme.accent.hud}88` } : {},
+                    }}
+                  >
+                    <Typography sx={{ ...settingsMonoSx, fontSize: '0.68rem', color: settingsTheme.text.primary }}>
+                      {v.name}
+                    </Typography>
+                    {v.language && (
+                      <Typography sx={{ ...settingsHelperSx, fontSize: '0.55rem', color: settingsTheme.text.dim, mt: 0.25 }}>
+                        {v.language}
+                      </Typography>
+                    )}
+                  </Box>
+                );
+              })}
+            </Box>
+            )}
+          </Box>
+        </>
+        ) : (
+        <>
+          <TtsModelRow
+            name="Kokoro"
+            description="Fast, natural local TTS. Installed with the voice kit and used for fillers."
+            sizeMB={330}
+            installed={kokoroInstalled}
+            isDefault={ttsEngine === 'kokoro'}
+            canSelect={kitReady}
+            downloadAssetId={null}
+            onSelect={() => { void selectTtsEngine('kokoro'); }}
+            onDownload={() => {}}
+          />
 
         <Box sx={{ mt: 2, mb: 1 }}>
           <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Voice Profile</Typography>
@@ -581,20 +912,26 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             </Box>
           ))}
         </Box>
+        </>
+        )}
 
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2, mb: 2 }}>
           <Button
             onClick={() => { void previewVoice(); }}
-            disabled={previewing || !kitReady}
+            disabled={previewing || (engine === 'stt_llm_tts' ? !kitReady : !hasXaiKey)}
             sx={settingsBtnGhostSx}
           >
             {previewing ? 'Generating…' : 'Test Voice'}
           </Button>
         </Box>
-        <VoiceMicTestPanel compact />
-        <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
-          Use the footer mic or wake word for live voice. Run these checks before your first session.
-        </Typography>
+        {engine === 'stt_llm_tts' && (
+          <>
+            <VoiceMicTestPanel compact />
+            <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
+              Use the footer mic or wake word for live voice. Run these checks before your first session.
+            </Typography>
+          </>
+        )}
       </SettingsCard>
       )}
 

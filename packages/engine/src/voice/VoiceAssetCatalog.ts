@@ -1,10 +1,15 @@
 import type { VoiceAssetCatalogEntry, VoiceComputeDevice, VoiceConfig, VoiceDownloadedAsset } from '@agentx/shared';
 
-export const DEFAULT_VOICE_CONFIG: Required<Pick<VoiceConfig, 'enabled' | 'mode' | 'stt' | 'tts' | 'sidecar' | 'fillers' | 'downloadedAssets'>> = {
+export const DEFAULT_VOICE_CONFIG: Required<Pick<VoiceConfig, 'enabled' | 'mode' | 'engine' | 'xai' | 'stt' | 'tts' | 'sidecar' | 'fillers' | 'downloadedAssets'>> = {
   enabled: false,
   mode: {
     web: 'off',
     channels: 'off',
+  },
+  engine: 'stt_llm_tts',
+  xai: {
+    model: 'grok-voice-latest',
+    voice: 'eve',
   },
   stt: {
     engine: 'faster-whisper',
@@ -79,18 +84,27 @@ export const VOICE_ASSET_CATALOG: VoiceAssetCatalogEntry[] = [
 ];
 
 export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
-  const enabled = input?.enabled ?? false;
+  // If the user has configured an xAI key or explicitly chosen the realtime_xai
+  // engine, default voice to enabled so the dashboard voice card appears
+  // without requiring a manual save. Also default the engine to xAI when an
+  // xAI API key is present, so the UI doesn't try to boot the local sidecar.
+  const hasXaiCredentials = Boolean(input?.xai?.apiKey);
+  const engine = input?.engine ?? (hasXaiCredentials ? 'realtime_xai' : DEFAULT_VOICE_CONFIG.engine);
+  const isXai = engine === 'realtime_xai';
+  const enabled = input?.enabled ?? (hasXaiCredentials || isXai);
   // When voice is enabled, web mode must not be 'off' — otherwise voice UI stays hidden.
-  // Default to 'push-to-talk' if the persisted config has enabled=true but mode.web='off'.
+  // xAI realtime defaults to duplex; local defaults to push-to-talk.
   const inputWebMode = input?.mode?.web;
-  const webMode = enabled && (!inputWebMode || inputWebMode === 'off')
-    ? 'push-to-talk'
+  const webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
+    ? (isXai ? 'duplex' : 'push-to-talk')
     : (inputWebMode ?? 'off');
   return {
     ...DEFAULT_VOICE_CONFIG,
     ...input,
     enabled,
     mode: { web: webMode, channels: input?.mode?.channels ?? 'off' },
+    engine,
+    xai: { ...DEFAULT_VOICE_CONFIG.xai, ...input?.xai },
     stt: { ...DEFAULT_VOICE_CONFIG.stt, ...input?.stt },
     tts: { ...DEFAULT_VOICE_CONFIG.tts, ...input?.tts },
     sidecar: { ...DEFAULT_VOICE_CONFIG.sidecar, ...input?.sidecar },

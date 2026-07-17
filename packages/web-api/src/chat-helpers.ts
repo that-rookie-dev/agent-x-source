@@ -48,7 +48,7 @@ function buildCrewPrivateInstruction(): string {
 - Only mention tool execution if they explicitly asked you to write files or run commands on their machine.`;
 }
 
-function buildAgentInstruction(): string {
+export function buildAgentInstruction(): string {
   return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL
 
 You have access to an intelligent file resolution system that automatically handles file path errors:

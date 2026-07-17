@@ -16,7 +16,7 @@ import { VoiceWaveform } from './VoiceWaveform';
 import { CommsSpinner } from './CommsSpinner';
 import type { ParticlePhase } from './VoiceParticleField';
 import { voice as voiceApi, providers as providersApi, models as modelsApi } from '../../api';
-import type { ConfiguredProvider, ModelInfo } from '../../api';
+import type { ConfiguredProvider, ModelInfo, VoiceConfig } from '../../api';
 import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
 
 /**
@@ -109,10 +109,10 @@ export function VoiceAgentCard({
     if (!voiceActive) return 'Click to activate';
     if (!sessionReady) return 'Voice kit required';
     if (phase === 'disabled') return 'Click to activate';
-    if (phase === 'recording') return 'Listening… release Space';
+    if (phase === 'recording') return comms.isDuplex ? 'Listening…' : 'Listening… release Space';
     if (phase === 'thinking') return comms.statusLabel || 'Thinking…';
     if (phase === 'speaking') return 'Agent speaking';
-    return 'Hold Space to speak';
+    return comms.isDuplex ? 'Listening…' : 'Hold Space to speak';
   })();
 
   return (
@@ -294,9 +294,11 @@ export function VoiceAgentHeaderToggles({
 }
 
 /**
- * Full header controls for the Voice Agent card: toggle chips + provider/model
- * selectors. Manages voice-specific provider/model config, falling back to the
- * current default provider/model when no voice-specific config is set.
+ * Full header controls for the Voice Agent card: toggle chips + engine/voice
+ * selectors. The engine chip shows the active voice engine (Local or xAI) and
+ * allows switching. The voice chip loads voices based on the selected engine
+ * (Kokoro voices for local, xAI voices for realtime). For the local engine,
+ * provider/model selectors are also shown.
  */
 export function VoiceAgentHeaderControls({
   searchWeb,
@@ -311,42 +313,55 @@ export function VoiceAgentHeaderControls({
 }) {
   const [configuredProviders, setConfiguredProviders] = useState<ConfiguredProvider[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [voiceProvider, setVoiceProvider] = useState<string | null>(null);
-  const [voiceModel, setVoiceModel] = useState<string | null>(null);
-  const [voiceId, setVoiceId] = useState<string>('kokoro-af');
+  const [voiceCfg, setVoiceCfg] = useState<VoiceConfig | null>(null);
   const [defaultProvider, setDefaultProvider] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
+  const [xaiVoices, setXaiVoices] = useState<Array<{ id: string; name: string; language?: string }>>([]);
+  const [engineAnchor, setEngineAnchor] = useState<HTMLElement | null>(null);
   const [providerAnchor, setProviderAnchor] = useState<HTMLElement | null>(null);
   const [modelAnchor, setModelAnchor] = useState<HTMLElement | null>(null);
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
 
+  const engine = voiceCfg?.engine ?? 'stt_llm_tts';
+  const voiceProvider = voiceCfg?.provider?.activeProvider ?? null;
+  const voiceModel = voiceCfg?.provider?.activeModel ?? null;
+  const kokoroVoiceId = voiceCfg?.tts?.voiceId ?? 'kokoro-af';
+  const xaiVoiceId = voiceCfg?.xai?.voice ?? 'eve';
+
   // Load configured providers, current default, and voice config
+  const loadConfig = async () => {
+    try {
+      const [configured, current, cfg] = await Promise.all([
+        providersApi.configured(),
+        modelsApi.current(),
+        voiceApi.getConfig(),
+      ]);
+      setConfiguredProviders(configured);
+      setDefaultProvider(current.provider || '');
+      setDefaultModel(current.model || '');
+      setVoiceCfg(cfg);
+      if (cfg.engine === 'realtime_xai') {
+        try {
+          const voiceRes = await voiceApi.xaiVoices();
+          setXaiVoices(voiceRes.voices);
+        } catch {
+          setXaiVoices([]);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [configured, current] = await Promise.all([
-          providersApi.configured(),
-          modelsApi.current(),
-        ]);
-        if (cancelled) return;
-        setConfiguredProviders(configured);
-        setDefaultProvider(current.provider || '');
-        setDefaultModel(current.model || '');
-        // Load voice-specific config
-        const voiceCfg = await voiceApi.getConfig();
-        if (cancelled) return;
-        if (voiceCfg.provider?.activeProvider) setVoiceProvider(voiceCfg.provider.activeProvider);
-        if (voiceCfg.provider?.activeModel) setVoiceModel(voiceCfg.provider.activeModel);
-        if (voiceCfg.tts?.voiceId) setVoiceId(voiceCfg.tts.voiceId);
-      } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; };
+    void loadConfig();
+    const onVoiceUpdated = () => { void loadConfig(); };
+    window.addEventListener('agentx:voice-updated', onVoiceUpdated);
+    return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
   }, []);
 
-  // Load models when provider changes
+  // Load models when provider changes (local engine only)
   useEffect(() => {
+    if (engine !== 'stt_llm_tts') return;
     const providerId = voiceProvider || defaultProvider;
     if (!providerId) return;
     let cancelled = false;
@@ -359,34 +374,52 @@ export function VoiceAgentHeaderControls({
       finally { if (!cancelled) setLoadingModels(false); }
     })();
     return () => { cancelled = true; };
-  }, [voiceProvider, defaultProvider]);
+  }, [voiceProvider, defaultProvider, engine]);
+
+  const handleEngineSelect = async (nextEngine: 'stt_llm_tts' | 'realtime_xai') => {
+    setEngineAnchor(null);
+    if (nextEngine === engine) return;
+    const isXai = nextEngine === 'realtime_xai';
+    const currentWeb = voiceCfg?.mode?.web ?? 'off';
+    const nextWeb = voiceCfg?.enabled ? (isXai ? 'duplex' : 'push-to-talk') : currentWeb;
+    try {
+      await voiceApi.updateConfig({
+        ...voiceCfg,
+        engine: nextEngine,
+        mode: { ...voiceCfg?.mode, web: nextWeb },
+      } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
 
   const handleProviderSelect = async (providerId: string) => {
-    setVoiceProvider(providerId || null);
     setProviderAnchor(null);
     try {
-      await voiceApi.updateConfig({ provider: { activeProvider: providerId || undefined } });
+      await voiceApi.updateConfig({ provider: { activeProvider: providerId || undefined } } as VoiceConfig);
     } catch { /* ignore */ }
   };
 
   const handleModelSelect = async (modelId: string) => {
-    setVoiceModel(modelId || null);
     setModelAnchor(null);
     try {
-      await voiceApi.updateConfig({ provider: { activeModel: modelId || undefined } });
+      await voiceApi.updateConfig({ provider: { activeModel: modelId || undefined } } as VoiceConfig);
     } catch { /* ignore */ }
   };
 
-  const handleVoiceSelect = async (vid: string) => {
-    setVoiceId(vid);
+  const handleKokoroVoiceSelect = async (vid: string) => {
     setVoiceAnchor(null);
     try {
-      await voiceApi.updateConfig({ tts: { voiceId: vid } });
+      await voiceApi.updateConfig({ tts: { voiceId: vid } } as VoiceConfig);
     } catch { /* ignore */ }
   };
 
-  // Display the voice-specific provider, or fall back to the current default.
-  // Show the profile name (activeProfile) rather than the provider name.
+  const handleXaiVoiceSelect = async (vid: string) => {
+    setVoiceAnchor(null);
+    try {
+      await voiceApi.updateConfig({ xai: { voice: vid } } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const engineLabel = engine === 'realtime_xai' ? 'xAI' : 'Local';
   const effectiveProvider = voiceProvider || defaultProvider;
   const effectiveModel = voiceModel || defaultModel;
   const matchedProvider = configuredProviders.find((p) => p.id === effectiveProvider);
@@ -395,8 +428,11 @@ export function VoiceAgentHeaderControls({
     || effectiveProvider
     || '—';
   const modelLabel = effectiveModel ? effectiveModel.split('/').pop() || effectiveModel : '—';
-  const voiceProfile = KOKORO_VOICE_PROFILES.find((p) => p.id === voiceId);
-  const voiceLabel = voiceProfile?.name || voiceId;
+  const kokoroProfile = KOKORO_VOICE_PROFILES.find((p) => p.id === kokoroVoiceId);
+  const kokoroVoiceLabel = kokoroProfile?.name || kokoroVoiceId;
+  const xaiVoiceMatch = xaiVoices.find((v) => v.id === xaiVoiceId);
+  const xaiVoiceLabel = xaiVoiceMatch?.name || xaiVoiceId;
+  const voiceLabel = engine === 'realtime_xai' ? xaiVoiceLabel : kokoroVoiceLabel;
 
   return (
     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
@@ -415,87 +451,127 @@ export function VoiceAgentHeaderControls({
         title={bypassChip ? 'Bypass enabled — auto-approve tools' : 'Enable bypass — auto-approve tools'}
       />
       <ConfigChip
-        label={profileLabel}
-        onClick={(e) => setProviderAnchor(e.currentTarget)}
+        label={engineLabel}
+        onClick={(e) => setEngineAnchor(e.currentTarget)}
+        active={engine === 'realtime_xai'}
       />
-      <ConfigChip
-        label={modelLabel}
-        onClick={(e) => setModelAnchor(e.currentTarget)}
-      />
+      {engine === 'stt_llm_tts' && (
+        <>
+          <ConfigChip
+            label={profileLabel}
+            onClick={(e) => setProviderAnchor(e.currentTarget)}
+          />
+          <ConfigChip
+            label={modelLabel}
+            onClick={(e) => setModelAnchor(e.currentTarget)}
+          />
+        </>
+      )}
       <ConfigChip
         label={voiceLabel}
         onClick={(e) => setVoiceAnchor(e.currentTarget)}
       />
 
-      {/* Provider dropdown — shows configured providers (saved profiles) */}
+      {/* Engine dropdown — switch between Local and xAI */}
       <Popover
-        open={Boolean(providerAnchor)}
-        anchorEl={providerAnchor}
-        onClose={() => setProviderAnchor(null)}
+        open={Boolean(engineAnchor)}
+        anchorEl={engineAnchor}
+        onClose={() => setEngineAnchor(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1 } }}
       >
         <Box sx={{ py: 0.5, minWidth: 160 }}>
           <MenuItem
-            onClick={() => handleProviderSelect('')}
-            selected={!voiceProvider}
-            sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
+            onClick={() => handleEngineSelect('stt_llm_tts')}
+            selected={engine === 'stt_llm_tts'}
+            sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
           >
-            <em>Use default ({defaultProvider || '—'})</em>
+            Local · STT+LLM+TTS
           </MenuItem>
-          {configuredProviders.map((p) => (
+          <MenuItem
+            onClick={() => handleEngineSelect('realtime_xai')}
+            selected={engine === 'realtime_xai'}
+            sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+          >
+            xAI · Grok Voice Agent
+          </MenuItem>
+        </Box>
+      </Popover>
+
+      {/* Provider dropdown — local engine only */}
+      {engine === 'stt_llm_tts' && (
+        <Popover
+          open={Boolean(providerAnchor)}
+          anchorEl={providerAnchor}
+          onClose={() => setProviderAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1 } }}
+        >
+          <Box sx={{ py: 0.5, minWidth: 160 }}>
             <MenuItem
-              key={p.id}
-              onClick={() => handleProviderSelect(p.id)}
-              selected={p.id === voiceProvider}
-              sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+              onClick={() => handleProviderSelect('')}
+              selected={!voiceProvider}
+              sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
             >
-              {p.name}{p.activeProfile ? ` · ${p.activeProfile}` : ''}
+              <em>Use default ({defaultProvider || '—'})</em>
             </MenuItem>
-          ))}
-        </Box>
-      </Popover>
-
-      {/* Model dropdown */}
-      <Popover
-        open={Boolean(modelAnchor)}
-        anchorEl={modelAnchor}
-        onClose={() => setModelAnchor(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 200, overflow: 'auto' } }}
-      >
-        <Box sx={{ py: 0.5, minWidth: 200 }}>
-          {loadingModels ? (
-            <MenuItem disabled sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}>
-              Loading models…
-            </MenuItem>
-          ) : (
-            <>
+            {configuredProviders.map((p) => (
               <MenuItem
-                onClick={() => handleModelSelect('')}
-                selected={!voiceModel}
-                sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
+                key={p.id}
+                onClick={() => handleProviderSelect(p.id)}
+                selected={p.id === voiceProvider}
+                sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
               >
-                <em>Use default ({defaultModel ? defaultModel.split('/').pop() : '—'})</em>
+                {p.name}{p.activeProfile ? ` · ${p.activeProfile}` : ''}
               </MenuItem>
-              {models.map((m) => (
-                <MenuItem
-                  key={m.id}
-                  onClick={() => handleModelSelect(m.id)}
-                  selected={m.id === voiceModel}
-                  sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
-                >
-                  {m.name || m.id}
-                </MenuItem>
-              ))}
-            </>
-          )}
-        </Box>
-      </Popover>
+            ))}
+          </Box>
+        </Popover>
+      )}
 
-      {/* Voice profile dropdown — Kokoro TTS voices grouped by language */}
+      {/* Model dropdown — local engine only */}
+      {engine === 'stt_llm_tts' && (
+        <Popover
+          open={Boolean(modelAnchor)}
+          anchorEl={modelAnchor}
+          onClose={() => setModelAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 200, overflow: 'auto' } }}
+        >
+          <Box sx={{ py: 0.5, minWidth: 200 }}>
+            {loadingModels ? (
+              <MenuItem disabled sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}>
+                Loading models…
+              </MenuItem>
+            ) : (
+              <>
+                <MenuItem
+                  onClick={() => handleModelSelect('')}
+                  selected={!voiceModel}
+                  sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
+                >
+                  <em>Use default ({defaultModel ? defaultModel.split('/').pop() : '—'})</em>
+                </MenuItem>
+                {models.map((m) => (
+                  <MenuItem
+                    key={m.id}
+                    onClick={() => handleModelSelect(m.id)}
+                    selected={m.id === voiceModel}
+                    sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+                  >
+                    {m.name || m.id}
+                  </MenuItem>
+                ))}
+              </>
+            )}
+          </Box>
+        </Popover>
+      )}
+
+      {/* Voice dropdown — Kokoro (local) or xAI voices */}
       <Popover
         open={Boolean(voiceAnchor)}
         anchorEl={voiceAnchor}
@@ -505,23 +581,42 @@ export function VoiceAgentHeaderControls({
         PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 280, overflow: 'auto' } }}
       >
         <Box sx={{ py: 0.5, minWidth: 180 }}>
-          {Array.from(new Set(KOKORO_VOICE_PROFILES.map((p) => p.language))).map((language) => (
-            <Box key={language}>
-              <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: colors.text.dim, px: 1, pt: 0.5, pb: 0.25, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {language}
-              </Typography>
-              {KOKORO_VOICE_PROFILES.filter((p) => p.language === language).map((p) => (
+          {engine === 'realtime_xai' ? (
+            xaiVoices.length === 0 ? (
+              <MenuItem disabled sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.dim }}>
+                No voices loaded — check xAI API key
+              </MenuItem>
+            ) : (
+              xaiVoices.map((v) => (
                 <MenuItem
-                  key={p.id}
-                  onClick={() => handleVoiceSelect(p.id)}
-                  selected={p.id === voiceId}
+                  key={v.id}
+                  onClick={() => handleXaiVoiceSelect(v.id)}
+                  selected={v.id === xaiVoiceId}
                   sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.secondary, minHeight: 'auto', py: 0.25 }}
                 >
-                  {p.name} <span style={{ color: colors.text.dim, marginLeft: 4 }}>({p.gender})</span>
+                  {v.name} {v.language ? <span style={{ color: colors.text.dim, marginLeft: 4 }}>({v.language})</span> : null}
                 </MenuItem>
-              ))}
-            </Box>
-          ))}
+              ))
+            )
+          ) : (
+            Array.from(new Set(KOKORO_VOICE_PROFILES.map((p) => p.language))).map((language) => (
+              <Box key={language}>
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: colors.text.dim, px: 1, pt: 0.5, pb: 0.25, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {language}
+                </Typography>
+                {KOKORO_VOICE_PROFILES.filter((p) => p.language === language).map((p) => (
+                  <MenuItem
+                    key={p.id}
+                    onClick={() => handleKokoroVoiceSelect(p.id)}
+                    selected={p.id === kokoroVoiceId}
+                    sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.secondary, minHeight: 'auto', py: 0.25 }}
+                  >
+                    {p.name} <span style={{ color: colors.text.dim, marginLeft: 4 }}>({p.gender})</span>
+                  </MenuItem>
+                ))}
+              </Box>
+            ))
+          )}
         </Box>
       </Popover>
     </Box>
@@ -529,7 +624,7 @@ export function VoiceAgentHeaderControls({
 }
 
 /** Capsule-shaped chip (same height as VoiceToggleChip) with label only, opens dropdown on click. */
-function ConfigChip({ label, onClick }: { label: string; onClick: (e: React.MouseEvent<HTMLElement>) => void }) {
+function ConfigChip({ label, onClick, active }: { label: string; onClick: (e: React.MouseEvent<HTMLElement>) => void; active?: boolean }) {
   return (
     <Box
       onClick={onClick}
@@ -540,9 +635,9 @@ function ConfigChip({ label, onClick }: { label: string; onClick: (e: React.Mous
         px: 0.75,
         borderRadius: '11px',
         cursor: 'pointer',
-        border: `1px solid ${colors.border.subtle}`,
-        bgcolor: alphaColor(colors.bg.primary, '80'),
-        color: colors.text.dim,
+        border: `1px solid ${active ? alphaColor(colors.accent.blue, '66') : colors.border.subtle}`,
+        bgcolor: active ? alphaColor(colors.accent.blue, '1a') : alphaColor(colors.bg.primary, '80'),
+        color: active ? colors.accent.blue : colors.text.dim,
         transition: 'all 0.15s',
         maxWidth: 120,
         '&:hover': {

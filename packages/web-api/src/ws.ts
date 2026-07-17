@@ -4,7 +4,7 @@ import { getEngine } from './engine.js';
 import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, attachChartPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
-import type { DeepSearchProgress, EngineEvent, EventHandler, Message } from '@agentx/shared';
+import type { DeepSearchProgress, EngineEvent, EventHandler, Message, MessageMetadata } from '@agentx/shared';
 import { MemoryFabric, MemoryIngestionService as MemoryService, TtlCache } from '@agentx/engine';
 import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
 
@@ -251,6 +251,7 @@ function appendContextFile(
     turnTokens?: number;
     turnCostUsd?: number;
     tokenCount?: number;
+    metadata?: MessageMetadata;
   },
   messageId?: string,
 ): void {
@@ -277,6 +278,7 @@ function appendContextFile(
           plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
           parts: extra?.parts,
           metadata: {
+            ...extra?.metadata,
             crewId: crew.crewId,
             crewName: crew.name,
             callsign: crew.callsign,
@@ -292,6 +294,15 @@ function appendContextFile(
     const eng = getEngine();
     const store = eng.sessionManager.getStorageAdapter();
     if (store?.insertMessage) {
+      // Augment with the active provider/model if the caller didn't supply them.
+      let metadata: Record<string, unknown> = { ...(extra?.metadata as Record<string, unknown> | undefined) };
+      if (!metadata['provider'] || !metadata['model']) {
+        try {
+          const cfg = eng.configManager.load();
+          if (!metadata['provider']) metadata['provider'] = cfg.provider.activeProvider;
+          if (!metadata['model']) metadata['model'] = cfg.provider.activeModel;
+        } catch { /* ignore */ }
+      }
       store.insertMessage({
         id: messageId,
         sessionId,
@@ -302,6 +313,7 @@ function appendContextFile(
         thinking: extra?.thinking,
         plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
         parts: extra?.parts,
+        metadata,
       });
     }
   } catch { /* best-effort */ }
@@ -310,7 +322,7 @@ function appendContextFile(
 /**
  * Directly persist a message to PostgreSQL — independent of WebSocket subscription.
  */
-export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[] }): void {
+export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[]; metadata?: MessageMetadata }): void {
   appendContextFile(sessionId, role, content, undefined, extra);
 }
 

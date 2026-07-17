@@ -55,6 +55,8 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
   const [engineWarmAtLaunch, setEngineWarmAtLaunch] = useState(false);
   const autoStartRef = useRef(false);
   const warmupAllowedRef = useRef(false);
+  const engineXaiRef = useRef(false);
+  const xaiConfiguredRef = useRef(false);
   const warmupInFlightRef = useRef<Promise<void> | null>(null);
   const releaseEpochRef = useRef(0);
   const bootingStartedAtRef = useRef<number | null>(null);
@@ -75,6 +77,13 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
   }, []);
 
   const probeSidecarStatus = useCallback(async (): Promise<boolean> => {
+    if (engineXaiRef.current) {
+      if (xaiConfiguredRef.current) {
+        applyReady();
+        return true;
+      }
+      return false;
+    }
     const result = await voice.sidecarStatus();
     const sidecar = result.sidecar;
     const sidecarHealth = 'health' in sidecar ? sidecar.health : undefined;
@@ -98,6 +107,16 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
       setPhase('disabled');
       setError(null);
       setHealth(undefined);
+      return;
+    }
+
+    if (engineXaiRef.current) {
+      bootingStartedAtRef.current = null;
+      if (xaiConfiguredRef.current) {
+        applyReady();
+      } else {
+        applyFailed('xAI API key is missing');
+      }
       return;
     }
 
@@ -163,6 +182,8 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
     if (!voiceEnabled || !canRunWeb) {
       autoStartRef.current = false;
       warmupAllowedRef.current = false;
+      engineXaiRef.current = false;
+      xaiConfiguredRef.current = false;
       setEngineWarmAtLaunch(false);
       setPhase('disabled');
       setHealth(undefined);
@@ -175,12 +196,22 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
       fetch('/api/system/capabilities').then((r) => r.json()).catch(() => null),
     ])
       .then(([cfg, caps]) => {
+        const merged = mergeVoiceConfig(cfg);
+        const isXai = merged.engine === 'realtime_xai';
+        engineXaiRef.current = isXai;
+        xaiConfiguredRef.current = isXai && Boolean(merged.xai?.apiKey);
+        if (isXai) {
+          autoStartRef.current = false;
+          warmupAllowedRef.current = false;
+          setEngineWarmAtLaunch(false);
+          return;
+        }
         const totalMemoryGB = typeof caps?.totalMemoryGB === 'number' ? caps.totalMemoryGB : 0;
         const warmupAllowed = typeof caps?.voiceWarmupSupported === 'boolean'
           ? caps.voiceWarmupSupported
           : isVoiceWarmupSupported(totalMemoryGB);
         warmupAllowedRef.current = warmupAllowed;
-        const wantsAutoStart = mergeVoiceConfig(cfg).sidecar?.autoStart === true;
+        const wantsAutoStart = merged.sidecar?.autoStart === true;
         const warmAtLaunch = warmupAllowed && wantsAutoStart;
         autoStartRef.current = warmAtLaunch;
         setEngineWarmAtLaunch(warmAtLaunch);
@@ -188,6 +219,8 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
       .catch(() => {
         autoStartRef.current = false;
         warmupAllowedRef.current = false;
+        engineXaiRef.current = false;
+        xaiConfiguredRef.current = false;
         setEngineWarmAtLaunch(false);
       })
       .finally(() => {
@@ -222,6 +255,18 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
     warmupInFlightRef.current = null;
     bootingStartedAtRef.current = null;
 
+    if (engineXaiRef.current) {
+      // xAI has no local sidecar to release. Keep the engine marked ready as
+      // long as the API key is configured so the duplex WebSocket session
+      // doesn't drop between turns.
+      if (xaiConfiguredRef.current) {
+        applyReady();
+      } else {
+        applyFailed('xAI API key is missing');
+      }
+      return;
+    }
+
     const epoch = releaseEpochRef.current;
     void voice.releaseSidecar()
       .then(() => {
@@ -235,7 +280,7 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
         setPhase('idle');
         setHealth(undefined);
       });
-  }, []);
+  }, [applyReady, applyFailed]);
 
   useEffect(() => {
     const onVoiceUpdated = () => { syncWarmupConfig(); };
@@ -267,6 +312,9 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
   useEffect(() => {
     if (!voiceEnabled || !canRunWeb) return;
     if (phase !== 'ready' && phase !== 'idle') return;
+    // xAI realtime has no local sidecar to poll — skip the status probe entirely
+    // so we don't mistakenly reset a ready duplex session back to idle.
+    if (engineXaiRef.current) return;
 
     const poll = async () => {
       try {

@@ -102,16 +102,25 @@ export const KOKORO_VOICE_PROFILES: KokoroVoiceProfile[] = [
 ];
 
 export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
-  const enabled = input?.enabled ?? false;
+  const hasXaiCredentials = Boolean(input?.xai?.apiKey);
+  const engine = input?.engine ?? (hasXaiCredentials ? 'realtime_xai' : 'stt_llm_tts');
+  const isXai = engine === 'realtime_xai';
+  const enabled = input?.enabled ?? (hasXaiCredentials || isXai);
   // When voice is enabled, web mode must not be 'off' — otherwise voice UI stays hidden.
-  // Default to 'push-to-talk' if the persisted config has enabled=true but mode.web='off'.
+  // xAI realtime defaults to duplex; local defaults to push-to-talk.
   const inputWebMode = input?.mode?.web;
-  const webMode = enabled && (!inputWebMode || inputWebMode === 'off')
-    ? 'push-to-talk'
+  const webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
+    ? (isXai ? 'duplex' : 'push-to-talk')
     : (inputWebMode ?? 'off');
   return {
     enabled,
     mode: { web: webMode, channels: input?.mode?.channels ?? 'off' },
+    engine,
+    xai: {
+      model: 'grok-voice-latest',
+      voice: 'eve',
+      ...input?.xai,
+    },
     stt: {
       engine: 'faster-whisper',
       modelId: 'faster-distil-whisper-small.en',
@@ -129,14 +138,16 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
     fillers: { enabled: true, speakToolProgress: true, ...input?.fillers },
     wakeWord: { enabled: false, ...input?.wakeWord },
     downloadedAssets: input?.downloadedAssets ?? [],
+    provider: input?.provider,
   };
 }
 
 export function applyVoicePreset(config: VoiceConfig): VoiceConfig {
+  const isXai = config.engine === 'realtime_xai';
   return mergeVoiceConfig({
     ...config,
     enabled: true,
-    mode: { ...config.mode, web: config.mode?.web && config.mode.web !== 'off' ? config.mode.web : 'push-to-talk' },
+    mode: { ...config.mode, web: config.mode?.web && config.mode.web !== 'off' ? config.mode.web : (isXai ? 'duplex' : 'push-to-talk') },
     stt: { modelId: 'faster-distil-whisper-small.en', computeType: 'int8', device: 'auto' },
     tts: {
       engine: 'kokoro',

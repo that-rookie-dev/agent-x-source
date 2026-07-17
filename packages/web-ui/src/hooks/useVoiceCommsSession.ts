@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useMicrophonePermission } from './useMicrophonePermission';
 import { useVoiceKeyboard } from './useVoiceKeyboard';
 import { useVoiceSession } from './useVoiceSession';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { voiceDisabledReason, markVoiceOutputUnlocked } from '../voice/support';
-import { loadVoiceInputMode, saveVoiceInputMode, type VoiceInputMode } from '../voice/input-mode-preference';
-import { VOICE_HANDS_FREE_ENABLED } from '../voice/voice-config';
+import { type VoiceInputMode } from '../voice/input-mode-preference';
 import {
   computePushToTalkBlocked,
   resolvePttCommsPhase,
@@ -42,13 +41,12 @@ export function useVoiceCommsSession({
   const mic = useMicrophonePermission();
   const voiceCtx = useVoiceOptional();
   const envBlocked = voiceDisabledReason();
-  const [inputMode, setInputModeState] = useState<VoiceInputMode>(() => loadVoiceInputMode());
 
-  const setInputMode = useCallback((mode: VoiceInputMode) => {
-    if (!VOICE_HANDS_FREE_ENABLED && mode === 'duplex') return;
-    setInputModeState(mode);
-    saveVoiceInputMode(mode);
-  }, []);
+  // Mode is driven by the active voice engine: xAI is always duplex (server-side VAD),
+  // local is always push-to-talk. The input-mode preference is ignored.
+  const engine = voiceCtx?.voiceConfig?.engine ?? 'stt_llm_tts';
+  const isDuplex = engine === 'realtime_xai';
+  const effectiveInputMode: VoiceInputMode = isDuplex ? 'duplex' : 'push-to-talk';
 
   const bootPhase = voiceCtx?.warmupPhase ?? 'idle';
   const commsReady = bootPhase === 'ready';
@@ -56,8 +54,6 @@ export function useVoiceCommsSession({
   const prerequisitesOk = active && voiceReady && !envBlocked;
   const micReady = mic.state === 'granted';
   const pttEnabled = prerequisitesOk && commsReady && micReady;
-  const effectiveInputMode = VOICE_HANDS_FREE_ENABLED ? inputMode : 'push-to-talk';
-  const isDuplex = effectiveInputMode === 'duplex';
 
   const session = useVoiceSession(
     pttEnabled,
@@ -106,12 +102,6 @@ export function useVoiceCommsSession({
     await session.endPushToTalk();
   }, [pttEnabled, session]);
 
-  const toggleInputMode = useCallback(() => {
-    if (!VOICE_HANDS_FREE_ENABLED) return;
-    session.cancel();
-    setInputMode(isDuplex ? 'push-to-talk' : 'duplex');
-  }, [isDuplex, session, setInputMode]);
-
   const pushToTalkBlocked = computePushToTalkBlocked({
     state: session.state,
     holding: session.holding,
@@ -139,7 +129,7 @@ export function useVoiceCommsSession({
     onEndPushToTalk: () => { void endVoice(); },
     onToggleSession: () => {},
     onInterruptPlayback: () => session.interruptPlayback(),
-    onDoubleTapSpace: VOICE_HANDS_FREE_ENABLED ? toggleInputMode : undefined,
+    onDoubleTapSpace: undefined,
   });
 
   const operatorText = (session.finalTranscript || session.partialTranscript || session.transcript).trim();
@@ -174,7 +164,7 @@ export function useVoiceCommsSession({
     if (bootPhase === 'failed') return voiceCtx?.warmupError ?? 'Voice offline';
     if (!commsReady) return 'Linking comms…';
     if (mic.state !== 'granted') return mic.blocked ? 'Mic blocked' : 'Allow microphone';
-    if (session.pttReady && !session.pttTurnLocked && !session.holding) return 'Hold Space to speak';
+    if (session.pttReady && !session.pttTurnLocked && !session.holding) return isDuplex ? 'Listening…' : 'Hold Space to speak';
     if (pipelineLabel) return pipelineLabel;
     if (session.pttTurnLocked) {
       if (commsPhase === 'operator_stt') return 'Preparing voice…';
@@ -182,7 +172,7 @@ export function useVoiceCommsSession({
       if (commsPhase === 'agent_prep') return 'Preparing response…';
       if (commsPhase === 'agent_tx') return 'Agent speaking';
     }
-    if (commsReady) return 'Hold Space to speak';
+    if (commsReady) return isDuplex ? 'Listening…' : 'Hold Space to speak';
     return 'Standby';
   }, [
     envBlocked, voiceReady, bootPhase, voiceCtx?.warmupError, commsReady, mic.state, mic.blocked,
@@ -194,9 +184,9 @@ export function useVoiceCommsSession({
     voiceCtx,
     envBlocked,
     inputMode: effectiveInputMode,
-    setInputMode,
+    setInputMode: () => { /* mode driven by engine */ },
     isDuplex,
-    handsFreeEnabled: VOICE_HANDS_FREE_ENABLED,
+    handsFreeEnabled: false,
     bootPhase,
     commsReady,
     voiceReady,

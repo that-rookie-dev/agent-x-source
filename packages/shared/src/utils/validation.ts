@@ -107,6 +107,13 @@ export const voiceConfigSchema = z.object({
     web: z.enum(['off', 'push-to-talk', 'duplex']).optional(),
     channels: z.enum(['off', 'voice-notes']).optional(),
   }).optional(),
+  engine: z.enum(['stt_llm_tts', 'realtime_xai']).optional(),
+  xai: z.object({
+    apiKey: z.string().optional(),
+    model: z.string().optional(),
+    voice: z.string().optional(),
+    baseUrl: z.string().optional(),
+  }).optional(),
   stt: z.object({
     engine: z.literal('faster-whisper').default('faster-whisper'),
     modelId: z.string().optional(),

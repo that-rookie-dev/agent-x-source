@@ -183,6 +183,16 @@ export function useVoiceSession(
             setTurnPipeline('llm_processing');
             callbacksRef.current?.onAgentRunning?.();
           }
+          if (status === 'listening') {
+            // Barge-in or duplex recovery: reset the pipeline so the UI turns
+            // green immediately instead of staying orange ("Agent thinking…").
+            setAgentTurnComplete(false);
+            setPlaybackActive(false);
+            setPlaybackLevel(0);
+            setAgentText('');
+            setSilenceProgress(0);
+            setTurnPipeline('idle');
+          }
           if (status === 'complete') {
             setAgentTurnComplete(true);
             window.setTimeout(() => {

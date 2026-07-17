@@ -23,14 +23,15 @@ export interface VoiceWaveCardProps {
   statusLabel?: string;
   error?: string | null;
   height?: number;
+  isDuplex?: boolean;
 }
 
-function phaseLabel(phase: CommsPhase, standbyHint: string): string {
+function phaseLabel(phase: CommsPhase, standbyHint: string, isDuplex: boolean): string {
   switch (phase) {
     case 'boot': return 'Warming voice engine…';
     case 'link': return 'Opening session…';
     case 'standby': return standbyHint;
-    case 'operator_record': return 'Recording · release Space';
+    case 'operator_record': return isDuplex ? 'Listening…' : 'Recording · release Space';
     case 'operator_stt': return 'Transcribing…';
     case 'relay_process': return 'Agent thinking…';
     case 'agent_prep': return 'Preparing audio…';
@@ -75,11 +76,12 @@ export function VoiceWaveCard({
   statusLabel,
   error,
   height = 52,
+  isDuplex = false,
 }: VoiceWaveCardProps) {
   const waveAccent = WAVE_ACCENT[waveMode];
   const showWave = waveMode !== 'idle';
   const showLoader = resolveShowLoader(phase, turnPipeline);
-  const label = statusLabel ?? phaseLabel(phase, standbyHint);
+  const label = statusLabel ?? phaseLabel(phase, isDuplex ? 'Listening…' : standbyHint, isDuplex);
 
   return (
     <Box sx={{

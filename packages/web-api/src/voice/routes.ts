@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { resolve } from 'node:path';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { VOICE_ASSET_CATALOG, mergeVoiceConfig, registerAliasAssets, loadVoiceModelsManifest } from '@agentx/engine';
+import type { VoiceConfig } from '@agentx/shared';
 import { getEngine } from '../engine.js';
 import {
   voiceInfo,
@@ -271,13 +272,55 @@ function createVoiceRoutesRouter(): Router {
 
   router.post('/voice/preview', async (req, res) => {
     const text = String(req.body?.text ?? '').trim();
-    const engine = 'kokoro';
-    const voiceId = typeof req.body?.voiceId === 'string' ? req.body.voiceId : undefined;
     if (!text) {
       return res.status(400).json({ error: 'Preview text is required' });
     }
     if (text.length > 500) {
       return res.status(400).json({ error: 'Preview text must be 500 characters or less' });
+    }
+
+    const config = mergeVoiceConfig(getEngine().configManager.load().voice);
+    const engine = (req.body?.engine as VoiceConfig['engine']) ?? config.engine ?? 'stt_llm_tts';
+    const voiceId = typeof req.body?.voiceId === 'string' ? req.body.voiceId : undefined;
+
+    if (engine === 'realtime_xai') {
+      const apiKey = config.xai?.apiKey ?? process.env['XAI_API_KEY'];
+      if (!apiKey) {
+        return res.status(400).json({ error: 'xAI API key is not configured' });
+      }
+      try {
+        const response = await fetch('https://api.x.ai/v1/tts', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text,
+            voice_id: voiceId ?? config.xai?.voice ?? 'eve',
+            language: 'en',
+            output_format: { codec: 'mp3', sample_rate: 24000, bit_rate: 128000 },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) {
+          const raw = await response.text();
+          return res.status(502).json({ error: `xAI TTS error: ${response.status} ${raw.slice(0, 200)}` });
+        }
+        const contentType = response.headers.get('content-type') ?? '';
+        // xAI TTS returns raw audio bytes by default; when with_timestamps is true it returns JSON.
+        if (contentType.includes('application/json')) {
+          const data = await response.json() as { audio?: string };
+          if (!data.audio) {
+            return res.status(502).json({ error: 'xAI TTS response missing audio' });
+          }
+          return res.json({ audioBase64: data.audio, mimeType: 'audio/mpeg' });
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        return res.json({ audioBase64: buffer.toString('base64'), mimeType: contentType || 'audio/mpeg' });
+      } catch (error) {
+        return res.status(500).json({ error: error instanceof Error ? error.message : 'xAI TTS preview failed' });
+      }
     }
 
     try {
@@ -287,20 +330,78 @@ function createVoiceRoutesRouter(): Router {
       const client = await getVoiceSidecarManager().start();
       const result = await client.synthesize({
         text,
-        engine,
+        engine: 'kokoro',
         voiceId,
         outputPath,
         style: req.body?.style,
       });
       const audioPath = result.audioPath ?? outputPath;
       const audio = readFileSync(audioPath);
-      res.json({
+      return res.json({
         ...result,
         audioBase64: audio.toString('base64'),
         mimeType: 'audio/wav',
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Voice preview failed' });
+      return res.status(500).json({ error: error instanceof Error ? error.message : 'Voice preview failed' });
+    }
+  });
+
+  router.post('/voice/xai/validate', async (req, res) => {
+    const config = mergeVoiceConfig(getEngine().configManager.load().voice);
+    let apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey : undefined;
+    if (!apiKey) apiKey = config.xai?.apiKey;
+    if (!apiKey) apiKey = process.env['XAI_API_KEY'];
+    if (!apiKey) {
+      return res.status(400).json({ valid: false, error: 'xAI API key is missing' });
+    }
+    try {
+      // Use the realtime client_secrets endpoint to confirm the key can access
+      // the Voice Agent API. We request a short-lived secret and discard it.
+      const response = await fetch('https://api.x.ai/v1/realtime/client_secrets', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          expires_after: { seconds: 60 },
+          model: config.xai?.model ?? 'grok-voice-latest',
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) {
+        return res.json({ valid: true });
+      }
+      const raw = await response.text();
+      return res.status(400).json({ valid: false, error: `xAI API returned ${response.status}: ${raw.slice(0, 200)}` });
+    } catch (error) {
+      return res.status(500).json({ valid: false, error: error instanceof Error ? error.message : 'xAI validation failed' });
+    }
+  });
+
+  router.get('/voice/xai/voices', async (_req, res) => {
+    const config = mergeVoiceConfig(getEngine().configManager.load().voice);
+    const apiKey = config.xai?.apiKey ?? process.env['XAI_API_KEY'];
+    if (!apiKey) {
+      return res.status(400).json({ error: 'xAI API key is not configured' });
+    }
+    try {
+      const response = await fetch('https://api.x.ai/v1/tts/voices', {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        const raw = await response.text();
+        return res.status(502).json({ error: `xAI voices error: ${response.status} ${raw.slice(0, 200)}` });
+      }
+      const data = await response.json() as { voices?: Array<{ voice_id?: string; name?: string; language?: string | null }> };
+      const voices = (data.voices ?? [])
+        .filter((v) => v.voice_id && v.name)
+        .map((v) => ({ id: v.voice_id, name: v.name, language: v.language ?? undefined }));
+      return res.json({ voices });
+    } catch (error) {
+      return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to fetch xAI voices' });
     }
   });
 

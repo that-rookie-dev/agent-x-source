@@ -1189,6 +1189,14 @@ export interface VoiceConfig {
     web?: 'off' | 'push-to-talk' | 'duplex';
     channels?: 'off' | 'voice-notes';
   };
+  /** Active voice engine. */
+  engine?: 'stt_llm_tts' | 'realtime_xai';
+  /** xAI realtime settings. */
+  xai?: {
+    apiKey?: string;
+    model?: string;
+    voice?: string;
+  };
   stt?: {
     engine?: 'faster-whisper';
     modelId?: string;
@@ -1263,6 +1271,8 @@ export interface VoiceCapabilityStatus {
   gpuAvailable?: boolean;
   canRunWeb: boolean;
   canRunChannels: boolean;
+  engine?: string;
+  realtimeXai?: { configured: boolean };
 }
 
 export interface VoiceSetupStatus {
@@ -1859,7 +1869,7 @@ export const voice = {
       '/voice/sidecar/release',
       { method: 'POST', body: JSON.stringify({ force: opts?.force === true }) },
     ),
-  preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
+  preview: (text: string, engine: string, voiceId?: string, style?: VoiceTtsStyleConfig) =>
     request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
       '/voice/preview',
       {
@@ -1868,6 +1878,13 @@ export const voice = {
       },
       60_000,
     ),
+  validateXai: (apiKey?: string) =>
+    request<{ valid: boolean; error?: string }>('/voice/xai/validate', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
+    }),
+  xaiVoices: () =>
+    request<{ voices: Array<{ id: string; name: string; language?: string }> }>('/voice/xai/voices'),
   greeting: () =>
     request<{ text: string; fallback?: boolean }>(
       '/voice/greeting',

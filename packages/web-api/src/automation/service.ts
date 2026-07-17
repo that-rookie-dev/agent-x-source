@@ -1,4 +1,4 @@
-import { parseExpression } from 'cron-parser';
+import cronParser from 'cron-parser';
 import type {
   AutomationNotifyChannel,
   AutomationRegisterInput,
@@ -89,7 +89,7 @@ function computeNextRunAt(task: AutomationTaskRecord): string | null {
   }
   if (task.cronExpression) {
     try {
-      return parseExpression(task.cronExpression, { tz: task.timezone || 'UTC' }).next().toDate().toISOString();
+      return cronParser.parseExpression(task.cronExpression, { tz: task.timezone || 'UTC' }).next().toDate().toISOString();
     } catch { /* fall through */ }
   }
   return task.nextRunAt;
@@ -237,7 +237,7 @@ export class AutomationService {
     if (!boss || task.status !== 'active' || task.scheduleType !== 'recurring' || !task.cronExpression) return;
 
     const timezone = task.timezone || 'UTC';
-    const nextRunAt = parseExpression(task.cronExpression, { tz: timezone }).next().toDate();
+    const nextRunAt = cronParser.parseExpression(task.cronExpression, { tz: timezone }).next().toDate();
     const triggerAt = new Date(Math.max(Date.now() + 500, nextRunAt.getTime() - AUTOMATION_RUN_LEAD_MS));
     const singletonKey = `automation-run:${task.id}`;
 
@@ -413,7 +413,7 @@ export class AutomationService {
         if (cron.split(/\s+/).length !== 5) {
           return { ok: false, error: 'cron must be a 5-field expression' };
         }
-        nextRunAt = parseExpression(cron, { tz: timezone }).next().toDate();
+        nextRunAt = cronParser.parseExpression(cron, { tz: timezone }).next().toDate();
         pgbossScheduleName = null;
       }
     } catch (e) {

@@ -26,6 +26,8 @@ interface VoiceContextValue {
   inlineVoiceAvailable: boolean;
   coreSessionId: string | null;
   voiceReady: boolean;
+  /** Merged voice configuration (engine, mode, etc.). */
+  voiceConfig: VoiceConfig | null;
   wakeWordEnabled: boolean;
   wakePhrase: string;
   warmupPhase: VoiceWarmupPhase;
@@ -68,6 +70,7 @@ interface VoiceProviderProps {
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
+  const [voiceConfig, setVoiceConfig] = useState<VoiceConfig | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [wakePhrase, setWakePhrase] = useState(() => resolveWakePhrase());
@@ -106,8 +109,11 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   }, [warmup.releaseSidecar, warmup.engineWarmAtLaunch]);
 
   const applyVoiceConfigSnapshot = useCallback((cfg: VoiceConfig) => {
+    setVoiceConfig(cfg);
     setVoiceEnabled(Boolean(cfg.enabled));
-    setWakeWordEnabled(Boolean(cfg.wakeWord?.enabled));
+    // Wake word uses browser SpeechRecognition; it works with any engine, but the
+    // toggle is disabled for xAI in settings to avoid confusion. Keep it off here.
+    setWakeWordEnabled(Boolean(cfg.wakeWord?.enabled) && cfg.engine !== 'realtime_xai');
   }, []);
 
   const loadVoiceState = useCallback(async () => {
@@ -118,13 +124,15 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
         getCoreSessionId().catch(() => null),
         personaApi.get().catch(() => ({} as Record<string, never>)),
       ]);
+      setVoiceConfig(cfg);
       setVoiceEnabled(Boolean(cfg.enabled));
-      setWakeWordEnabled(Boolean(cfg.wakeWord?.enabled));
+      setWakeWordEnabled(Boolean(cfg.wakeWord?.enabled) && cfg.engine !== 'realtime_xai');
       const personaName = typeof persona?.name === 'string' ? persona.name : null;
       setWakePhrase(resolveWakePhrase(personaName));
       setCanRunWeb(Boolean(caps.capabilities.canRunWeb));
       if (coreSessionId) setCoreSessionId(coreSessionId);
     } catch {
+      setVoiceConfig(null);
       setVoiceEnabled(false);
       setCanRunWeb(false);
     }
@@ -147,7 +155,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       const detail = (event as CustomEvent<VoiceConfig | undefined>).detail;
       if (detail) {
         applyVoiceConfigSnapshot(detail);
-        return;
       }
       void loadVoiceState();
     };
@@ -196,6 +203,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     inlineVoiceAvailable: Boolean(activeChatSessionId),
     coreSessionId,
     voiceReady: voiceEnabled && canRunWeb && !voiceDisabledReason(),
+    voiceConfig,
     wakeWordEnabled,
     wakePhrase,
     warmupPhase: warmup.phase,
@@ -218,6 +226,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     coreSessionId,
     voiceEnabled,
     canRunWeb,
+    voiceConfig,
     wakeWordEnabled,
     wakePhrase,
     warmup.phase,

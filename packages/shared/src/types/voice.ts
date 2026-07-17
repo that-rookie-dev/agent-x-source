@@ -19,6 +19,18 @@ export type VoiceComputeDevice = 'auto' | 'cpu' | 'cuda';
 
 export type TtsEngine = 'kokoro';
 
+export type VoiceEngineType = 'stt_llm_tts' | 'realtime_xai';
+
+export interface VoiceXaiConfig {
+  apiKey?: string;
+  /** xAI realtime model, e.g. grok-voice-latest. */
+  model?: string;
+  /** xAI voice ID, e.g. eve. */
+  voice?: string;
+  /** Optional WSS override. Defaults to wss://api.x.ai/v1/realtime. */
+  baseUrl?: string;
+}
+
 export interface VoiceSurfaceConfig {
   web?: 'off' | 'push-to-talk' | 'duplex';
   channels?: 'off' | 'voice-notes';
@@ -94,6 +106,10 @@ export interface VoiceProviderConfig {
 export interface VoiceConfig {
   enabled?: boolean;
   mode?: VoiceSurfaceConfig;
+  /** Active voice engine. Defaults to the local STT/LLM/TTS stack. */
+  engine?: VoiceEngineType;
+  /** xAI realtime settings. */
+  xai?: VoiceXaiConfig;
   stt?: VoiceSttConfig;
   tts?: VoiceTtsConfig;
   sidecar?: VoiceSidecarConfig;
@@ -134,4 +150,12 @@ export interface VoiceCapabilityStatus {
   gpuAvailable?: boolean;
   canRunWeb: boolean;
   canRunChannels: boolean;
+  /** Active/selected engine. */
+  engine?: VoiceEngineType;
+  /** xAI realtime readiness. */
+  realtimeXai?: {
+    configured: boolean;
+    reachable?: boolean;
+    error?: string;
+  };
 }

@@ -224,7 +224,9 @@ export function persistAssistantMessage(ctx: PersistenceContext, msg: Message): 
   if (!store?.insertMessage) return;
   try {
     const channel = ctx.activeInboundChannel ?? parseChannelBindingFromSessionId(ctx.sessionId) ?? undefined;
+    const cfg = ctx.options.config.provider;
     const metadata: Record<string, unknown> = {
+      ...(msg.metadata ?? {}),
       ...(msg.crew
         ? {
           crewId: msg.crew.crewId,
@@ -233,7 +235,9 @@ export function persistAssistantMessage(ctx: PersistenceContext, msg: Message): 
         }
         : {}),
     };
-    if (channel) metadata['channel'] = channel;
+    if (channel && !metadata['channel']) metadata['channel'] = channel;
+    if (cfg.activeProvider && !metadata['provider']) metadata['provider'] = cfg.activeProvider;
+    if (cfg.activeModel && !metadata['model']) metadata['model'] = cfg.activeModel;
     store.insertMessage({
       id: msg.id,
       sessionId: ctx.sessionId,
@@ -250,9 +254,12 @@ export function persistUserMessage(ctx: PersistenceContext, msg: Message): void 
   if (!store?.insertMessage) return;
   const channel = ctx.activeInboundChannel ?? parseChannelBindingFromSessionId(ctx.sessionId) ?? undefined;
   try {
+    const cfg = ctx.options.config.provider;
     const msgMeta = (msg.metadata ?? {}) as Record<string, unknown>;
     const metadata: Record<string, unknown> = { ...msgMeta };
     if (channel && !metadata['channel']) metadata['channel'] = channel;
+    if (cfg.activeProvider && !metadata['provider']) metadata['provider'] = cfg.activeProvider;
+    if (cfg.activeModel && !metadata['model']) metadata['model'] = cfg.activeModel;
     // Extract platform columns from message metadata (set by Agent.sendMessage).
     const platformMessageId = msgMeta['platformMessageId'] as number | undefined;
     const platformChatId = msgMeta['platformChatId'] as number | undefined;

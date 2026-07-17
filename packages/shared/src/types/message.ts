@@ -33,6 +33,12 @@ export interface MessageMetadata {
   channel?: string;
   normalizationWarnings?: number;
   providerRequestId?: string;
+  /** Voice engine that produced/ingested this message. */
+  engine?: string;
+  /** Provider used for the response. */
+  provider?: string;
+  /** Model used for the response. */
+  model?: string;
 }
 
 export type InputType =

@@ -51,7 +51,7 @@ export function ChatVoicePanel({
   }, [comms.waveMode, comms.session.audioLevel, comms.session.playbackLevel]);
 
   const linkReady = comms.commsReady && comms.micReady && comms.session.pttReady && comms.session.state !== 'connecting';
-  const standbyHint = linkReady ? 'Hold Space to speak' : comms.statusLabel;
+  const standbyHint = linkReady ? (comms.isDuplex ? 'Listening…' : 'Hold Space to speak') : comms.statusLabel;
   const notice = comms.session.warning
     ?? (comms.session.error ? friendlyVoiceError(comms.session.error) : null);
 
@@ -65,6 +65,7 @@ export function ChatVoicePanel({
         standbyHint={standbyHint}
         statusLabel={comms.statusLabel}
         error={notice}
+        isDuplex={comms.isDuplex}
       />
     </Box>
   );

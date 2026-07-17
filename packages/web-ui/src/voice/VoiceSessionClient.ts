@@ -95,6 +95,8 @@ export class VoiceSessionClient {
   /** PTT: mic graph is open but not streaming until armed. */
   private micPrepared = false;
   private captureArmed = false;
+  /** Engine type from `session_ready` — drives duplex barge-in behavior. */
+  private engineType: 'stt_llm_tts' | 'realtime_xai' | undefined;
 
   constructor(options: VoiceSessionClientOptions = {}) {
     this.events = options;
@@ -213,6 +215,7 @@ export class VoiceSessionClient {
           return;
         }
         if (msg.type === 'session_ready') {
+          this.engineType = (msg.engine as 'stt_llm_tts' | 'realtime_xai' | undefined) ?? 'stt_llm_tts';
           this.handleControl(msg);
           this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
           finish(() => {
@@ -245,7 +248,10 @@ export class VoiceSessionClient {
         }
         this.ws = null;
         this.connectPromise = null;
-        this.setState('idle');
+        // Don't reset error state to idle; idle only if the session ended cleanly.
+        if (this.state !== 'error') {
+          this.setState('idle');
+        }
       };
     });
 
@@ -286,9 +292,13 @@ export class VoiceSessionClient {
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (this.mode === 'duplex') {
-      if (this.state !== 'speaking') {
-        this.queueDuplexAudio(pcm);
+      // For xAI server VAD we keep the mic streaming so barge-in can work
+      // (browser echo cancellation is enabled). Local engine suppresses while
+      // the assistant is speaking to avoid echo/response loops.
+      if (this.state === 'speaking' && this.engineType !== 'realtime_xai') {
+        return;
       }
+      this.queueDuplexAudio(pcm);
       return;
     }
     if (!this.captureArmed) return;
@@ -345,6 +355,7 @@ export class VoiceSessionClient {
   /** PTT: begin streaming mic audio to the server (mic must be prepared). */
   armCapture(): void {
     if (this.mode !== 'push-to-talk' || !this.isMicPrepared()) return;
+    this.stopPlayback();
     this.playback.clearHistory();
     this.captureArmed = true;
     this.listenStartedAt = Date.now();
@@ -356,6 +367,7 @@ export class VoiceSessionClient {
     if (this.workletNode) {
       await this.stopCaptureOnly();
     }
+    this.stopPlayback();
     this.skipPlayback = false;
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -445,7 +457,7 @@ export class VoiceSessionClient {
   }
 
   disconnect(): void {
-    this.interruptPlayback();
+    this.stopPlayback();
     void this.playback.close();
     this.micPrepared = false;
     this.captureArmed = false;
@@ -459,15 +471,22 @@ export class VoiceSessionClient {
     this.setState('idle');
   }
 
-  interruptPlayback(): void {
+  /** Stop local playback and return to a ready-to-listen state. Does not notify the server. */
+  stopPlayback(): void {
     this.playback.stop();
     this.duplexAwaitingPlaybackEnd = false;
-    this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
     if (this.mode === 'duplex') {
-      this.setState('listening');
-    } else {
+      if (this.ws?.readyState === WebSocket.OPEN && this.state !== 'listening') {
+        this.setState('listening');
+      }
+    } else if (this.state === 'speaking' || this.state === 'processing') {
       this.setState('ready');
     }
+  }
+
+  interruptPlayback(): void {
+    this.stopPlayback();
+    this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
   }
 
   respondToPermission(choice: VoicePermissionChoice): void {
@@ -557,6 +576,9 @@ export class VoiceSessionClient {
       }
       case 'audio_chunk_meta':
         this.pendingChunkMeta = { sampleRate: Number(msg.sampleRate ?? 24_000) };
+        break;
+      case 'playback_stop':
+        this.stopPlayback();
         break;
       case 'audio_end':
         this.pendingChunkMeta = null;

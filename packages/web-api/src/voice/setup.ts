@@ -66,6 +66,28 @@ function formatSourceLabel(assetId: string, fallback?: string): string {
 }
 
 async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabilityStatus> {
+  const engine = config.engine ?? 'stt_llm_tts';
+
+  // xAI realtime only needs an API key; local checks are skipped.
+  if (engine === 'realtime_xai') {
+    const xaiConfigured = Boolean(config.xai?.apiKey);
+    return {
+      os: process.platform,
+      arch: process.arch,
+      pythonAvailable: false,
+      ffmpegAvailable: false,
+      sidecar: { state: 'not-installed' as const },
+      stt: { engine: 'faster-whisper', selectedModelId: undefined, selectedModelInstalled: false },
+      tts: { selectedEngine: 'kokoro', selectedVoiceId: undefined, selectedVoiceInstalled: false, kokoroInstalled: false },
+      vadInstalled: false,
+      gpuAvailable: detectCudaEnv(),
+      canRunWeb: xaiConfigured,
+      canRunChannels: false,
+      engine,
+      realtimeXai: { configured: xaiConfigured, reachable: xaiConfigured },
+    };
+  }
+
   const [pythonAvailable, ffmpegAvailable] = await Promise.all([
     commandAvailable(resolvePythonExecutable(), ['--version']),
     commandAvailable(resolveFfmpegExecutable(), ['-version']),
@@ -120,6 +142,7 @@ async function buildVoiceCapabilities(config: VoiceConfig): Promise<VoiceCapabil
     gpuAvailable: detectCudaEnv(),
     canRunWeb: canRunBase && config.enabled !== false,
     canRunChannels: canRunBase && config.mode?.channels !== 'off',
+    engine,
   };
 }
 

@@ -12,7 +12,7 @@ import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigS
 import type { AgentXConfig } from '@agentx/shared';
 import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
 import { setIngestionAppVisible, getIngestionGovernorState } from '../../ingestion-governor.js';
-import { redactConfigForClient, mergeConfigPreservingSecrets } from '../../config-redaction.js';
+import { redactConfigForClient, mergeConfigPreservingSecrets, REDACTED_SECRET } from '../../config-redaction.js';
 import { mergeVoiceConfig } from '@agentx/engine';
 import { refreshIngestionWorkerGenerator } from '../../ingestion-worker-ref.js';
 import { applyChannelsConfig } from '../../channels-sync.js';
@@ -146,6 +146,13 @@ export function createSystemRouter(): Router {
           ...existing.voice,
           ...req.body.voice,
           mode: { ...existing.voice?.mode, ...req.body.voice?.mode },
+          xai: {
+            ...existing.voice?.xai,
+            ...req.body.voice?.xai,
+            apiKey: req.body.voice?.xai?.apiKey === REDACTED_SECRET
+              ? existing.voice?.xai?.apiKey
+              : (req.body.voice?.xai?.apiKey ?? existing.voice?.xai?.apiKey),
+          },
           stt: { ...existing.voice?.stt, ...req.body.voice?.stt },
           tts: { ...existing.voice?.tts, ...req.body.voice?.tts },
           sidecar: { ...existing.voice?.sidecar, ...req.body.voice?.sidecar },
