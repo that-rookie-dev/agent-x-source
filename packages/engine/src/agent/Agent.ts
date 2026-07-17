@@ -15,7 +15,7 @@ import type {
   ClientSituation,
   StorageAdapter,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult, parseChannelBindingFromSessionId } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
@@ -222,7 +222,7 @@ export interface AgentOptions {
   /** Live crew mission context — injected between agentic steps when revision advances */
   missionContextProvider?: () => { revision: number; block: string };
   /** Slim prompt stack for crew workers (no Agent-X identity bleed). */
-  promptProfile?: 'default' | 'crew_worker' | 'crew_private';
+  promptProfile?: 'default' | 'crew_worker' | 'crew_private' | 'voice';
   /** Host crew for 1:1 private chat sessions. */
   crewPrivateHost?: import('@agentx/shared').Crew;
   /** Background worker (sub-agent / crew) — skip interactive permission prompts. */
@@ -627,7 +627,12 @@ export class Agent {
   }
 
   private isMessagingChannelContext(): boolean {
-    if (this.options.channelSession) return true;
+    if (this.options.channelSession) {
+      // Voice sessions are channel sessions but NOT messaging channels —
+      // they should not trigger messaging-channel conduct (questionnaires, etc.)
+      if (parseChannelBindingFromSessionId(this.sessionId) === 'voice') return false;
+      return true;
+    }
     return isMessagingChannel(this.activeInboundChannel);
   }
 

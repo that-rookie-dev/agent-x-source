@@ -1211,6 +1211,12 @@ export interface VoiceConfig {
     phrase?: string;
   };
   downloadedAssets?: VoiceDownloadedAsset[];
+  /** Separate provider/model for voice sessions. Falls back to default provider config. */
+  provider?: {
+    activeProvider?: string;
+    activeModel?: string;
+    activeProfile?: string;
+  };
 }
 
 export type VoiceTtsStyleConfig = NonNullable<NonNullable<VoiceConfig['tts']>['style']>;

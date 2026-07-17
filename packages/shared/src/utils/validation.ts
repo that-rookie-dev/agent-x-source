@@ -135,6 +135,11 @@ export const voiceConfigSchema = z.object({
     phrase: z.string().optional(),
   }).optional(),
   downloadedAssets: z.array(voiceDownloadedAssetSchema).optional(),
+  provider: z.object({
+    activeProvider: z.string().optional(),
+    activeModel: z.string().optional(),
+    activeProfile: z.string().optional(),
+  }).optional(),
 }).optional();
 
 export const featureRoutingConfigSchema = z.object({

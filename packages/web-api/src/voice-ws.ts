@@ -30,7 +30,7 @@ import type { ClientSituation } from '@agentx/shared';
 
 const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
-const STT_PREVIEW_INTERVAL_MS = 400;
+const STT_PREVIEW_INTERVAL_MS = 200;
 /** Continuous silence after spoken words before auto-send in duplex mode. */
 export const DUPLEX_END_SILENCE_MS = 5_000;
 /** Minimum gap between duplicate error frames to the client. */
@@ -87,6 +87,8 @@ interface VoiceWsSession {
   searchWeb: boolean;
   /** Toggle: auto-approve tool permissions (bypass chip). */
   bypassChip: boolean;
+  /** Duplex: pending timer waiting for client playback-finished signal before re-enabling mic. */
+  duplexPlaybackResetTimer?: ReturnType<typeof setTimeout>;
 }
 
 const activeSessions = new Map<WebSocket, VoiceWsSession>();
@@ -337,8 +339,17 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         await cancelActiveSynth(session);
         session.speaking = false;
         if (session.mode === 'duplex') {
+          if (session.duplexPlaybackResetTimer) {
+            clearTimeout(session.duplexPlaybackResetTimer);
+            session.duplexPlaybackResetTimer = undefined;
+          }
           session.recording = true;
         }
+      }
+      break;
+    case 'playback_finished':
+      if (session && session.mode === 'duplex') {
+        await handlePlaybackFinished(ws, session);
       }
       break;
     case 'playback_text_only':
@@ -399,11 +410,14 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   // For the segregated voice-only session (__channel__:voice), create it if it doesn't exist yet.
   if (!peek && chatSessionId === '__channel__:voice') {
     const cfg = eng.configManager.load();
+    const voiceProvider = cfg.voice?.provider;
+    const providerId = (voiceProvider?.activeProvider as ProviderId) || cfg.provider.activeProvider;
+    const modelId = voiceProvider?.activeModel || cfg.provider.activeModel;
     const scope = getAgentFilesDir();
     try {
       eng.sessionManager.createSession(
-        cfg.provider.activeProvider as ProviderId,
-        cfg.provider.activeModel,
+        providerId,
+        modelId,
         scope,
         chatSessionId,
       );
@@ -516,10 +530,18 @@ async function requestTranscriptPreview(
   if (options.throttleKey === 'duplex') session.duplexLastSttAt = now;
   else session.pttLastSttAt = now;
 
+  // For preview requests, only send the trailing ~5s of audio — the Python
+  // sidecar's preview mode only decodes the tail anyway, so sending the full
+  // cumulative buffer wastes bandwidth and increases latency on longer turns.
+  const maxPreviewBytes = SAMPLE_RATE * 2 * 5; // 5s @ 16kHz mono s16
+  const previewPcm = cumulative.length > maxPreviewBytes
+    ? cumulative.subarray(cumulative.length - maxPreviewBytes)
+    : cumulative;
+
   const service = getVoiceService();
   let stream: Awaited<ReturnType<typeof service.streamTranscribeChunk>>;
   try {
-    stream = await service.streamTranscribeChunk(cumulative, SAMPLE_RATE, { preview: true });
+    stream = await service.streamTranscribeChunk(previewPcm, SAMPLE_RATE, { preview: true });
   } catch (err) {
     if (options.throttleKey === 'duplex' && now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
       session.duplexLastErrorAt = now;
@@ -607,6 +629,29 @@ async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
   try {
     await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
   } catch { /* best-effort */ }
+}
+
+/**
+ * Duplex: schedule re-enablement of the microphone after the client confirms
+ * TTS playback has finished. A fallback timer ensures we eventually resume even
+ * if the client never sends `playback_finished` (e.g. text-only turns).
+ */
+function scheduleDuplexResume(_ws: WebSocket, session: VoiceWsSession): void {
+  if (session.duplexPlaybackResetTimer) clearTimeout(session.duplexPlaybackResetTimer);
+  // Fallback: resume after 3s even without explicit client confirmation.
+  session.duplexPlaybackResetTimer = setTimeout(() => {
+    session.duplexPlaybackResetTimer = undefined;
+    void resetDuplexListening(session);
+  }, 3000);
+}
+
+/** Duplex: client confirmed TTS playback finished — resume listening immediately. */
+async function handlePlaybackFinished(_ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  if (session.duplexPlaybackResetTimer) {
+    clearTimeout(session.duplexPlaybackResetTimer);
+    session.duplexPlaybackResetTimer = undefined;
+  }
+  await resetDuplexListening(session);
 }
 
 async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void> {
@@ -794,7 +839,10 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       session.activeSynthId = undefined;
       voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
       if (session.mode === 'duplex') {
-        void resetDuplexListening(session);
+        // Don't re-enable the mic immediately — wait for the client to confirm
+        // TTS playback has finished (via `playback_finished`) to avoid the mic
+        // picking up the agent's own voice and creating a response loop.
+        scheduleDuplexResume(ws, session);
       }
     };
 
@@ -1019,6 +1067,7 @@ function cleanupSession(ws: WebSocket): void {
     clearPendingPermission(session);
   }
   session.unsub?.();
+  if (session.duplexPlaybackResetTimer) clearTimeout(session.duplexPlaybackResetTimer);
   void session.transport.close();
   getVoiceService().closeSession(session.sessionId);
   activeSessions.delete(ws);

@@ -7,12 +7,12 @@ from typing import Any
 
 import numpy as np
 
-# Minimum buffered audio before attempting a live partial decode (~300ms @ 16kHz mono s16).
-_MIN_PARTIAL_BYTES = int(16_000 * 0.3) * 2
-# Only re-run partial decode when the stream buffer grew by ~350ms since last pass.
-_MIN_PARTIAL_GROWTH_BYTES = int(16_000 * 0.35) * 2
+# Minimum buffered audio before attempting a live partial decode (~200ms @ 16kHz mono s16).
+_MIN_PARTIAL_BYTES = int(16_000 * 0.2) * 2
+# Only re-run partial decode when the stream buffer grew by ~200ms since last pass.
+_MIN_PARTIAL_GROWTH_BYTES = int(16_000 * 0.2) * 2
 # Preview requests decode only the trailing window for lower latency captions.
-_PREVIEW_TAIL_SECONDS = 5.0
+_PREVIEW_TAIL_SECONDS = 3.0
 
 
 class FasterWhisperStt:
@@ -166,7 +166,7 @@ class FasterWhisperStt:
             return True
         if buffer_len - self._last_partial_decode_bytes >= _MIN_PARTIAL_GROWTH_BYTES:
             return True
-        return (time.monotonic() - self._last_partial_decode_at) >= 0.9
+        return (time.monotonic() - self._last_partial_decode_at) >= 0.5
 
     def _transcribe_stream_buffer(
         self,

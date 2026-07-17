@@ -53,6 +53,21 @@ export interface PromptRegistrationContext {
  * Register prompt sections based on the agent's profile (crew_worker, crew_private, channel, default).
  */
 export function registerPromptSections(ctx: PromptRegistrationContext, systemOverride?: string): void {
+  if (ctx.options.promptProfile === 'voice') {
+    const secCtx = ctx.createSectionContext();
+    ctx.promptAssembly
+      .register(createProviderPromptSection(secCtx))
+      .register(createIdentitySection(secCtx))
+      .register(createCompactRulesSection())
+      .register(createCurrentTimeSection(secCtx))
+      .register(createUserSection(secCtx))
+      .register(createMemoryContextSection(secCtx));
+    if (systemOverride) {
+      ctx.promptAssembly.register(createSystemOverrideSection(systemOverride));
+    }
+    return;
+  }
+
   if (ctx.options.promptProfile === 'crew_worker') {
     const secCtx = ctx.createSectionContext();
     ctx.promptAssembly

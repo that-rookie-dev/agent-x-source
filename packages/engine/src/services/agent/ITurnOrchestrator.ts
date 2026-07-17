@@ -28,7 +28,7 @@ export interface TurnRunOptions {
 
 /** Subset of AgentOptions the completion loop needs. */
 export interface TurnHostOptions {
-  promptProfile?: 'default' | 'crew_worker' | 'crew_private';
+  promptProfile?: 'default' | 'crew_worker' | 'crew_private' | 'voice';
   channelSession?: boolean;
   prepareIntegrationTools?: (userText: string) => Promise<
     string | { hint?: string; policy?: ThirdPartyTurnPolicy } | undefined | null

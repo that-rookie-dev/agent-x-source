@@ -82,6 +82,15 @@ export interface VoiceAssetCatalogEntry {
   recommended?: boolean;
 }
 
+export interface VoiceProviderConfig {
+  /** Provider for voice sessions. Defaults to cfg.provider.activeProvider. */
+  activeProvider?: string;
+  /** Model for voice sessions. Defaults to cfg.provider.activeModel. */
+  activeModel?: string;
+  /** Provider profile label for voice sessions. Defaults to the provider's activeProfile. */
+  activeProfile?: string;
+}
+
 export interface VoiceConfig {
   enabled?: boolean;
   mode?: VoiceSurfaceConfig;
@@ -94,6 +103,8 @@ export interface VoiceConfig {
     phrase?: string;
   };
   downloadedAssets?: VoiceDownloadedAsset[];
+  /** Separate provider/model for voice sessions. Falls back to default provider config. */
+  provider?: VoiceProviderConfig;
 }
 
 export type VoiceSidecarHealthState = 'not-installed' | 'stopped' | 'starting' | 'ready' | 'crashed';

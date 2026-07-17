@@ -151,6 +151,7 @@ export function createSystemRouter(): Router {
           sidecar: { ...existing.voice?.sidecar, ...req.body.voice?.sidecar },
           fillers: { ...existing.voice?.fillers, ...req.body.voice?.fillers },
           wakeWord: { ...existing.voice?.wakeWord, ...req.body.voice?.wakeWord },
+          provider: { ...existing.voice?.provider, ...req.body.voice?.provider },
           // downloadedAssets is server-managed (registered during voice setup /
           // asset downloads). Never let the client overwrite it — stale UI state
           // used to wipe installed assets here.

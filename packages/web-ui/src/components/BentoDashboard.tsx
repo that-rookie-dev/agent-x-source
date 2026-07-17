@@ -27,18 +27,19 @@ import { useApp } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { PanelHeader } from './PanelHeader';
-import { VoiceAgentCard } from './voice/VoiceAgentCard';
+import { VoiceAgentCard, VoiceAgentHeaderControls } from './voice/VoiceAgentCard';
+import { VoiceParticleField, type ParticlePhase } from './voice/VoiceParticleField';
+import { VoiceConnectionPulses } from './voice/VoiceConnectionPulses';
 import { colors, alphaColor, MONO } from '../theme';
 import {
   sessions as sessionsApi,
   bridges,
   automation,
-  agent,
   webuiActive,
   subagents,
   runtime,
 } from '../api';
-import type { SessionInfo, BridgeStatus, AutomationTaskRecord, AgentVitals, SubAgentTaskInfo, SystemMetrics, Weather } from '../api';
+import type { SessionInfo, BridgeStatus, AutomationTaskRecord, SubAgentTaskInfo, SystemMetrics, Weather } from '../api';
 
 interface ChannelDef {
   id: string;
@@ -78,12 +79,14 @@ function shortModel(model?: string): string {
   return parts[parts.length - 1] || model;
 }
 
-function BentoCard({ title, icon, action, children, colSpan }: {
+function BentoCard({ title, icon, action, children, colSpan, sx, voiceAgentCard }: {
   title: string;
   icon?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
   colSpan?: number;
+  sx?: object;
+  voiceAgentCard?: boolean;
 }) {
   return (
     <Box sx={{
@@ -96,7 +99,11 @@ function BentoCard({ title, icon, action, children, colSpan }: {
       display: 'flex',
       flexDirection: 'column',
       minHeight: 140,
-    }}>
+      ...sx,
+    }}
+      data-bento-card
+      {...(voiceAgentCard ? { 'data-voice-agent-card': true } : {})}
+    >
       <PanelHeader title={title} icon={icon} action={action} compact />
       <Box sx={{ flex: 1, p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden' }}>
         {children}
@@ -205,7 +212,17 @@ export function BentoDashboard() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [channels, setChannels] = useState<ChannelDef[]>(CHANNELS);
   const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
-  const [vitals, setVitals] = useState<AgentVitals | null>(null);
+  const [voiceActiveForPulses, setVoiceActiveForPulses] = useState(false);
+  const [voiceSearchWeb, setVoiceSearchWeb] = useState(false);
+  const [voiceBypassChip, setVoiceBypassChip] = useState(false);
+  const [voiceParticlePhase, setVoiceParticlePhase] = useState<ParticlePhase>('disabled');
+  const voiceCardRef = useRef<HTMLDivElement | null>(null);
+
+  // Track the Voice Agent card element for the particle field centering
+  useEffect(() => {
+    const el = document.querySelector('[data-voice-agent-card]') as HTMLDivElement | null;
+    if (el) voiceCardRef.current = el;
+  }, []);
 
   const [subagentTasks, setSubagentTasks] = useState<SubAgentTaskInfo[]>([]);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
@@ -253,16 +270,6 @@ export function BentoDashboard() {
     } catch {
       if (!mounted.current) return;
       setTasks([]);
-    }
-  }, []);
-
-  const loadVitals = useCallback(async () => {
-    try {
-      const v = await agent.vitals();
-      if (!mounted.current) return;
-      setVitals(v);
-    } catch {
-      // ignore
     }
   }, []);
 
@@ -337,14 +344,13 @@ export function BentoDashboard() {
       void loadSessions();
       void loadChannels();
       void loadTasks();
-      void loadVitals();
       void loadSubagents();
       void loadMetrics();
     };
     loadAll();
     const id = setInterval(loadAll, 10000);
     return () => clearInterval(id);
-  }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadVitals, loadSubagents, loadMetrics]);
+  }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadSubagents, loadMetrics]);
 
   const openSession = useCallback((id: string) => {
     navigate(`/console/chat/${id}`);
@@ -409,21 +415,31 @@ export function BentoDashboard() {
         </Box>
       </Box>
 
-      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative' }}>
+        {/* SVG connection pulses from Voice Agent to surrounding cards */}
+        <VoiceConnectionPulses active={voiceActiveForPulses} />
+
+        {/* Dashboard-wide particle field — centered on the Voice Agent card */}
+        <VoiceParticleField
+          phase={voiceParticlePhase}
+          active={voiceActiveForPulses}
+          centerRef={voiceCardRef}
+        />
+
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' },
+          gridTemplateRows: { lg: 'auto auto auto' },
           gap: 2,
           alignItems: 'stretch',
+          position: 'relative',
+          zIndex: 1,
         }}>
-          <BentoCard title="Voice agent" icon={<MicIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}>
-            <VoiceAgentCard />
-          </BentoCard>
-
+          {/* Row 1: Recent conversations (col 1) | Voice Agent (cols 2-3, rows 1-2) | Channels (col 4) */}
           <BentoCard
             title="Recent conversations"
             icon={<ChatIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}
-            colSpan={2}
+            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '1' } }}
           >
             {sessions.length === 0 ? (
               <Typography sx={{ fontSize: '0.72rem', color: colors.text.tertiary, mt: 1 }}>
@@ -489,9 +505,41 @@ export function BentoDashboard() {
             )}
           </BentoCard>
 
+          {/* Voice Agent — centered 2x2 centerpiece */}
+          <BentoCard
+            title="Voice Agent"
+            icon={<MicIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}
+            action={
+              <VoiceAgentHeaderControls
+                searchWeb={voiceSearchWeb}
+                bypassChip={voiceBypassChip}
+                onSearchWebChange={setVoiceSearchWeb}
+                onBypassChipChange={setVoiceBypassChip}
+              />
+            }
+            colSpan={2}
+            voiceAgentCard
+            sx={{
+              gridColumn: { lg: '2 / 4' },
+              gridRow: { lg: '1 / 3' },
+              minHeight: { lg: 320 },
+              border: `1px solid ${alphaColor(colors.accent.blue, '22')}`,
+              boxShadow: `0 0 24px ${alphaColor(colors.accent.blue, '08')}`,
+              bgcolor: alphaColor(colors.bg.secondary, 'cc'),
+            }}
+          >
+            <VoiceAgentCard
+              onActiveChange={setVoiceActiveForPulses}
+              onPhaseChange={setVoiceParticlePhase}
+              searchWeb={voiceSearchWeb}
+              bypassChip={voiceBypassChip}
+            />
+          </BentoCard>
+
           <BentoCard
             title="Channels"
             icon={<StorageIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}
+            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '1' } }}
           >
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.25 }}>
               {channels.map((ch) => {
@@ -513,10 +561,11 @@ export function BentoDashboard() {
             </Box>
           </BentoCard>
 
+          {/* Row 2: System status (col 1) | Automation (col 4) — Voice Agent continues in cols 2-3 */}
           <BentoCard
             title="System status"
             icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.green }} />}
-            colSpan={2}
+            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '2' } }}
           >
             <StatRow label="Worker" value={serverOnline ? 'Online' : 'Offline'} color={serverOnline ? colors.accent.green : colors.accent.red} />
             <StatRow label="Provider" value={healthData?.config?.provider || '—'} />
@@ -530,6 +579,7 @@ export function BentoDashboard() {
           <BentoCard
             title="Automation tasks"
             icon={<ScheduleIcon sx={{ fontSize: 18, color: colors.accent.orange }} />}
+            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '2' } }}
           >
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               <StatusBadge color={activeTaskCount > 0 ? colors.accent.green : colors.text.dim} label={`${activeTaskCount} active`} />
@@ -562,6 +612,7 @@ export function BentoDashboard() {
           <BentoCard
             title="Sub-agents"
             icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}
+            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '3' } }}
           >
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               <StatusBadge color={subagentTasks.filter((t) => t.status === 'running').length > 0 ? colors.accent.green : colors.text.dim} label={`${subagentTasks.filter((t) => t.status === 'running').length} running`} />
@@ -595,7 +646,7 @@ export function BentoDashboard() {
             )}
           </BentoCard>
 
-          <BentoCard title="System metrics" icon={<SensorsIcon sx={{ fontSize: 18, color: colors.accent.green }} />}>
+          <BentoCard title="System metrics" icon={<SensorsIcon sx={{ fontSize: 18, color: colors.accent.green }} />} sx={{ gridColumn: { lg: '2' }, gridRow: { lg: '3' } }}>
             <StatRow label="CPU (process)" value={metrics ? `${metrics.cpu.process}%` : '—'} color={metrics && metrics.cpu.process > 80 ? colors.accent.red : colors.text.secondary} />
             <StatRow label="CPU (system)" value={metrics ? `${metrics.cpu.system}%` : '—'} />
             <StatRow label="Memory used" value={metrics ? `${formatBytes(metrics.memory.used)} / ${formatBytes(metrics.memory.total)}` : '—'} />
@@ -604,7 +655,7 @@ export function BentoDashboard() {
             <StatRow label="Uptime" value={metrics ? formatUptime(metrics.uptime) : '—'} />
           </BentoCard>
 
-          <BentoCard title="Time & location" icon={<AccessTimeIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}>
+          <BentoCard title="Time & location" icon={<AccessTimeIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />} sx={{ gridColumn: { lg: '3' }, gridRow: { lg: '3' } }}>
             {(() => {
               const { time, date } = formatClientDateTime(location.timezone);
               return (
@@ -622,7 +673,7 @@ export function BentoDashboard() {
             })()}
           </BentoCard>
 
-          <BentoCard title="Weather" icon={<CloudIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}>
+          <BentoCard title="Weather" icon={<CloudIcon sx={{ fontSize: 18, color: colors.accent.purple }} />} sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '3' } }}>
             {weatherLoading ? (
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
                 <CircularProgress size={14} sx={{ color: colors.text.dim }} />
@@ -639,15 +690,6 @@ export function BentoDashboard() {
                 Weather unavailable. Enable location access or wait for location detection.
               </Typography>
             )}
-          </BentoCard>
-
-          <BentoCard title="Agent vitals" icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}>
-            <StatRow label="Age" value={vitals ? `${vitals.ageDays}d` : '—'} />
-            <StatRow label="Level" value={vitals?.level || '—'} color={colors.accent.purple} />
-            <StatRow label="Wisdom" value={vitals ? `${Math.round(vitals.wisdomScore)}` : '—'} />
-            <StatRow label="Mood" value={vitals?.currentMood || '—'} color={vitals?.currentMood === 'enthusiastic' || vitals?.currentMood === 'confident' ? colors.accent.green : colors.text.secondary} />
-            <StatRow label="Memories" value={vitals?.memories.total ?? '—'} />
-            <StatRow label="Experiences" value={vitals?.totalExperiences ?? '—'} />
           </BentoCard>
 
 

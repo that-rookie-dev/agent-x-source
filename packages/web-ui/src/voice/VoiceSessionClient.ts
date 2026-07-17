@@ -88,6 +88,8 @@ export class VoiceSessionClient {
   private duplexFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private skipPlayback = false;
   private pendingChunkMeta: { sampleRate: number } | null = null;
+  /** Duplex: true after `audio_end` until playback drains — signals server to resume mic. */
+  private duplexAwaitingPlaybackEnd = false;
   private connectPromise: Promise<void> | null = null;
   private listenStartedAt = 0;
   /** PTT: mic graph is open but not streaming until armed. */
@@ -102,6 +104,16 @@ export class VoiceSessionClient {
     this.playback.setOnIdle(() => {
       this.events.onPlaybackLevel?.(0);
       this.events.onPlaybackIdle?.();
+      // Duplex: notify the server that TTS playback has finished so it can
+      // safely re-enable the microphone without picking up the agent's voice.
+      if (this.mode === 'duplex' && this.duplexAwaitingPlaybackEnd) {
+        this.duplexAwaitingPlaybackEnd = false;
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'playback_finished' }));
+        }
+        // Now transition to listening — the server will resume the mic.
+        this.setState('listening');
+      }
     });
   }
 
@@ -449,6 +461,7 @@ export class VoiceSessionClient {
 
   interruptPlayback(): void {
     this.playback.stop();
+    this.duplexAwaitingPlaybackEnd = false;
     this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
     if (this.mode === 'duplex') {
       this.setState('listening');
@@ -523,7 +536,20 @@ export class VoiceSessionClient {
         }
         this.events.onAgentStatus?.(status);
         if (status === 'speaking') this.setState('speaking');
-        if (status === 'complete') this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+        if (status === 'complete') {
+          // In duplex mode, stay in 'speaking' until playback drains — the
+          // onIdle callback will send `playback_finished` to the server which
+          // resumes the mic. Transitioning to 'listening' here would cause the
+          // client to stream mic audio while TTS is still playing.
+          if (this.mode === 'duplex') {
+            if (!this.playback.playing && !this.duplexAwaitingPlaybackEnd) {
+              this.setState('listening');
+            }
+            // else: state transitions when onPlaybackIdle fires
+          } else {
+            this.setState('ready');
+          }
+        }
         if (status === 'running') this.setState('processing');
         // Server signalled duplex recovery — resync out of any stale error state.
         if (status === 'listening' && this.mode === 'duplex') this.setState('listening');
@@ -534,6 +560,15 @@ export class VoiceSessionClient {
         break;
       case 'audio_end':
         this.pendingChunkMeta = null;
+        if (this.mode === 'duplex') {
+          // If no TTS audio was queued (text-only turn), playback is already
+          // idle — notify the server immediately so it can resume the mic.
+          if (this.playback.playing) {
+            this.duplexAwaitingPlaybackEnd = true;
+          } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'playback_finished' }));
+          }
+        }
         break;
       case 'duplex_silence':
         this.events.onDuplexSilence?.(

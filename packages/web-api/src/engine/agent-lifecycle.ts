@@ -113,7 +113,7 @@ export function createAgent(
     onPart,
     persona: crewPrivateHost ? null : persona,
     pgPool: eng.pgPool ?? null,
-    promptProfile: crewPrivateHost ? 'crew_private' : (isAutomationRun ? 'crew_worker' : 'default'),
+    promptProfile: crewPrivateHost ? 'crew_private' : (isAutomationRun ? 'crew_worker' : (parseChannelBindingFromSessionId(session.id) === 'voice' ? 'voice' : 'default')),
     crewPrivateHost,
     channelSession: isChannelSessionId(session.id),
     automationRun: isAutomationRun,

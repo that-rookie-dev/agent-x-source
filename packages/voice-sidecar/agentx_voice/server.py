@@ -28,7 +28,7 @@ class VoiceRuntime:
     def cancel(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("requestId")
         if request_id:
-            self.cancelled_request_ids.add(str(request_id))
+            self.cancelled_request_ids.append(str(request_id))
         return {"ok": True}
 
     def is_cancelled(self, request_id: str | None) -> bool:
