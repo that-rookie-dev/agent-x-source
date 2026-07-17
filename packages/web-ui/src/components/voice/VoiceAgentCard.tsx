@@ -17,6 +17,7 @@ import { CommsSpinner } from './CommsSpinner';
 import type { ParticlePhase } from './VoiceParticleField';
 import { voice as voiceApi, providers as providersApi, models as modelsApi } from '../../api';
 import type { ConfiguredProvider, ModelInfo } from '../../api';
+import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
 
 /**
  * Voice Agent card for the Bento dashboard — futuristic centerpiece.
@@ -312,10 +313,12 @@ export function VoiceAgentHeaderControls({
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [voiceProvider, setVoiceProvider] = useState<string | null>(null);
   const [voiceModel, setVoiceModel] = useState<string | null>(null);
+  const [voiceId, setVoiceId] = useState<string>('kokoro-af');
   const [defaultProvider, setDefaultProvider] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
   const [providerAnchor, setProviderAnchor] = useState<HTMLElement | null>(null);
   const [modelAnchor, setModelAnchor] = useState<HTMLElement | null>(null);
+  const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
 
   // Load configured providers, current default, and voice config
@@ -336,6 +339,7 @@ export function VoiceAgentHeaderControls({
         if (cancelled) return;
         if (voiceCfg.provider?.activeProvider) setVoiceProvider(voiceCfg.provider.activeProvider);
         if (voiceCfg.provider?.activeModel) setVoiceModel(voiceCfg.provider.activeModel);
+        if (voiceCfg.tts?.voiceId) setVoiceId(voiceCfg.tts.voiceId);
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
@@ -373,6 +377,14 @@ export function VoiceAgentHeaderControls({
     } catch { /* ignore */ }
   };
 
+  const handleVoiceSelect = async (vid: string) => {
+    setVoiceId(vid);
+    setVoiceAnchor(null);
+    try {
+      await voiceApi.updateConfig({ tts: { voiceId: vid } });
+    } catch { /* ignore */ }
+  };
+
   // Display the voice-specific provider, or fall back to the current default.
   // Show the profile name (activeProfile) rather than the provider name.
   const effectiveProvider = voiceProvider || defaultProvider;
@@ -383,6 +395,8 @@ export function VoiceAgentHeaderControls({
     || effectiveProvider
     || '—';
   const modelLabel = effectiveModel ? effectiveModel.split('/').pop() || effectiveModel : '—';
+  const voiceProfile = KOKORO_VOICE_PROFILES.find((p) => p.id === voiceId);
+  const voiceLabel = voiceProfile?.name || voiceId;
 
   return (
     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
@@ -407,6 +421,10 @@ export function VoiceAgentHeaderControls({
       <ConfigChip
         label={modelLabel}
         onClick={(e) => setModelAnchor(e.currentTarget)}
+      />
+      <ConfigChip
+        label={voiceLabel}
+        onClick={(e) => setVoiceAnchor(e.currentTarget)}
       />
 
       {/* Provider dropdown — shows configured providers (saved profiles) */}
@@ -474,6 +492,36 @@ export function VoiceAgentHeaderControls({
               ))}
             </>
           )}
+        </Box>
+      </Popover>
+
+      {/* Voice profile dropdown — Kokoro TTS voices grouped by language */}
+      <Popover
+        open={Boolean(voiceAnchor)}
+        anchorEl={voiceAnchor}
+        onClose={() => setVoiceAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 280, overflow: 'auto' } }}
+      >
+        <Box sx={{ py: 0.5, minWidth: 180 }}>
+          {Array.from(new Set(KOKORO_VOICE_PROFILES.map((p) => p.language))).map((language) => (
+            <Box key={language}>
+              <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: colors.text.dim, px: 1, pt: 0.5, pb: 0.25, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {language}
+              </Typography>
+              {KOKORO_VOICE_PROFILES.filter((p) => p.language === language).map((p) => (
+                <MenuItem
+                  key={p.id}
+                  onClick={() => handleVoiceSelect(p.id)}
+                  selected={p.id === voiceId}
+                  sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.secondary, minHeight: 'auto', py: 0.25 }}
+                >
+                  {p.name} <span style={{ color: colors.text.dim, marginLeft: 4 }}>({p.gender})</span>
+                </MenuItem>
+              ))}
+            </Box>
+          ))}
         </Box>
       </Popover>
     </Box>

@@ -233,6 +233,18 @@ export function BentoDashboard() {
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
+  // Prevent space bar from scrolling the page while the dashboard is open.
+  // Space is used for push-to-talk and should never scroll the dashboard.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && e.target === document.body) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const loadSessions = useCallback(async () => {
     try {
       const list = await sessionsApi.list();

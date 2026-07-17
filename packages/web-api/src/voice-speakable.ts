@@ -7,9 +7,12 @@ export const VOICE_BLOCK_CLOSE = '⟨/voice⟩';
 export function normalizeVoiceAssistantContent(content: string): string {
   // Normalize ASCII <voice> variants to Unicode ⟨voice⟩ — LLMs sometimes use
   // regular angle brackets instead of the Unicode ones we instruct.
+  // Also handle mixed ASCII/Unicode bracket variants like </voice⟩ or ⟨/voice>.
   const normalized = content
     .replace(/<voice>/g, VOICE_BLOCK_OPEN)
-    .replace(/<\/voice>/g, VOICE_BLOCK_CLOSE);
+    .replace(/<\/voice>/g, VOICE_BLOCK_CLOSE)
+    .replace(/<\/voice⟩/g, VOICE_BLOCK_CLOSE)
+    .replace(/⟨\/voice>/g, VOICE_BLOCK_CLOSE);
   const idx = normalized.indexOf(VOICE_BLOCK_OPEN);
   if (idx > 0) return normalized.slice(idx);
   return normalized;
@@ -149,6 +152,31 @@ export function buildVoiceFallback(chat: string): string {
   return normalized;
 }
 
+/**
+ * Strip LLM internal token bleed and XML-like markup from speakable text.
+ * This prevents TTS from reading raw tags like <tool_call>, <invoke>, <url>,
+ * or model-specific token leaks like ]<]minimax[>[ that sometimes appear
+ * inside or after voice blocks.
+ */
+const LLM_TOKEN_BLEED_RE = /\]?<\]?[a-zA-Z_]+\[?>?\[?/g;
+const XML_LIKE_TAG_RE = /<\/?[a-zA-Z_][^>]*>/g;
+
+export function sanitizeSpeakableText(text: string): string {
+  if (!text) return '';
+  let out = text;
+  // 1. Remove XML-like tags (e.g. <tool_call>, <invoke name="...">, <url>, </url>)
+  out = out.replace(XML_LIKE_TAG_RE, ' ');
+  // 2. Remove model-specific token bleed (e.g. ]<]minimax[>[) — the whole
+  //    pattern including the model name is stripped so it isn't spoken.
+  out = out.replace(LLM_TOKEN_BLEED_RE, ' ');
+  // 3. Remove any remaining stray bracket / angle-bracket characters that
+  //    are clearly not part of natural speech.
+  out = out.replace(/[<>[\]]/g, ' ');
+  // 4. Collapse whitespace
+  out = out.replace(/\s+/g, ' ').trim();
+  return out;
+}
+
 /** Extracts speakable deltas from streamed assistant output (voice block only). */
 export class VoiceBlockStreamExtractor {
   private raw = '';
@@ -177,13 +205,13 @@ export class VoiceBlockStreamExtractor {
       const pending = body.slice(this.voiceEmitted);
       const { emit, held } = holdBackVoiceCloseSuffix(pending);
       this.voiceEmitted = body.length - held;
-      return emit;
+      return sanitizeSpeakableText(emit);
     }
 
     const inner = body.slice(0, closeIdx);
     const speakable = inner.slice(this.voiceEmitted);
     this.voiceEmitted = inner.length;
     this.voiceClosed = true;
-    return speakable;
+    return sanitizeSpeakableText(speakable);
   }
 }

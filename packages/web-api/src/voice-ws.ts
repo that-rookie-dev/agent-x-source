@@ -14,6 +14,7 @@ import {
   userWantsVoiceChatReport,
   isAffirmativeReply,
   voiceOfferedChatReport,
+  sanitizeSpeakableText,
 } from './voice-speakable.js';
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
@@ -947,7 +948,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
         return;
       }
 
-      const speakText = voice || buildVoiceFallback(strayChat || turnContent);
+      const speakText = sanitizeSpeakableText(voice) || buildVoiceFallback(strayChat || turnContent);
       if (speakPipeline.streamed || voiceExtractor.closed) {
         await speakPipeline.flush();
       } else {

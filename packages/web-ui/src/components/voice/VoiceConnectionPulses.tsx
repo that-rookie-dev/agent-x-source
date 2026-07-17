@@ -1,109 +1,122 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * SVG overlay that draws subtle connection lines from the Voice Agent card
- * (center) to surrounding cards in the bento grid. Pulses (small dots)
- * travel along the lines outward, like data feeding from the voice agent
- * to the rest of the system.
+ * SVG overlay that draws PCB-style connection traces from the Voice Agent card
+ * (center) to surrounding cards in the bento grid. Each trace is an orthogonal
+ * L-shaped path (horizontal then vertical, or vice versa) resembling copper
+ * traces on a circuit board. Small dots animate along the traces from the
+ * voice agent outward, like data feeding the rest of the system.
  *
- * - Lines are always visible at very low opacity (0.04)
- * - Pulses are always animating at low opacity (0.15)
- * - When voice is active, both intensify (lines 0.08, pulses 0.35)
- *
- * This is a subtle decorative detail — pointer-events: none, z-index: 0.
+ * - Traces are always visible at low opacity
+ * - Dots are always animating; they intensify when voice is active
+ * - pointer-events: none, z-index: 0
  */
+
+interface Trace {
+  /** Polyline points: [x, y, x, y, ...] */
+  points: number[];
+  key: string;
+}
+
 export function VoiceConnectionPulses({ active }: { active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [lines, setLines] = useState<{ x1: number; y1: number; x2: number; y2: number; key: string }[]>([]);
-  const animationRef = useRef<number>(0);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const pulseOffsetRef = useRef<number[]>([]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    function computeLines() {
+    function computeTraces() {
       if (!container) return;
       const containerRect = container.getBoundingClientRect();
       const cards = container.querySelectorAll('[data-bento-card]');
-      // Find the voice agent card (centerpiece)
       const voiceCard = container.querySelector('[data-voice-agent-card]');
       if (!voiceCard) return;
       const voiceRect = voiceCard.getBoundingClientRect();
       const cx = voiceRect.left + voiceRect.width / 2 - containerRect.left;
       const cy = voiceRect.top + voiceRect.height / 2 - containerRect.top;
 
-      const newLines: { x1: number; y1: number; x2: number; y2: number; key: string }[] = [];
+      const newTraces: Trace[] = [];
       cards.forEach((card, i) => {
         if (card === voiceCard) return;
         const rect = card.getBoundingClientRect();
         const tx = rect.left + rect.width / 2 - containerRect.left;
         const ty = rect.top + rect.height / 2 - containerRect.top;
-        newLines.push({ x1: cx, y1: cy, x2: tx, y2: ty, key: `line-${i}` });
+
+        // Build an orthogonal L-shaped path: go horizontal first to the
+        // target's x, then vertical to the target's y. Add a small midpoint
+        // offset so traces don't overlap when multiple cards share an axis.
+        const midX = (cx + tx) / 2;
+        const midY = (cy + ty) / 2;
+        // Alternate between H-then-V and V-then-H for visual variety
+        const goHorizontalFirst = Math.abs(tx - cx) > Math.abs(ty - cy);
+        const points = goHorizontalFirst
+          ? [cx, cy, midX, cy, midX, ty, tx, ty]
+          : [cx, cy, cx, midY, tx, midY, tx, ty];
+        newTraces.push({ points, key: `trace-${i}` });
       });
-      setLines(newLines);
-      pulseOffsetRef.current = newLines.map(() => Math.random());
+      setTraces(newTraces);
+      pulseOffsetRef.current = newTraces.map(() => Math.random());
     }
 
-    computeLines();
-    const observer = new ResizeObserver(computeLines);
+    computeTraces();
+    const observer = new ResizeObserver(computeTraces);
     observer.observe(container);
 
+    // Recompute on scroll (cards move within the scrollable container)
+    const onScroll = () => computeTraces();
+    window.addEventListener('scroll', onScroll, true);
+
     // Recompute after a delay to let layout settle
-    const timeoutId = setTimeout(computeLines, 500);
+    const timeoutId = setTimeout(computeTraces, 500);
 
     return () => {
       observer.disconnect();
+      window.removeEventListener('scroll', onScroll, true);
       clearTimeout(timeoutId);
     };
   }, []);
 
-  useEffect(() => {
-    let time = 0;
-    function animate() {
-      time += 0.008;
-      const pulses = document.querySelectorAll('[data-pulse]');
-      pulses.forEach((el, i) => {
-        const offset = pulseOffsetRef.current[i] ?? 0;
-        const progress = ((time + offset) % 1);
-        const pulseEl = el as SVGElement;
-        pulseEl.setAttribute('data-progress', String(progress));
-      });
-      animationRef.current = requestAnimationFrame(animate);
-    }
-    animate();
-    return () => cancelAnimationFrame(animationRef.current);
-  }, [lines]);
-
-  if (lines.length === 0) {
+  if (traces.length === 0) {
     return <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }} />;
   }
 
   return (
     <div ref={containerRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
       <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-        {lines.map((line, i) => {
-          const numPulses = 3;
+        {traces.map((trace, i) => {
+          const numPulses = 2;
+          const pointsStr = trace.points.map((v) => String(v)).join(' ');
           return (
-            <g key={line.key}>
-              {/* Connection line */}
-              <line
-                x1={line.x1}
-                y1={line.y1}
-                x2={line.x2}
-                y2={line.y2}
-                stroke={active ? 'rgba(59, 130, 246, 0.08)' : 'rgba(59, 130, 246, 0.04)'}
+            <g key={trace.key}>
+              {/* PCB trace — orthogonal path */}
+              <polyline
+                points={pointsStr}
+                fill="none"
+                stroke={active ? 'rgba(59, 130, 246, 0.12)' : 'rgba(59, 130, 246, 0.06)'}
                 strokeWidth={1}
-                strokeDasharray="4 8"
+                strokeLinejoin="round"
+                strokeLinecap="round"
               />
-              {/* Pulses traveling along the line */}
+              {/* Junction dots at corners */}
+              <circle
+                cx={trace.points[2]}
+                cy={trace.points[3]}
+                r={1.5}
+                fill={active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.15)'}
+              />
+              <circle
+                cx={trace.points[4]}
+                cy={trace.points[5]}
+                r={1.5}
+                fill={active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.15)'}
+              />
+              {/* Animated dots traveling along the trace */}
               {Array.from({ length: numPulses }).map((_, j) => (
-                <PulseDot
+                <TraceDot
                   key={`pulse-${i}-${j}`}
-                  x1={line.x1}
-                  y1={line.y1}
-                  x2={line.x2}
-                  y2={line.y2}
+                  points={trace.points}
                   delay={(j / numPulses) + (pulseOffsetRef.current[i] ?? 0)}
                   active={active}
                 />
@@ -116,28 +129,65 @@ export function VoiceConnectionPulses({ active }: { active: boolean }) {
   );
 }
 
-function PulseDot({
-  x1, y1, x2, y2, delay, active,
+/**
+ * Dot that animates along a polyline path (array of [x, y, x, y, ...]).
+ * The dot position is interpolated along the total path length.
+ */
+function TraceDot({
+  points,
+  delay,
+  active,
 }: {
-  x1: number; y1: number; x2: number; y2: number; delay: number; active: boolean;
+  points: number[];
+  delay: number;
+  active: boolean;
 }) {
   const ref = useRef<SVGCircleElement>(null);
   const animationRef = useRef<number>(0);
 
   useEffect(() => {
     let start: number | null = null;
-    const duration = 2500;
+    const duration = 3000;
     const offset = delay * duration;
+
+    // Precompute segment lengths and total length
+    const segs: { dx: number; dy: number; len: number }[] = [];
+    let totalLen = 0;
+    for (let i = 0; i < points.length - 2; i += 2) {
+      const dx = points[i + 2]! - points[i]!;
+      const dy = points[i + 3]! - points[i + 1]!;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      segs.push({ dx, dy, len });
+      totalLen += len;
+    }
 
     function step(ts: number) {
       if (start === null) start = ts;
       const elapsed = ((ts - start + offset) % duration) / duration;
-      const x = x1 + (x2 - x1) * elapsed;
-      const y = y1 + (y2 - y1) * elapsed;
-      // Fade in/out
-      const fadeIn = Math.min(elapsed * 4, 1);
-      const fadeOut = Math.min((1 - elapsed) * 4, 1);
-      const opacity = Math.min(fadeIn, fadeOut) * (active ? 0.35 : 0.12);
+      const targetDist = elapsed * totalLen;
+
+      // Find which segment the dot is on
+      let accDist = 0;
+      let x = points[0]!;
+      let y = points[1]!;
+      for (let s = 0; s < segs.length; s++) {
+        const seg = segs[s]!;
+        if (accDist + seg.len >= targetDist) {
+          const t = seg.len > 0 ? (targetDist - accDist) / seg.len : 0;
+          const segStartX = points[s * 2]!;
+          const segStartY = points[s * 2 + 1]!;
+          x = segStartX + seg.dx * t;
+          y = segStartY + seg.dy * t;
+          break;
+        }
+        accDist += seg.len;
+      }
+
+      // Fade in/out at start/end of trace
+      const fadeIn = Math.min(elapsed * 5, 1);
+      const fadeOut = Math.min((1 - elapsed) * 5, 1);
+      const opacity = Math.min(fadeIn, fadeOut) * (active ? 0.5 : 0.2);
+
       if (ref.current) {
         ref.current.setAttribute('cx', String(x));
         ref.current.setAttribute('cy', String(y));
@@ -147,14 +197,13 @@ function PulseDot({
     }
     animationRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(animationRef.current);
-  }, [x1, y1, x2, y2, delay, active]);
+  }, [points, delay, active]);
 
   return (
     <circle
       ref={ref}
-      r={1.5}
-      fill="rgba(59, 130, 246, 0.8)"
-      data-pulse
+      r={2}
+      fill="rgba(59, 130, 246, 0.9)"
     />
   );
 }

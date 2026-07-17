@@ -122,10 +122,24 @@ export function VoiceParticleField({
     resizeObserver.observe(canvas);
     if (centerRef?.current) resizeObserver.observe(centerRef.current);
 
-    // Also recompute on window resize / scroll (center element may move)
+    // On scroll/resize, only recompute the center position — don't
+    // reinitialize particles (that causes a visible jump/flash).
     const onWindowChange = () => {
-      resize();
-      initParticles();
+      if (!canvas || !ctx) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      width = rect.width;
+      height = rect.height;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.scale(dpr, dpr);
+      cx = width / 2;
+      cy = height / 2;
+      if (centerRef?.current) {
+        const elRect = centerRef.current.getBoundingClientRect();
+        cx = elRect.left + elRect.width / 2 - rect.left;
+        cy = elRect.top + elRect.height / 2 - rect.top;
+      }
     };
     window.addEventListener('resize', onWindowChange);
     window.addEventListener('scroll', onWindowChange, true);
@@ -150,25 +164,6 @@ export function VoiceParticleField({
       gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, 0)`);
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, width, height);
-
-      // Draw grid overlay for "neural interface" feel
-      if (isActive) {
-        ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, 0.04)`;
-        ctx.lineWidth = 0.5;
-        const gridSize = 20;
-        for (let x = 0; x < width; x += gridSize) {
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, height);
-          ctx.stroke();
-        }
-        for (let y = 0; y < height; y += gridSize) {
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(width, y);
-          ctx.stroke();
-        }
-      }
 
       time += 0.016;
 

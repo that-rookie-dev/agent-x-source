@@ -190,7 +190,16 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
         warmupAllowedRef.current = false;
         setEngineWarmAtLaunch(false);
       })
-      .finally(() => { void runWarmupRef.current(false); });
+      .finally(() => {
+        // Don't tear down the engine on config-only updates (e.g. switching
+        // model/provider/voice). If the engine is already ready or booting,
+        // keep it running — only probe to see if it's still healthy.
+        setPhase((current) => {
+          if (current === 'ready' || current === 'booting') return current;
+          void runWarmupRef.current(false);
+          return current;
+        });
+      });
   }, [voiceEnabled, canRunWeb]);
 
   useEffect(() => {
