@@ -21,6 +21,7 @@ export function useVoiceSession(
   mode: 'push-to-talk' | 'duplex' = 'push-to-talk',
   chatSessionIdOrCallbacks?: string | VoiceSessionCallbacks,
   callbacks?: VoiceSessionCallbacks,
+  voiceOnly?: boolean,
 ) {
   const chatSessionId = typeof chatSessionIdOrCallbacks === 'string'
     ? chatSessionIdOrCallbacks
@@ -114,6 +115,7 @@ export function useVoiceSession(
       clientRef.current = new VoiceSessionClient({
         mode,
         chatSessionId,
+        voiceOnly,
         onStateChange: (nextState) => {
           setState(nextState);
           if (nextState === 'listening' || nextState === 'ready') {
@@ -217,6 +219,7 @@ export function useVoiceSession(
         onPlaybackIdle: () => {
           setPlaybackActive(false);
           setPlaybackLevel(0);
+          setTurnPipeline('idle');
           if (pttTurnLockedRef.current) unlockPttTurn();
         },
         onRecordingDiscarded: (reason) => {
@@ -502,6 +505,10 @@ export function useVoiceSession(
     clientRef.current?.setTextOnlyPlayback(true);
   }, []);
 
+  const setToggles = useCallback((toggles: { searchWeb?: boolean; bypassChip?: boolean }) => {
+    clientRef.current?.setToggles(toggles);
+  }, []);
+
   const retryPermission = useCallback(() => {
     setError(null);
   }, []);
@@ -547,6 +554,7 @@ export function useVoiceSession(
     interruptPlayback,
     replayPlayback,
     setPlaybackTextOnly,
+    setToggles,
     retryPermission,
   };
 }

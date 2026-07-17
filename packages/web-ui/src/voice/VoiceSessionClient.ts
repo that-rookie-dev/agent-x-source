@@ -62,6 +62,8 @@ export interface VoiceSessionClientOptions extends VoiceSessionClientEvents {
   mode?: 'push-to-talk' | 'duplex';
   authToken?: string | null;
   chatSessionId?: string;
+  /** When true, use a segregated voice-only session (__channel__:voice) instead of a chat session. */
+  voiceOnly?: boolean;
 }
 
 function wsUrl(authToken?: string | null): string {
@@ -76,6 +78,7 @@ export class VoiceSessionClient {
   private readonly events: VoiceSessionClientEvents;
   private readonly mode: 'push-to-talk' | 'duplex';
   private readonly chatSessionId?: string;
+  private readonly voiceOnly: boolean;
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
@@ -95,6 +98,7 @@ export class VoiceSessionClient {
     this.events = options;
     this.mode = options.mode ?? 'push-to-talk';
     this.chatSessionId = options.chatSessionId;
+    this.voiceOnly = Boolean(options.voiceOnly);
     this.playback.setOnIdle(() => {
       this.events.onPlaybackLevel?.(0);
       this.events.onPlaybackIdle?.();
@@ -178,7 +182,8 @@ export class VoiceSessionClient {
             type: 'session_start',
             mode: this.mode,
             sessionId: crypto.randomUUID(),
-            ...(this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
+            ...(this.voiceOnly ? { voiceOnly: true } : {}),
+            ...(!this.voiceOnly && this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
             clientSituation,
           }));
         });
@@ -463,6 +468,13 @@ export class VoiceSessionClient {
     this.playback.stop();
     if (enabled) {
       this.ws?.send(JSON.stringify({ type: 'playback_text_only' }));
+    }
+  }
+
+  /** Update voice-only session toggles (web search, bypass chip). */
+  setToggles(toggles: { searchWeb?: boolean; bypassChip?: boolean }): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'voice_toggle', ...toggles }));
     }
   }
 

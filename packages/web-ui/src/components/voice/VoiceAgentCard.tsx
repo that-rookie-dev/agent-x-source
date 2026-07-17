@@ -4,16 +4,21 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import MicIcon from '@mui/icons-material/Mic';
 import MicOffIcon from '@mui/icons-material/MicOff';
+import PublicIcon from '@mui/icons-material/Public';
+import ShieldIcon from '@mui/icons-material/Shield';
 import { colors, alphaColor, MONO } from '../../theme';
 import { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
 import { useVoiceOptional } from './VoiceProvider';
-import { getCoreSessionId } from '../../perf/api-cache';
 import { voiceDisabledReason } from '../../voice/support';
 import { VoiceWaveform } from './VoiceWaveform';
 import { CommsSpinner } from './CommsSpinner';
 
 /**
  * Voice Agent card for the Bento dashboard.
+ *
+ * Uses a segregated voice-only session (__channel__:voice) — not the super-session
+ * or any other chat session. No message listing UI, no questionnaire UI, no deep
+ * web search UI — just voice responses and background tool handling.
  *
  * Lifecycle of the circular mic button:
  *  1. disabled (grey) — voice not enabled or kit not ready
@@ -29,28 +34,16 @@ type ButtonPhase = 'disabled' | 'idle' | 'recording' | 'thinking' | 'speaking';
 export function VoiceAgentCard() {
   const voiceCtx = useVoiceOptional();
   const envBlocked = voiceDisabledReason();
-  const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
   const [voiceActive, setVoiceActive] = useState(false);
+  const [searchWeb, setSearchWeb] = useState(false);
+  const [bypassChip, setBypassChip] = useState(false);
 
-  // Resolve the super-session (Agent-X core session) once.
-  useEffect(() => {
-    if (!voiceCtx?.voiceReady) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const id = await getCoreSessionId();
-        if (!cancelled) setCoreSessionId(id);
-      } catch { /* ignore — card stays disabled */ }
-    })();
-    return () => { cancelled = true; };
-  }, [voiceCtx?.voiceReady]);
+  const sessionReady = Boolean(voiceCtx?.voiceReady) && !envBlocked;
 
-  const sessionReady = Boolean(coreSessionId) && Boolean(voiceCtx?.voiceReady) && !envBlocked;
-
-  // Wire voice comms to the core session only when the user toggles voice on.
+  // Wire voice comms to a segregated voice-only session (__channel__:voice).
   const comms = useVoiceCommsSession({
     active: voiceActive && sessionReady,
-    chatSessionId: coreSessionId,
+    voiceOnly: true,
     requestMicOnActivate: true,
   });
 
@@ -61,6 +54,13 @@ export function VoiceAgentCard() {
       return () => { voiceCtx?.releaseVoiceEngine(); };
     }
   }, [voiceActive, sessionReady, voiceCtx?.retainVoiceEngine, voiceCtx?.releaseVoiceEngine]);
+
+  // Push toggle state to the voice WS backend whenever it changes.
+  useEffect(() => {
+    if (voiceActive && sessionReady) {
+      comms.session.setToggles({ searchWeb, bypassChip });
+    }
+  }, [voiceActive, sessionReady, searchWeb, bypassChip, comms.session]);
 
   // Derive the button phase from comms state.
   const phase: ButtonPhase = useMemo(() => {
@@ -99,17 +99,17 @@ export function VoiceAgentCard() {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 1.5,
+      gap: 1,
       height: '100%',
       minHeight: 180,
-      py: 2,
+      py: 1.5,
     }}>
       <Tooltip title={sessionReady ? (voiceActive ? 'Click to disable voice' : 'Click to enable voice') : 'Deploy voice kit first'}>
         <Box
           onClick={handleClick}
           sx={{
-            width: 72,
-            height: 72,
+            width: 64,
+            height: 64,
             borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
@@ -149,27 +149,27 @@ export function VoiceAgentCard() {
           }}
         >
           {phase === 'recording' || phase === 'speaking' ? (
-            <Box sx={{ width: '100%', height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Box sx={{ width: '100%', height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <VoiceWaveform
                 level={waveLevel}
                 active
                 accent={phase === 'recording' ? colors.accent.green : colors.accent.purple}
-                bars={14}
-                height={40}
+                bars={12}
+                height={36}
               />
             </Box>
           ) : phase === 'thinking' ? (
-            <CommsSpinner color={colors.accent.orange} size={32} />
+            <CommsSpinner color={colors.accent.orange} size={28} />
           ) : phase === 'disabled' ? (
-            <MicOffIcon sx={{ fontSize: 28, color: colors.text.dim, opacity: 0.5 }} />
+            <MicOffIcon sx={{ fontSize: 26, color: colors.text.dim, opacity: 0.5 }} />
           ) : (
-            <MicIcon sx={{ fontSize: 28, color: colors.accent.blue }} />
+            <MicIcon sx={{ fontSize: 26, color: colors.accent.blue }} />
           )}
         </Box>
       </Tooltip>
 
       <Typography sx={{
-        fontSize: '0.62rem',
+        fontSize: '0.6rem',
         fontFamily: MONO,
         color: phase === 'disabled'
           ? colors.text.dim
@@ -186,7 +186,73 @@ export function VoiceAgentCard() {
       }}>
         {statusText}
       </Typography>
+
+      {/* Toggle buttons: search the web + bypass chip */}
+      <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5 }}>
+        <ToggleButton
+          icon={<PublicIcon sx={{ fontSize: 14 }} />}
+          label="Web"
+          active={searchWeb}
+          activeColor={colors.accent.blue}
+          onClick={() => setSearchWeb((v) => !v)}
+          title={searchWeb ? 'Web search enabled — agent will search the web for live facts' : 'Enable web search for voice queries'}
+        />
+        <ToggleButton
+          icon={<ShieldIcon sx={{ fontSize: 14 }} />}
+          label="Bypass"
+          active={bypassChip}
+          activeColor={colors.accent.orange}
+          onClick={() => setBypassChip((v) => !v)}
+          title={bypassChip ? 'Bypass enabled — tool permissions auto-approved' : 'Enable bypass to auto-approve tool permissions'}
+        />
+      </Box>
     </Box>
+  );
+}
+
+function ToggleButton({
+  icon,
+  label,
+  active,
+  activeColor,
+  onClick,
+  title,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  activeColor: string;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <Tooltip title={title}>
+      <Box
+        onClick={onClick}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.3,
+          px: 0.6,
+          py: 0.2,
+          borderRadius: 1,
+          cursor: 'pointer',
+          border: `1px solid ${active ? alphaColor(activeColor, '66') : colors.border.default}`,
+          bgcolor: active ? alphaColor(activeColor, '14') : 'transparent',
+          color: active ? activeColor : colors.text.dim,
+          transition: 'all 0.2s',
+          '&:hover': {
+            borderColor: activeColor,
+            color: activeColor,
+          },
+        }}
+      >
+        {icon}
+        <Typography sx={{ fontSize: '0.55rem', fontFamily: MONO, fontWeight: 600 }}>
+          {label}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 }
 

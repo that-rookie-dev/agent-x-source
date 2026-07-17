@@ -162,6 +162,7 @@ import {
   restoreSessionPermissions as restoreSessionPermissionsHelper,
   formatChannelToolPermissions as formatChannelToolPermissionsHelper,
   revokeChannelToolPermissions as revokeChannelToolPermissionsHelper,
+  clearQuestionnaireResumeState as clearQuestionnaireResumeStateHelper,
   type PersistenceContext,
 } from './agent-persistence.js';
 import { registerPromptSections as registerPromptSectionsHelper } from './agent-prompt.js';
@@ -768,6 +769,7 @@ export class Agent {
       updatedMsg.content = questionnaireMsg.content;
     }
     this.updateQuestionnaireMessage(messageId, answered);
+    clearQuestionnaireResumeStateHelper(this.persistenceCtx());
     this.emit({ type: 'message_received', message: updatedMsg, elapsed: 0, isUpdate: true });
 
     if (response && response !== '(skipped)') {

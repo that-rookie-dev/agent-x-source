@@ -22,7 +22,8 @@ import { getEngine, createAgent, destroyAgent, setCurrentClientSituation } from 
 import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
-import { normalizeClientSituation } from '@agentx/shared';
+import { normalizeClientSituation, getAgentFilesDir } from '@agentx/shared';
+import type { ProviderId } from '@agentx/shared';
 import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
@@ -82,6 +83,10 @@ interface VoiceWsSession {
   /** Active voice-native permission prompt awaiting a spoken/tapped decision. */
   pendingPermission?: PendingVoicePermission;
   clientSituation?: ClientSituation;
+  /** Toggle: force web search for this voice turn. */
+  searchWeb: boolean;
+  /** Toggle: auto-approve tool permissions (bypass chip). */
+  bypassChip: boolean;
 }
 
 const activeSessions = new Map<WebSocket, VoiceWsSession>();
@@ -367,6 +372,17 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         }
       }
       break;
+    case 'voice_toggle':
+      if (session) {
+        if (typeof msg.searchWeb === 'boolean') session.searchWeb = msg.searchWeb;
+        if (typeof msg.bypassChip === 'boolean') {
+          session.bypassChip = msg.bypassChip;
+          // Apply bypass immediately to the active agent so it takes effect on the next turn.
+          const eng = getEngine();
+          eng.agent?.setBypassPermissions?.(msg.bypassChip);
+        }
+      }
+      break;
     case 'session_end':
       cleanupSession(ws);
       ws.close();
@@ -378,7 +394,24 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
 
 async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> {
   const eng = getEngine();
-  const peek = eng.sessionManager.getSessionById(chatSessionId);
+  let peek = eng.sessionManager.getSessionById(chatSessionId);
+
+  // For the segregated voice-only session (__channel__:voice), create it if it doesn't exist yet.
+  if (!peek && chatSessionId === '__channel__:voice') {
+    const cfg = eng.configManager.load();
+    const scope = getAgentFilesDir();
+    try {
+      eng.sessionManager.createSession(
+        cfg.provider.activeProvider as ProviderId,
+        cfg.provider.activeModel,
+        scope,
+        chatSessionId,
+      );
+      peek = eng.sessionManager.getSessionById(chatSessionId);
+    } catch {
+      return false;
+    }
+  }
   if (!peek) return false;
 
   const existingAgent = eng.agent;
@@ -433,7 +466,10 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   void service.warmFillerCache();
 
   const mode = msg.mode === 'duplex' ? 'duplex' : 'push-to-talk';
-  const chatSessionId = typeof msg.chatSessionId === 'string' ? msg.chatSessionId : undefined;
+  const voiceOnly = Boolean(msg.voiceOnly);
+  const chatSessionId = voiceOnly
+    ? '__channel__:voice'
+    : (typeof msg.chatSessionId === 'string' ? msg.chatSessionId : undefined);
   const voiceWsSessionId = String(msg.sessionId ?? randomUUID());
   const clientSituation = normalizeClientSituation(msg.clientSituation);
   const voiceSession = service.createSession({ transport: 'web', mode, sessionId: voiceWsSessionId });
@@ -457,6 +493,8 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     pttLastSttAt: 0,
     pttLastPartial: '',
     transport,
+    searchWeb: false,
+    bypassChip: false,
     ...(clientSituation ? { clientSituation } : {}),
   });
   voiceSession.setState(mode === 'duplex' ? 'listening' : 'idle');
@@ -824,6 +862,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
             }
             : {}),
           ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
+          ...(session.searchWeb ? { forceWebSearch: true } : {}),
         },
       );
 
@@ -927,6 +966,7 @@ function runVoiceAgentPhase(
     voiceMergeIntoMessage?: { messageId: string; prefixContent: string };
     userMessagePersisted?: boolean;
     clientSituation?: ClientSituation;
+    forceWebSearch?: boolean;
   } = {},
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {

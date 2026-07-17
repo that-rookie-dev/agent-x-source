@@ -1,6 +1,6 @@
 import type { SessionContextKind } from '../types/session-context.js';
 
-export type ChannelBindingId = 'telegram' | 'slack' | 'discord' | 'email';
+export type ChannelBindingId = 'telegram' | 'slack' | 'discord' | 'email' | 'voice';
 
 export interface ChannelSessionBinding {
   channel: ChannelBindingId;
@@ -16,6 +16,7 @@ export function formatChannelBindingLabel(channel: ChannelBindingId): string {
     case 'slack': return 'Slack';
     case 'discord': return 'Discord';
     case 'email': return 'Email';
+    case 'voice': return 'Voice Agent';
     default: return channel;
   }
 }

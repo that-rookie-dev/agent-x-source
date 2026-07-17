@@ -126,6 +126,18 @@ export function clearOutstandingTask(ctx: PersistenceContext): void {
   }
 }
 
+/** Clear questionnaire/crew_intake resume state so it doesn't reappear after session restore. */
+export function clearQuestionnaireResumeState(ctx: PersistenceContext): void {
+  const store = ctx.getPersistStore();
+  const targetSessionId = ctx.options.channelSession
+    ? resolveChannelResumeStateSessionId(ctx.sessionId, ctx.linkedContextSessionId)
+    : ctx.sessionId;
+  const row = store?.getSessionResumeState?.(targetSessionId);
+  if (row?.['kind'] === 'questionnaire' || row?.['kind'] === 'crew_intake') {
+    store?.clearSessionResumeState?.(targetSessionId);
+  }
+}
+
 export function noteTurnOutcome(ctx: PersistenceContext, content: string): void {
   if (!content?.trim()) return;
   const lastUser = [...ctx.messages].reverse().find((m) => m.role === 'user');
@@ -145,6 +157,7 @@ export function noteTurnOutcome(ctx: PersistenceContext, content: string): void 
   }
   if (content.length > 40 && !content.startsWith('⏹')) {
     clearOutstandingTask(ctx);
+    clearQuestionnaireResumeState(ctx);
   }
 }
 

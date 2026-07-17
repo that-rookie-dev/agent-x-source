@@ -24,6 +24,8 @@ export interface UseVoiceCommsSessionOptions {
   onVoiceTiming?: (timings: VoiceTurnTimings) => void;
   /** Request OS mic permission when panel becomes active. */
   requestMicOnActivate?: boolean;
+  /** Use a segregated voice-only session (__channel__:voice) instead of a chat session. */
+  voiceOnly?: boolean;
 }
 
 export function useVoiceCommsSession({
@@ -35,6 +37,7 @@ export function useVoiceCommsSession({
   onTranscriptFinal,
   onVoiceTiming,
   requestMicOnActivate = false,
+  voiceOnly = false,
 }: UseVoiceCommsSessionOptions) {
   const mic = useMicrophonePermission();
   const voiceCtx = useVoiceOptional();
@@ -61,6 +64,7 @@ export function useVoiceCommsSession({
     effectiveInputMode,
     chatSessionId ?? undefined,
     { onVoiceUserPending, onVoiceUserDiscarded, onAgentRunning, onTranscriptFinal, onVoiceTiming },
+    voiceOnly,
   );
 
   useEffect(() => {

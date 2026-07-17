@@ -5,7 +5,7 @@ export const CHANNEL_SESSION_ID = '__channel__';
 
 const CHANNEL_SESSION_PREFIX = `${CHANNEL_SESSION_ID}:`;
 
-const CHANNEL_BINDINGS: readonly ChannelBindingId[] = ['telegram', 'slack', 'discord', 'email'];
+const CHANNEL_BINDINGS: readonly ChannelBindingId[] = ['telegram', 'slack', 'discord', 'email', 'voice'];
 
 /** Per-surface transcript session id, e.g. __channel__:telegram */
 export function channelSessionIdForBinding(channel: ChannelBindingId): string {
@@ -29,9 +29,11 @@ export function isChannelSessionId(sessionId: string | null | undefined): boolea
   return sessionId.startsWith(CHANNEL_SESSION_PREFIX);
 }
 
-/** Messaging channels operate as fleet-wide operator consoles (super sessions). */
+/** Messaging channels operate as fleet-wide operator consoles (super sessions). Voice is a segregated session, not a super session. */
 export function isSuperSessionId(sessionId: string | null | undefined): boolean {
-  return isChannelSessionId(sessionId);
+  if (!isChannelSessionId(sessionId)) return false;
+  const channel = parseChannelBindingFromSessionId(sessionId);
+  return channel !== 'voice';
 }
 
 /** When a super session calls fleet tools, omit session filter so all resources are visible. */
