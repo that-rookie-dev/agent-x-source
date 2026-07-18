@@ -1,7 +1,9 @@
 import type {
   TurnAttachment,
   NormalizedAttachment,
+  StoredAttachment,
 } from '@agentx/shared';
+import { getAttachmentService } from '../attachments/index.js';
 
 export class AttachmentResolver {
   async resolve(
@@ -20,6 +22,67 @@ export class AttachmentResolver {
   private async resolveOne(
     attachment: TurnAttachment,
   ): Promise<NormalizedAttachment> {
+    const service = getAttachmentService();
+    const name = this.sanitizeFileName(attachment.name);
+
+    // If an MCP / tool gives us an on-disk path, register it as a reference.
+    if (attachment.originalPath) {
+      let stored: StoredAttachment | null = null;
+      try {
+        stored = await service.registerAttachment({
+          sessionId: '',
+          filename: name,
+          mimeType: attachment.mimeType,
+          source: attachment.source ?? 'mcp',
+          originalPath: attachment.originalPath,
+        });
+      } catch {
+        stored = null;
+      }
+      if (stored) {
+        return {
+          id: attachment.id,
+          type: this.attachmentType(stored.mimeType, attachment.type),
+          name: stored.filename,
+          mimeType: stored.mimeType,
+          storageId: stored.id,
+          content: '',
+          isInline: false,
+        };
+      }
+      return {
+        id: attachment.id,
+        type: attachment.type,
+        name,
+        mimeType: attachment.mimeType ?? 'application/octet-stream',
+        content: `[Attachment ${name} not found]`,
+        isInline: false,
+      };
+    }
+
+    if (attachment.storageId) {
+      const stored = service.getAttachment(attachment.storageId);
+      if (stored) {
+        return {
+          id: attachment.id,
+          type: this.attachmentType(stored.mimeType, attachment.type),
+          name: stored.filename,
+          mimeType: stored.mimeType,
+          storageId: stored.id,
+          content: '',
+          isInline: stored.mimeType.startsWith('image/'),
+        };
+      }
+      return {
+        id: attachment.id,
+        type: attachment.type,
+        name,
+        mimeType: attachment.mimeType ?? 'application/octet-stream',
+        content: `[Attachment ${name} not found]`,
+        isInline: false,
+      };
+    }
+
     const mimeType = attachment.mimeType ?? this.guessMimeType(attachment);
 
     let content = '';
@@ -29,22 +92,26 @@ export class AttachmentResolver {
       content = attachment.data;
       isInline = true;
     } else if (attachment.url) {
-      try {
-        content = attachment.url;
-        isInline = false;
-      } catch {
-        content = '';
-      }
+      content = attachment.url;
+      isInline = false;
     }
 
     return {
       id: attachment.id,
       type: attachment.type,
-      name: this.sanitizeFileName(attachment.name),
+      name,
       mimeType,
       content,
       isInline,
     };
+  }
+
+  private attachmentType(
+    mimeType: string,
+    fallback: 'file' | 'image' | 'url',
+  ): 'file' | 'image' | 'url' {
+    if (mimeType.startsWith('image/')) return 'image';
+    return fallback === 'url' ? 'url' : 'file';
   }
 
   private guessMimeType(attachment: TurnAttachment): string {
@@ -78,7 +145,6 @@ export class AttachmentResolver {
   }
 
   private sanitizeFileName(name: string): string {
-    // eslint-disable-next-line no-control-regex
     return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
   }
 }

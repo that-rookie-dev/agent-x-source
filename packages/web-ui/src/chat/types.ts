@@ -51,7 +51,7 @@ export interface UIMessage extends ChatMessage {
   todos?: TodoItem[];
   streaming?: boolean;
   plan?: string[];
-  attachments?: { name: string }[];
+  attachments?: { id: string; name: string; mimeType?: string }[];
   turnTokens?: number;
   voiceTimings?: {
     sttMs: number;
@@ -83,8 +83,15 @@ export interface VisibleMessageItem {
 }
 
 export interface FileAttachment {
+  id: string;
   name: string;
-  content: string;
+  mimeType: string;
+  /** base64 data URL for preview / upload. */
+  dataUrl: string;
+  /** server attachment id once uploaded. */
+  storageId?: string;
+  /** true when upload has completed. */
+  uploaded?: boolean;
 }
 
 export type ChatView = 'sessions' | 'chat';

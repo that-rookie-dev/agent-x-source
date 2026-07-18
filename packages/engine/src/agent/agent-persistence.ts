@@ -244,6 +244,7 @@ export function persistAssistantMessage(ctx: PersistenceContext, msg: Message): 
       role: 'assistant',
       content: msg.content,
       tokenCount: msg.tokenCount ?? 0,
+      attachments: msg.attachments?.map((a) => ({ ...(a as unknown as Record<string, unknown>), content: '' })),
       metadata,
     });
   } catch { /* best-effort */ }
@@ -269,6 +270,7 @@ export function persistUserMessage(ctx: PersistenceContext, msg: Message): void 
       role: 'user',
       content: msg.content,
       tokenCount: msg.tokenCount ?? 0,
+      attachments: msg.attachments?.map((a) => ({ ...(a as unknown as Record<string, unknown>), content: '' })),
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       ...(platformMessageId != null ? { platformMessageId } : {}),
       ...(platformChatId != null ? { platformChatId } : {}),

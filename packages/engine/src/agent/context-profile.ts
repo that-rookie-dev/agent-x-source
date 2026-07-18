@@ -1,4 +1,4 @@
-import type { ProviderId } from '@agentx/shared';
+import type { ProviderId, NormalizedAttachment } from '@agentx/shared';
 
 const LOCAL_PROVIDERS = new Set<ProviderId>(['ollama', 'lmstudio']);
 
@@ -27,6 +27,8 @@ export interface CompletionMessageLike {
   content: string;
   /** Present on tool-result messages that must round-trip through provider normalization. */
   toolCallId?: string;
+  /** Resolved image/file attachments for this message. */
+  attachments?: NormalizedAttachment[];
 }
 
 /**
@@ -54,7 +56,12 @@ export function normalizeAiSdkMessages(
     }
 
     seenNonSystem = true;
-    result.push({ role: msg.role, content: msg.content, ...(msg.toolCallId ? { toolCallId: msg.toolCallId } : {}) });
+    result.push({
+      role: msg.role,
+      content: msg.content,
+      ...(msg.toolCallId ? { toolCallId: msg.toolCallId } : {}),
+      ...(msg.attachments ? { attachments: msg.attachments } : {}),
+    });
   }
 
   if (leadingSystem.length > 0) {
@@ -70,7 +77,12 @@ export function normalizeAiSdkMessagesForProvider(
   providerId?: string,
 ): CompletionMessageLike[] {
   if (providerId !== 'google') {
-    return messages.map((m) => ({ role: m.role, content: m.content, ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}) }));
+    return messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}),
+      ...(m.attachments ? { attachments: m.attachments } : {}),
+    }));
   }
   return normalizeAiSdkMessages(messages);
 }
@@ -84,7 +96,11 @@ export function buildCompletionMessages(
 ): CompletionMessageLike[] {
   let built: CompletionMessageLike[];
   if (!compact) {
-    built = messages.map((m) => ({ role: m.role, content: m.content }));
+    built = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.attachments ? { attachments: m.attachments } : {}),
+    }));
   } else {
     const systemBaseline = messages.find((m) => m.role === 'system')?.content ?? '';
     const nonSystem = messages.filter((m) => m.role !== 'system');
@@ -95,7 +111,11 @@ export function buildCompletionMessages(
       built.push({ role: 'system', content: systemBaseline });
     }
     for (const m of recent) {
-      built.push({ role: m.role, content: m.content });
+      built.push({
+        role: m.role,
+        content: m.content,
+        ...(m.attachments ? { attachments: m.attachments } : {}),
+      });
     }
   }
 

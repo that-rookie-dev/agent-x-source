@@ -146,17 +146,19 @@ export function McpStdioAuthPanel({
           Callback URL: {redirectUri}
         </Typography>
       )}
-      <Button
-        fullWidth
-        variant="outlined"
-        disabled={busy || status === 'running'}
-        onClick={() => { void runAuth(); }}
-        sx={{ fontSize: '0.65rem', textTransform: 'none', borderColor: settingsTheme.accent.hud, color: settingsTheme.accent.hud }}
-      >
-        {status === 'running'
-          ? <CircularProgress size={14} />
-          : status === 'failed' ? 'Sign in again' : `Sign in with Google (${provider.name})`}
-      </Button>
+      {status !== 'signed_in' && (
+        <Button
+          fullWidth
+          variant="outlined"
+          disabled={busy || status === 'running'}
+          onClick={() => { void runAuth(); }}
+          sx={{ fontSize: '0.65rem', textTransform: 'none', borderColor: settingsTheme.accent.hud, color: settingsTheme.accent.hud }}
+        >
+          {status === 'running'
+            ? <CircularProgress size={14} />
+            : status === 'failed' ? 'Sign in again' : `Sign in with Google (${provider.name})`}
+        </Button>
+      )}
       {status === 'running' && (
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5 }}>
           <CircularProgress size={12} />

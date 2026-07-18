@@ -17,6 +17,7 @@ import type {
 } from '@agentx/shared';
 import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult, parseChannelBindingFromSessionId } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
+import { getAttachmentService } from '../attachments/index.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -1752,7 +1753,7 @@ export class Agent {
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; sourceMessageId?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; sourceMessageId?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null; attachments?: import('@agentx/shared').TurnAttachment[] }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1785,7 +1786,7 @@ export class Agent {
       userId: options?.userId ?? 'user',
       receivedAt: Date.now(),
       text: content,
-      attachments: [],
+      attachments: options?.attachments ?? [],
       metadata: {},
     });
     const startTime = Date.now();
@@ -1814,6 +1815,7 @@ export class Agent {
 
     // ─── UNIFIED: Normalize input ───
     let cleanContent = content;
+    let resolvedAttachments: import('@agentx/shared').NormalizedAttachment[] = [];
     try {
       const normalized = await this.inputNormalizer.sanitize({
         turnId: `turn-${startTime}`,
@@ -1822,16 +1824,20 @@ export class Agent {
         userId: 'user',
         receivedAt: startTime,
         text: content,
-        attachments: [],
+        attachments: options?.attachments ?? [],
         metadata: {},
       });
       cleanContent = normalized.cleanText;
+      resolvedAttachments = normalized.cleanAttachments;
       if (normalized.warnings.length > 0) {
         getLogger().warn('NORMALIZE', `${normalized.warnings.length} input warnings`);
       }
     } catch {
       // Fall through with original content if normalization fails
     }
+
+    // ─── Attachments remain lightweight refs; heavy content is fetched on demand for the model prompt ───
+    // Avoid loading extracted text into the user content that is persisted/emitted to the UI.
 
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
@@ -1956,12 +1962,23 @@ export class Agent {
       const turnBoundary = this.messages.length > 0
         ? `\n[TURN ${this.currentTurnId} — treat prior messages as context only unless the user references them]`
         : '';
-      this.messages.push({ role: 'user', content: cleanContent + turnBoundary });
+      this.messages.push({
+        role: 'user',
+        content: cleanContent + turnBoundary,
+        attachments: resolvedAttachments,
+      } as CompletionMessage);
     }
 
     // Record in context tracker
     if (!options?.voiceContinuation) {
       this.contextTracker.record('user', cleanContent);
+    }
+
+    const messageMetadata: Record<string, unknown> = {};
+    if (messagingChannelInbound && options?.sourceMessageId) {
+      if (options?.sourceChannel) messageMetadata['channel'] = options.sourceChannel;
+      messageMetadata['platformMessageId'] = Number(options.sourceMessageId);
+      if (options?.channelId) messageMetadata['platformChatId'] = Number(options.channelId);
     }
 
     const userMessage: Message = {
@@ -1972,16 +1989,8 @@ export class Agent {
       toolCalls: null,
       createdAt: new Date().toISOString(),
       tokenCount: 0,
-      ...(messagingChannelInbound && options?.sourceMessageId ? {
-        metadata: {
-          ...(options?.sourceChannel ? { channel: options.sourceChannel } : {}),
-          // Store platform IDs in metadata — persistUserMessage extracts these
-          // into dedicated DB columns (platform_message_id, platform_chat_id).
-          // Using Record<string, unknown> cast because MessageMetadata is strict.
-          ...({ platformMessageId: Number(options.sourceMessageId) } as Record<string, unknown>),
-          ...(options?.channelId ? { platformChatId: Number(options.channelId) } as Record<string, unknown> : {}),
-        } as Record<string, unknown>,
-      } : {}),
+      attachments: resolvedAttachments,
+      ...(Object.keys(messageMetadata).length > 0 ? { metadata: messageMetadata } : {}),
     } as Message;
 
     if (!options?.retry && !options?.voiceContinuation) {
@@ -2539,13 +2548,13 @@ export class Agent {
 
     const model = createAiSdkModel(this.config, this.getApiKey());
 
-    let aiMessages = this.buildAiMessagesForTurn({
+    let aiMessages = await this.buildAiMessagesForTurn({
       lastUserText,
       compact,
       integrationHint,
     });
     const toolCount = Object.keys(tools).length;
-    const rebuildAiMessages = () => this.buildAiMessagesForTurn({
+    const rebuildAiMessages = async () => this.buildAiMessagesForTurn({
       lastUserText,
       compact,
       integrationHint,
@@ -2589,9 +2598,10 @@ export class Agent {
           this.config.provider.activeReasoningEffort,
         )
         : undefined;
+      const sdkMessages = await this.buildSdkMessages(aiMessages);
       const result = streamText({
         model,
-        messages: aiMessages,
+        messages: sdkMessages as unknown as ModelMessage[],
         tools,
         abortSignal: this.abortSignal,
         maxRetries: 2,
@@ -3319,15 +3329,42 @@ export class Agent {
     );
   }
 
-  private buildAiMessagesForTurn(opts: {
+  private async buildAiMessagesForTurn(opts: {
     lastUserText: string;
     compact: boolean;
     integrationHint?: string;
-  }): Array<{ role: 'user' | 'assistant' | 'system'; content: string }> {
+  }): Promise<Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>> {
+    const service = getAttachmentService();
+    let lastUserIdx = -1;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      if (this.messages[i]!.role === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    const messagesWithDocs = await Promise.all(this.messages.map(async (m, idx) => {
+      if (m.role !== 'user' || idx !== lastUserIdx) return m;
+      const docParts: string[] = [];
+      for (const a of (m as { attachments?: import('@agentx/shared').NormalizedAttachment[] }).attachments ?? []) {
+        if (a.type !== 'file') continue;
+        let text: string | null = null;
+        if (a.content && a.content.length > 0) {
+          text = a.content;
+        } else if (a.storageId) {
+          text = await service.extractTextForAgent(a.storageId);
+        }
+        if (text && text.length > 0) {
+          docParts.push(`--- Attachment: ${a.name} ---\n${text}`);
+        }
+      }
+      if (docParts.length === 0) return m;
+      return { ...m, content: `${m.content}\n\n${docParts.join('\n\n')}` };
+    }));
     const aiMessages = buildCompletionMessages(
-      this.messages.map((m) => ({
+      messagesWithDocs.map((m) => ({
         role: m.role,
         content: (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)) || '',
+        attachments: (m as { attachments?: import('@agentx/shared').NormalizedAttachment[] }).attachments,
       })),
       opts.compact,
       3,
@@ -3335,13 +3372,14 @@ export class Agent {
     ).map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
       content: m.content,
+      attachments: m.attachments,
     }));
 
     if (this.pendingInstruction) {
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg) {
-        aiMessages[userIdx] = { role: 'user', content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
+        aiMessages[userIdx] = { ...userMsg!, content: `${userMsg.content}\n\n[INSTRUCTION]\n${this.pendingInstruction}\n[/INSTRUCTION]` };
       }
       this.pendingInstruction = null;
     }
@@ -3351,7 +3389,7 @@ export class Agent {
       const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg && !userMsg.content.includes('[TURN CONTEXT]')) {
-        aiMessages[userIdx] = { role: 'user', content: `${turnCtx.block}\n\n${userMsg.content}` };
+        aiMessages[userIdx] = { ...userMsg!, content: `${turnCtx.block}\n\n${userMsg.content}` };
       }
     }
 
@@ -3360,7 +3398,7 @@ export class Agent {
       const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg && !userMsg.content.includes('[CLIENT_SITUATION]')) {
-        aiMessages[userIdx] = { role: 'user', content: `${situationBlock}\n\n${userMsg.content}` };
+        aiMessages[userIdx] = { ...userMsg!, content: `${situationBlock}\n\n${userMsg.content}` };
       }
     }
 
@@ -3368,7 +3406,7 @@ export class Agent {
       const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg && !userMsg.content.includes('[INTEGRATION')) {
-        aiMessages[userIdx] = { role: 'user', content: `${opts.integrationHint}\n\n${userMsg.content}` };
+        aiMessages[userIdx] = { ...userMsg!, content: `${opts.integrationHint}\n\n${userMsg.content}` };
       }
     }
 
@@ -3377,19 +3415,52 @@ export class Agent {
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg) {
-        aiMessages[userIdx] = { role: 'user', content: `${ragCtx}\n\n${userMsg.content}` };
+        aiMessages[userIdx] = { ...userMsg!, content: `${ragCtx}\n\n${userMsg.content}` };
       }
     }
 
     return aiMessages;
   }
 
+  private async buildSdkMessages(
+    aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>,
+  ): Promise<Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>> {
+    const service = getAttachmentService();
+    const results = [] as Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>;
+    for (const m of aiMessages) {
+      const imageAttachments = m.attachments?.filter((a) => a.type === 'image');
+      if (m.role === 'user' && imageAttachments && imageAttachments.length > 0) {
+        const parts: unknown[] = [{ type: 'text', text: m.content }];
+        for (const img of imageAttachments) {
+          let dataUrl = img.content;
+          if (!dataUrl && img.storageId) {
+            const buffer = await service.getBuffer(img.storageId);
+            if (buffer) {
+              dataUrl = `data:${img.mimeType};base64,${buffer.toString('base64')}`;
+            }
+          }
+          const match = dataUrl?.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            const mime = match[1];
+            const base64 = match[2]!;
+            const buffer = Buffer.from(base64, 'base64');
+            parts.push({ type: 'image', image: new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength), mimeType: mime } as any);
+          }
+        }
+        results.push({ role: m.role, content: parts });
+      } else {
+        results.push({ role: m.role, content: m.content });
+      }
+    }
+    return results;
+  }
+
   /** Compact history when needed and ensure the prompt leaves room for model output. */
   private async ensureOutputBudget(
-    aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+    aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>,
     tools: Record<string, unknown>,
-    rebuild: () => Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  ): Promise<{ messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>; maxOutputTokens: number }> {
+    rebuild: () => Promise<Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>>,
+  ): Promise<{ messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>; maxOutputTokens: number }> {
     const contextWindow = this.getContextWindow();
     const modelCaps = this.getActiveModelCaps();
     let messages = aiMessages;
@@ -3412,7 +3483,7 @@ export class Agent {
         getLogger().warn('AGENT', `Prompt too large (~${estimatedInput} tokens) — compacting before LLM call`);
         const compacted = await this.compactContext(estimatedInput);
         if (!compacted) throw error;
-        messages = rebuild();
+        messages = await rebuild();
       }
     }
     throw new ContextBudgetExceededError(this.estimateTurnInputTokens(messages, tools), contextWindow);
@@ -3449,6 +3520,20 @@ export class Agent {
     if (event.type === 'message_received') {
       const raw = event as { message?: Message };
       if (raw.message?.role === 'assistant') {
+        // Attach any files the tool layer registered during this turn.
+        const toolAttachments = this.toolExecutor?.getCollectedAttachments() ?? [];
+        if (toolAttachments.length > 0) {
+          const enriched = toolAttachments.map((a) => ({
+            id: a.id,
+            type: a.type,
+            name: a.name,
+            mimeType: a.mimeType ?? 'application/octet-stream',
+            content: '',
+            isInline: a.type === 'image',
+          } as import('@agentx/shared').NormalizedAttachment));
+          raw.message.attachments = [...(raw.message.attachments ?? []), ...enriched];
+          this.toolExecutor?.clearCollectedAttachments();
+        }
         event = { ...event, message: this.tagCrewPrivateAssistant(raw.message) } as EngineEvent;
       }
     }
@@ -3461,7 +3546,7 @@ export class Agent {
         this.persistAssistantMessage(crewMsg);
       }
       if (crewMsg?.crew) {
-        this.eventBus.emit(event);
+        this.eventBus.emit(this.sanitizeAttachments(event));
         return;
       }
       const parts = crewMsg?.parts as Array<{ type?: string }> | undefined;
@@ -3473,7 +3558,14 @@ export class Agent {
         this._turnMessageEmitted = true;
       }
     }
-    this.eventBus.emit(event);
+    this.eventBus.emit(this.sanitizeAttachments(event));
+  }
+
+  private sanitizeAttachments(event: EngineEvent): EngineEvent {
+    const raw = event as { message?: { attachments?: Array<{ content?: unknown }> } };
+    if (!raw.message?.attachments) return event;
+    const sanitized = raw.message.attachments.map((a) => ({ ...a, content: '' }));
+    return { ...event, message: { ...(raw.message as Record<string, unknown>), attachments: sanitized } } as EngineEvent;
   }
 
   public persistAssistantMessage(msg: Message): void {

@@ -678,6 +678,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     plan?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    attachments?: unknown;
     createdAt?: string;
     platformMessageId?: number | null;
     platformMessageIds?: number[] | null;
@@ -690,6 +691,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     content?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    attachments?: unknown;
     platformMessageId?: number | null;
     platformMessageIds?: number[] | null;
     platformChatId?: number | null;

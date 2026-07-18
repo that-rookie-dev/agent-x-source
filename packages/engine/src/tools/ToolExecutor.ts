@@ -1,8 +1,9 @@
-import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind, AgentXConfig } from '@agentx/shared';
+import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind, AgentXConfig, TurnAttachment } from '@agentx/shared';
 import { formatPermissionInstructedToolOutput, type PermissionHandlerResult } from '@agentx/shared';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
+import { getAttachmentService } from '../attachments/index.js';
 import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
 import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
@@ -78,6 +79,8 @@ export class ToolExecutor implements ToolPermissionHost {
   private turnAborted = false;
   private permissionPromptHook?: PermissionPromptHook;
   private permissionService: ToolPermissionService;
+  /** Attachments collected from tool handlers during a turn. */
+  private collectedAttachments: TurnAttachment[] = [];
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
@@ -208,6 +211,14 @@ export class ToolExecutor implements ToolPermissionHost {
 
   getMessagingPermissionMode(): boolean {
     return this.messagingPermissionMode;
+  }
+
+  getCollectedAttachments(): TurnAttachment[] {
+    return this.collectedAttachments;
+  }
+
+  clearCollectedAttachments(): void {
+    this.collectedAttachments = [];
   }
 
   getInboundSourceChannel(): string | null {
@@ -442,6 +453,36 @@ export class ToolExecutor implements ToolPermissionHost {
       ...(this.inboundSourceMessageId ? { sourceMessageId: this.inboundSourceMessageId } : {}),
       onOutput: onToolOutput,
       signal: abortController.signal,
+      registerAttachment: async (opts) => {
+        let buffer: Buffer | undefined;
+        if (opts.buffer) {
+          if (ArrayBuffer.isView(opts.buffer)) {
+            const view = opts.buffer as Uint8Array;
+            buffer = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+          } else {
+            buffer = Buffer.from(opts.buffer as ArrayBuffer);
+          }
+        }
+        const stored = await getAttachmentService().registerAttachment({
+          sessionId,
+          filename: opts.filename,
+          mimeType: opts.mimeType,
+          source: opts.source ?? 'tool',
+          originalPath: opts.originalPath,
+          dataUrl: opts.dataUrl,
+          buffer,
+        });
+        const turnAttachment: TurnAttachment = {
+          id: stored.id,
+          name: stored.filename,
+          mimeType: stored.mimeType,
+          type: stored.mimeType.startsWith('image/') ? 'image' : 'file',
+          storageId: stored.id,
+          source: stored.source,
+        };
+        this.collectedAttachments.push(turnAttachment);
+        return turnAttachment;
+      },
     };
 
     try {

@@ -485,6 +485,7 @@ const handleMessageReceived = (ev: TelemetryEvent, ctx: EventHandlerContext): vo
       toolCalls?: ToolCall[];
       crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
       tokenCount?: number;
+      attachments?: Array<{ id: string; name: string; mimeType?: string }>;
     } | undefined;
     const crew = msg?.crew;
     const msgId = msg?.id || crypto.randomUUID();
@@ -530,6 +531,7 @@ const handleMessageReceived = (ev: TelemetryEvent, ctx: EventHandlerContext): vo
           content: text || prev[idx]!.content,
           parts: mergedParts,
           streaming: false,
+          ...(msg?.attachments ? { attachments: msg.attachments } : {}),
           ...(crew ? { crew } : {}),
         };
         return [...prev.slice(0, idx), updated, ...prev.slice(idx + 1)];
@@ -592,7 +594,7 @@ const handleMessageReceived = (ev: TelemetryEvent, ctx: EventHandlerContext): vo
       const msgId = msg.id || crypto.randomUUID();
       if (withOutgoing.some((m) => m.id === msgId)) return withOutgoing;
       const parts = msg.parts || [{ type: 'text' as const, id: crypto.randomUUID(), content: text }];
-      return [...withOutgoing, { id: msgId, role: 'assistant' as const, content: text, streaming: false, parts, ...(crew ? { crew } : {}) } as UIMessage];
+      return [...withOutgoing, { id: msgId, role: 'assistant' as const, content: text, streaming: false, parts, ...(msg?.attachments ? { attachments: msg.attachments } : {}), ...(crew ? { crew } : {}) } as UIMessage];
     }
     return withOutgoing;
   });

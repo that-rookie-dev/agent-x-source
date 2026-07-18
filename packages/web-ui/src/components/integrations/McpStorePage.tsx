@@ -23,6 +23,7 @@ function renderProviderGrid(
   onOpen: (p: IntegrationProvider) => void,
   onConnect: (p: IntegrationProvider) => void,
   onSignIn: (p: IntegrationProvider) => void,
+  onSync: (c: import('../../api').IntegrationConnection) => void,
 ) {
   return (
     <StoreCardGrid>
@@ -34,6 +35,7 @@ function renderProviderGrid(
           onOpen={onOpen}
           onConnect={onConnect}
           onSignIn={onSignIn}
+          onSync={onSync}
         />
       ))}
     </StoreCardGrid>
@@ -274,7 +276,7 @@ export function McpStorePage() {
                       title={CATEGORY_LABELS[cat] ?? cat}
                       count={providers.length}
                     />
-                    {renderProviderGrid(providers, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn)}
+                    {renderProviderGrid(providers, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn, hub.handleSync)}
                   </Box>
                 ))
               ) : (
@@ -289,7 +291,7 @@ export function McpStorePage() {
                     }
                     count={filteredProviders.length}
                   />
-                  {renderProviderGrid(filteredProviders, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn)}
+                  {renderProviderGrid(filteredProviders, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn, hub.handleSync)}
                 </>
               )}
             </Box>

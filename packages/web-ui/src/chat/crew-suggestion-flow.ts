@@ -46,7 +46,7 @@ export function mergeCrewRosterPickerIntoMessages(
   pickerMsg: UIMessage,
   persisted: { userMessageId: string; pickerMessageId: string },
   opts?: { userMessageId?: string; evalAssistantMessageId?: string },
-  attachments?: Array<{ name: string }>,
+  attachments?: Array<{ id: string; name: string; mimeType?: string }>,
 ): UIMessage[] {
   let next = prev.filter((message) => {
     if (message.id === opts?.evalAssistantMessageId) return false;

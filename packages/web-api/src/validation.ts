@@ -26,7 +26,15 @@ export function validate(schema: z.ZodSchema) {
 
 const MAX_CHAT_TEXT_LEN = 100_000;
 const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENT_CONTENT_LEN = 512_000;
+
+export const attachmentRefSchema = z.object({
+  id: z.string(),
+  name: z.string().max(256),
+  mimeType: z.string().optional(),
+  storageId: z.string().optional(),
+  source: z.enum(['upload', 'gmail', 'tool']).optional(),
+  type: z.enum(['file', 'image', 'url']).optional(),
+});
 
 export const clientSituationSchema = z.object({
   clientNow: z.string().min(1).max(64),
@@ -42,11 +50,8 @@ export const clientSituationSchema = z.object({
 }).optional();
 
 export const chatMessageSchema = z.object({
-  text: z.string().min(1, 'text is required').max(MAX_CHAT_TEXT_LEN),
-  attachments: z.array(z.object({
-    name: z.string().max(256),
-    content: z.string().max(MAX_ATTACHMENT_CONTENT_LEN),
-  })).max(MAX_ATTACHMENTS).optional(),
+  text: z.string().max(MAX_CHAT_TEXT_LEN).default(''),
+  attachments: z.array(attachmentRefSchema).max(MAX_ATTACHMENTS).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
   /** Set after user resolves a crew suggestion — prevents server re-prompt. */
@@ -124,11 +129,8 @@ export const crewChatSessionSchema = z.object({
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
 
 export const chatSteerSchema = z.object({
-  text: z.string().min(1, 'text is required'),
-  attachments: z.array(z.object({
-    name: z.string(),
-    content: z.string(),
-  })).optional(),
+  text: z.string().default(''),
+  attachments: z.array(attachmentRefSchema).optional(),
   delegateCrewIds: z.array(z.string()).optional(),
   crewSuggestionResolved: z.boolean().optional(),
   crewIntakeFromPicker: z.boolean().optional(),

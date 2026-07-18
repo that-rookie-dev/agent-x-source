@@ -892,13 +892,20 @@ Rules:
           await this.syncConnection(connection.id);
           continue;
         }
+        if (active.session.isBusy()) {
+          continue;
+        }
         await active.session.listTools();
         this.store.updateConnection(connection.id, { lastSyncAt: new Date().toISOString(), status: 'connected', error: undefined });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         getLogger().warn('INTEGRATION_HEALTH_CHECK_FAILED', message);
-        this.store.updateConnection(connection.id, { status: 'error', error: message });
         await this.closeSession(connection.id);
+        try {
+          await this.syncConnection(connection.id);
+        } catch {
+          this.store.updateConnection(connection.id, { status: 'error', error: message });
+        }
       }
     }
     this.syncToolkitIfBridged();
@@ -1062,6 +1069,11 @@ Rules:
         argsSummary: summarizeArgs(args),
         error: message,
       });
+      const lower = message.toLowerCase();
+      if (lower.includes('not connected') || lower.includes('connection') || lower.includes('econnrefused') || lower.includes('closed')) {
+        getLogger().warn('INTEGRATION_TOOL_CONNECTION_LOST', `${connectionId}: ${message}`);
+        await this.closeSession(connectionId).catch(() => { /* ignore */ });
+      }
       const clarified = provider ? this.clarifyPackageSignInOutput(provider, toolName, message) : message;
       return { success: false, output: clarified, error: 'INTEGRATION_TOOL_FAILED' };
     }
@@ -1298,6 +1310,19 @@ Rules:
         ok: false,
         result: { success: false, output: 'Integration is not connected', error: 'NOT_CONNECTED' },
       };
+    }
+
+    if (this.sessions.has(connectionId)) {
+      const active = this.sessions.get(connectionId)!;
+      if (!active.session.isBusy()) {
+        try {
+          await active.session.listTools();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          getLogger().warn('INTEGRATION_SESSION_STALE', `${connectionId}: ${message}`);
+          await this.closeSession(connectionId);
+        }
+      }
     }
 
     if (!this.sessions.has(connectionId)) {

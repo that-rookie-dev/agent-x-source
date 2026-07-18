@@ -18,6 +18,7 @@ export function useIntegrationsHub() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
+      await integrations.maintain().catch(() => { /* best effort — stale status is still usable */ });
       const [catalog, list, stats] = await Promise.all([
         integrations.catalog(true),
         integrations.connections(),

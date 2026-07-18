@@ -1,12 +1,14 @@
 import React, { useState, useMemo, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import Tooltip from '@mui/material/Tooltip';
 import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import { colors, alphaColor } from '../theme';
+import { AttachmentModal } from './AttachmentModal';
 import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
@@ -288,6 +290,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [openAttachmentId, setOpenAttachmentId] = useState<string | null>(null);
   const normalized = useMemo(
     () => normalizeMessageForUi({
       content: message.content,
@@ -414,6 +417,31 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
                 status: agent.status,
                 task: agent.task,
               })}
+            />
+          ))}
+        </Box>
+      )}
+
+      {message.attachments && message.attachments.length > 0 && (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
+          {message.attachments.map((a, i) => (
+            <Chip
+              key={i}
+              size="small"
+              icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />}
+              label={a.name}
+              onClick={() => setOpenAttachmentId(a.id)}
+              sx={{ fontSize: '0.5rem', height: 18, cursor: 'pointer', bgcolor: alphaColor(colors.accent.blue, '08'), border: `1px solid ${alphaColor(colors.accent.blue, '20')}` }}
+            />
+          ))}
+          {message.attachments.map((a) => (
+            <AttachmentModal
+              key={a.id}
+              open={openAttachmentId === a.id}
+              onClose={() => setOpenAttachmentId(null)}
+              id={a.id}
+              name={a.name}
+              mimeType={a.mimeType}
             />
           ))}
         </Box>

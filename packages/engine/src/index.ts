@@ -73,6 +73,9 @@ export {
   setMarkdownDocumentStoreInstance,
   getMarkdownDocumentStoreInstance,
 } from './markdown/MarkdownDocumentStore.js';
+// Attachments
+export { AttachmentService, getAttachmentService } from './attachments/index.js';
+
 export { ProviderFactory } from './providers/index.js';
 export type { ProviderInterface } from './providers/index.js';
 export { OpenAIProvider } from './providers/OpenAIProvider.js';

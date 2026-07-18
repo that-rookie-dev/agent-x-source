@@ -12,6 +12,16 @@ function syncIntegrationTools(): void {
   eng.integrationHub.syncToToolkit(eng.toolkit.registry, eng.toolkit.executor);
 }
 
+router.post('/integrations/maintain', async (_req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    await eng.integrationHub.maintainConnections();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'maintain-failed' });
+  }
+});
+
 router.get('/integrations/catalog', (_req: Request, res: Response) => {
   const eng = getEngine();
   res.json({

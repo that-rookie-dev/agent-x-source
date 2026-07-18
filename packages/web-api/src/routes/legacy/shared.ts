@@ -13,7 +13,7 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, access, rename } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { getDataDir, getLogger, agentXConfigSchema } from '@agentx/shared';
-import type { AgentXConfig } from '@agentx/shared';
+import type { AgentXConfig, TurnAttachment } from '@agentx/shared';
 
 // ─────────────────────────────────────────────────────────────
 // Directory constants
@@ -208,7 +208,7 @@ export async function waitForIdle(agent: { processing: boolean }, maxWait = 3000
 
 export const messageQueue: Array<{
   text: string;
-  attachments?: { name: string; content: string }[];
+  attachments?: TurnAttachment[];
   delegateCrewIds?: string[];
   crewSuggestionResolved?: boolean;
   crewIntakeFromPicker?: boolean;

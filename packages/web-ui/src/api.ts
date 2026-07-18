@@ -1,6 +1,6 @@
 // Centralized API client for all web-api endpoints
 
-import type { ClientSituation } from '@agentx/shared';
+import type { ClientSituation, TurnAttachment, AttachmentReference, AttachmentPreview } from '@agentx/shared';
 import { AGENTX_AUTH_TOKEN_KEY } from './utils/client-storage';
 import { notifyVoiceConfigUpdated } from './voice/support';
 
@@ -318,7 +318,7 @@ async function postChatAsync(path: string, body: Record<string, unknown>) {
 export const chat = {
   send: (
     text: string,
-    attachments?: { name: string; content: string }[],
+    attachments?: TurnAttachment[],
     retry?: boolean,
     delegateCrewIds?: string[],
     crewSuggestionResolved?: boolean,
@@ -351,7 +351,7 @@ export const chat = {
   sendStream: async (
     text: string,
     onProgress: (event: { type: string; data: unknown }) => void,
-    attachments?: { name: string; content: string }[],
+    attachments?: TurnAttachment[],
     retry?: boolean,
     delegateCrewIds?: string[],
     crewSuggestionResolved?: boolean,
@@ -441,13 +441,26 @@ export const chat = {
   cancel: () => request<{ ok: boolean }>('/chat/cancel', { method: 'POST' }),
   history: () => request<ChatMessage[]>('/chat/history'),
   clear: () => request<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
-  queue: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  queue: (text: string, attachments?: TurnAttachment[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
   getQueue: () => request<{ queue: Array<{ text: string }>; length: number }>('/chat/queue'),
   clearQueue: () => request<{ ok: boolean }>('/chat/queue', { method: 'DELETE' }),
-  steer: (text: string, attachments?: { name: string; content: string }[]) =>
+  steer: (text: string, attachments?: TurnAttachment[]) =>
     postChatAsync('/chat/steer', { text, attachments }),
-  stopAndSend: (text: string, attachments?: { name: string; content: string }[]) =>
+  stopAndSend: (text: string, attachments?: TurnAttachment[]) =>
     postChatAsync('/chat/stop-and-send', { text, attachments }),
+};
+
+// ─── Attachments ───
+export const attachments = {
+  upload: (sessionId: string, filename: string, dataUrl: string) =>
+    request<{ ok: boolean; attachment: AttachmentReference }>(`/sessions/${encodeURIComponent(sessionId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify({ filename, dataUrl }),
+    }),
+  get: (id: string) => `${BASE}/attachments/${encodeURIComponent(id)}`,
+  meta: (id: string) => request<{ ok: boolean; available: boolean; attachment: AttachmentReference }>(`/attachments/${encodeURIComponent(id)}?meta=1`),
+  preview: (id: string) => request<{ ok: boolean; preview: AttachmentPreview }>(`/attachments/${encodeURIComponent(id)}/preview`),
+  delete: (id: string) => request<{ ok: boolean }>(`/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 // ─── Sessions ───
@@ -1503,6 +1516,7 @@ export interface ChatMessage {
   subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
   plan?: string[];
   turnTokens?: number;
+  attachments?: Array<{ id: string; name: string; mimeType?: string }>;
 }
 
 export interface SessionInfo {
@@ -2355,6 +2369,7 @@ export const integrations = {
     }>(`/integrations/catalog${includeCandidates ? '?includeCandidates=true' : ''}`),
   connections: () => request<{ connections: IntegrationConnection[] }>('/integrations/connections'),
   analytics: () => request<{ analytics: IntegrationAnalytics }>('/integrations/analytics'),
+  maintain: () => request<{ ok: boolean }>('/integrations/maintain', { method: 'POST' }),
   settings: () => request<{ settings: IntegrationHubSettings }>('/integrations/settings'),
   updateSettings: (body: IntegrationHubSettings) =>
     request<{ settings: IntegrationHubSettings }>('/integrations/settings', { method: 'POST', body: JSON.stringify(body) }),

@@ -74,6 +74,8 @@ export interface CompletionRequest {
   signal?: AbortSignal;
 }
 
+import type { NormalizedAttachment } from './communication.js';
+
 export interface CompletionMessage {
   id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool';
@@ -81,6 +83,8 @@ export interface CompletionMessage {
   toolCallId?: string;
   toolCalls?: CompletionToolCall[];
   reasoning?: string;
+  /** Resolved attachments (extracted text or base64 data) for image/document support. */
+  attachments?: NormalizedAttachment[];
 }
 
 export interface CompletionToolCall {

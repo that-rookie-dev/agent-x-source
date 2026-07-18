@@ -1,6 +1,6 @@
 import type { Agent } from '@agentx/engine';
 import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
-import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage } from '@agentx/shared';
+import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage, TurnAttachment } from '@agentx/shared';
 import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
@@ -167,6 +167,8 @@ export function runAgentTurnAsync(
     clientSituation?: ClientSituation | null;
     crewSuggestionRequested?: boolean;
     signal?: AbortSignal;
+    /** Resolved user attachments (storage id + metadata). */
+    attachments?: TurnAttachment[];
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -298,6 +300,7 @@ export function runAgentTurnAsync(
     ...(clientSituation ? { clientSituation } : {}),
     ...(extra?.crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
     ...(extra?.signal ? { signal: extra.signal } : {}),
+    ...(extra?.attachments ? { attachments: extra.attachments } : {}),
   })
     .then((message) => {
       turnCompleted = true;

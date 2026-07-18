@@ -19,6 +19,7 @@ import type { ChatInputBarHandle } from '../ChatInputBar';
 import { readWebSearchForcePreference, writeWebSearchForcePreference } from '../WebSearchGlobeToggle';
 import { readCrewSuggestionRequestedPreference, writeCrewSuggestionRequestedPreference } from '../CrewSuggestionToggle';
 import { hasPendingChatInteraction } from '../../chat/utils';
+import { supportsVision, isImageMimeType } from '../../chat/vision-support';
 import { summarizeMessageForTurnFeedback } from '@agentx/shared/browser';
 import { isTurnFeedbackEligible } from '@agentx/shared/browser';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
@@ -549,13 +550,20 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   }, [sessionId]);
 
 
-  // Compute whether send is blocked due to missing provider/model
+  // Compute whether send is blocked due to missing provider/model or unsupported image attachments
   const questionnairePending = useMemo(() => hasPendingChatInteraction(messages), [messages]);
 
-  const sendBlocked = !currentProvider || !currentModel;
+  const hasImageAttachment = attachments.some((a) => isImageMimeType(a.mimeType));
+  const visionSupported = supportsVision(currentProvider, currentModel);
+  const imageSendBlocked = hasImageAttachment && !visionSupported;
+  const sendBlocked = !currentProvider || !currentModel || imageSendBlocked;
   const sendBlockedReason = !currentProvider
     ? 'Select a provider before sending'
-    : !currentModel ? 'Select a model before sending' : '';
+    : !currentModel
+      ? 'Select a model before sending'
+      : imageSendBlocked
+        ? 'Current model does not support images. Switch to a vision model to send this message.'
+        : '';
 
   // Keep refs in sync so send handlers never capture stale session/cwd from closures.
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);

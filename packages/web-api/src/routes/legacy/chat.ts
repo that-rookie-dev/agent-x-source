@@ -5,14 +5,14 @@
  * exports createChatRouter() for mounting by the legacy aggregator.
  */
 import { Router } from 'express';
-import { getLogger, normalizeClientSituation } from '@agentx/shared';
+import { getLogger, normalizeClientSituation, sanitizeForJson } from '@agentx/shared';
+import type { TurnAttachment } from '@agentx/shared';
 import { getEngine, getOrCreateAgent, setCurrentClientSituation } from '../../engine.js';
 import {
   runAgentTurnAsync,
   cancelActiveSessionTurn,
   getForceWebSearchError,
   isCrewPrivateSessionRecord,
-  buildFullText,
   buildTurnInstruction,
 } from '../../chat-helpers.js';
 import { validate, chatMessageSchema, chatSteerSchema } from '../../validation.js';
@@ -29,7 +29,7 @@ export function createChatRouter(): Router {
     try {
       const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, clientSituation: clientSituationRaw } = req.body as {
         text: string;
-        attachments?: { name: string; content: string }[];
+        attachments?: TurnAttachment[];
         retry?: boolean;
         delegateCrewIds?: string[];
         crewSuggestionResolved?: boolean;
@@ -97,7 +97,7 @@ export function createChatRouter(): Router {
         } catch (e) { /* best-effort */ }
       }
 
-      const fullText = buildFullText(text, attachments);
+      const fullText = sanitizeForJson(text ?? '');
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const sid = agent.sessionId;
@@ -208,6 +208,7 @@ export function createChatRouter(): Router {
         ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
+        ...(attachments ? { attachments } : {}),
       });
       sendEvent('started', { turnId: turn.turnId, async: true });
       return;
@@ -221,7 +222,7 @@ export function createChatRouter(): Router {
     try {
       const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, clientSituation: clientSituationRaw } = req.body as {
         text: string;
-        attachments?: { name: string; content: string }[];
+        attachments?: TurnAttachment[];
         retry?: boolean;
         delegateCrewIds?: string[];
         crewSuggestionResolved?: boolean;
@@ -265,7 +266,7 @@ export function createChatRouter(): Router {
         } catch (e) { /* best-effort */ }
       }
 
-      const fullText = buildFullText(text, attachments);
+      const fullText = sanitizeForJson(text ?? '');
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const sid = agent.sessionId;
@@ -320,6 +321,7 @@ export function createChatRouter(): Router {
         ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
+        ...(attachments ? { attachments } : {}),
       });
 
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
@@ -357,7 +359,7 @@ export function createChatRouter(): Router {
     try {
       const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
         text: string;
-        attachments?: { name: string; content: string }[];
+        attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
         crewSuggestionResolved?: boolean;
         crewIntakeFromPicker?: boolean;
@@ -383,7 +385,7 @@ export function createChatRouter(): Router {
     try {
       const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
         text: string;
-        attachments?: { name: string; content: string }[];
+        attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
         crewSuggestionResolved?: boolean;
         crewIntakeFromPicker?: boolean;
@@ -398,7 +400,7 @@ export function createChatRouter(): Router {
       agent.cancel();
       await waitForIdle(agent);
       ensureSubscribed();
-      const fullText = buildFullText(text, attachments);
+      const fullText = sanitizeForJson(text ?? '');
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
@@ -406,6 +408,7 @@ export function createChatRouter(): Router {
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(clientSituation ? { clientSituation } : {}),
+        ...(attachments ? { attachments } : {}),
       });
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
     } catch (e: unknown) {
@@ -435,7 +438,7 @@ export function createChatRouter(): Router {
     try {
       const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
         text: string;
-        attachments?: { name: string; content: string }[];
+        attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
         crewSuggestionResolved?: boolean;
         crewIntakeFromPicker?: boolean;
@@ -450,7 +453,7 @@ export function createChatRouter(): Router {
       agent.cancel();
       await waitForIdle(agent);
       ensureSubscribed();
-      const fullText = buildFullText(text, attachments);
+      const fullText = sanitizeForJson(text ?? '');
       const activeSess = eng.sessionManager.getActiveSession?.();
       const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
       const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
@@ -458,6 +461,7 @@ export function createChatRouter(): Router {
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(clientSituation ? { clientSituation } : {}),
+        ...(attachments ? { attachments } : {}),
       });
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
     } catch (e: unknown) {

@@ -646,4 +646,7 @@ CREATE INDEX IF NOT EXISTS idx_background_tasks_created_at ON background_tasks(c
 DROP TABLE IF EXISTS permissions;
 DROP INDEX IF EXISTS idx_permissions_session;
 ` },
+  { version: 10, name: 'message_attachments', sql: `-- Adds persisted attachments to the messages table for chat file previews.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS attachments TEXT;
+` },
 ];

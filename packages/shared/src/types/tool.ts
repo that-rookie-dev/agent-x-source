@@ -1,4 +1,4 @@
-import type { ParallelMode } from './communication.js';
+import type { ParallelMode, TurnAttachment } from './communication.js';
 import type { AgentXConfig } from './config.js';
 
 export interface ToolDefinition {
@@ -92,4 +92,13 @@ export interface ToolExecutionContext {
   onOutput?: (output: string) => void;
   /** Abort signal that should be checked by long-running tool handlers. */
   signal?: AbortSignal;
+  /** Register a file as an attachment that will be shown in the chat. */
+  registerAttachment?: (opts: {
+    filename: string;
+    mimeType?: string;
+    originalPath?: string;
+    dataUrl?: string;
+    buffer?: Uint8Array | ArrayBuffer | Buffer;
+    source?: string;
+  }) => Promise<TurnAttachment>;
 }

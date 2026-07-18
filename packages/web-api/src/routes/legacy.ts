@@ -18,6 +18,7 @@ import { createChannelsRouter } from './legacy/channels.js';
 import { createProvidersRouter } from './legacy/providers.js';
 import { createCrewsRouter } from './legacy/crews.js';
 import { createAgentRouter } from './legacy/agent.js';
+import { createAttachmentsRouter } from './legacy/attachments.js';
 import { createChatRouter } from './legacy/chat.js';
 import { createSettingsRouter } from './legacy/settings.js';
 import { createSessionsRouter } from './legacy/sessions.js';
@@ -47,6 +48,7 @@ export function router(ctx: ApiContext): Router {
   r.use(createProvidersRouter());
   r.use(createCrewsRouter());
   r.use(createAgentRouter());
+  r.use(createAttachmentsRouter());
   r.use(createChatRouter());
   r.use(createSettingsRouter());
   r.use(createSessionsRouter());

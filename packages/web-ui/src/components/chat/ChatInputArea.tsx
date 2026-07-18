@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
@@ -80,6 +80,21 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
     setPendingPermissionCount(0);
   }, [setPermissionPrompt, setPendingPermissionCount]);
 
+  const [isDragging, setIsDragging] = useState(false);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    handleFileSelect(e.dataTransfer.files);
+  }, [handleFileSelect]);
+
   return (
     <Box sx={{ px: 2, pb: 1.5, pt: 1, position: 'relative' }}>
       {/* Attachment chips */}
@@ -91,7 +106,7 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
               size="small"
               icon={<InsertDriveFileIcon sx={{ fontSize: '13px !important' }} />}
               label={a.name}
-              onDelete={(i) => handleRemoveAttachment(i)}
+              onDelete={() => handleRemoveAttachment(i)}
               deleteIcon={<CloseIcon sx={{ fontSize: '13px !important' }} />}
               sx={{ fontSize: '0.6rem', height: 22, bgcolor: colors.bg.tertiary, border: `1px solid ${colors.border.default}` }}
             />
@@ -101,12 +116,16 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
 
 
       {/* Single unified box: input + toolbar — border tinted by mode */}
-      <Box sx={{
+      <Box
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        sx={{
         position: 'relative',
         zIndex: 1,
-        border: `1px solid ${bypassPermissions ? alphaColor(colors.accent.orange, '60') : colors.border.default}`,
+        border: `1px solid ${isDragging ? colors.accent.blue : bypassPermissions ? alphaColor(colors.accent.orange, '60') : colors.border.default}`,
         borderRadius: '14px',
-        bgcolor: colors.bg.tertiary,
+        bgcolor: isDragging ? alphaColor(colors.accent.blue, '06') : colors.bg.tertiary,
         backgroundImage: bypassPermissions ? `linear-gradient(${alphaColor(colors.accent.orange, '08')}, ${alphaColor(colors.accent.orange, '08')})` : 'none',
         transition: 'border-color 0.2s, background-color 0.2s, opacity 0.2s ease',
         opacity: questionnairePending || sessionRestoring ? 0.42 : 1,
@@ -135,7 +154,7 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
             )}
           </Box>
         )}
-        <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} accept=".txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt" />
+        <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => { handleFileSelect(e.target.files); e.currentTarget.value = ''; }} accept="image/*,.pdf,.txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt,.docx,.xlsx,.pptx" />
         {composerMode === 'text' ? (
         <ChatInputBar
           ref={inputBarRef}

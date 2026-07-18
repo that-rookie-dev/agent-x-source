@@ -4,7 +4,8 @@
 // High coupling: needs many state values, setters, and refs from the orchestrator.
 
 import React, { useCallback, useEffect, useRef } from 'react';
-import { chat, agent, crews, crewSuggestions, type Crew, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../../api';
+import { chat, agent, attachments as attachmentApi, crews, crewSuggestions, type Crew, type CrewSuggestionEvaluation, type CrewMatchCandidate } from '../../api';
+import type { TurnAttachment } from '@agentx/shared';
 import { collectClientSituation } from '../../client-situation.js';
 import { sanitizeForJson } from '../../chat/utils';
 import { replaceWarning } from './message-helpers';
@@ -73,18 +74,19 @@ export function useChatSend({
   const attachmentsRef = useRef(attachments);
   const currentProviderRef = useRef(currentProvider);
   const currentModelRef = useRef(currentModel);
+  const currentSessionIdRef = useRef(currentSessionId);
   const isCrewPrivateSessionRef = useRef(isCrewPrivateSession);
   const webSearchAvailableRef = useRef(webSearchAvailable);
   const webSearchForceRef = useRef(webSearchForce);
   const crewSuggestionRequestedRef = useRef(crewSuggestionRequested);
   const coreSessionRef = useRef(coreSession);
-  const currentSessionIdRef = useRef(currentSessionId);
 
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { streamingRef.current = streaming; }, [streaming]);
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
   useEffect(() => { currentProviderRef.current = currentProvider; }, [currentProvider]);
   useEffect(() => { currentModelRef.current = currentModel; }, [currentModel]);
+  useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
   useEffect(() => { isCrewPrivateSessionRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
   useEffect(() => { webSearchAvailableRef.current = webSearchAvailable; }, [webSearchAvailable]);
   useEffect(() => { webSearchForceRef.current = webSearchForce; }, [webSearchForce]);
@@ -119,7 +121,7 @@ export function useChatSend({
       const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
         userText: trimmed,
         evaluation,
-        attachments: attachmentsRef.current.map((a) => ({ name: a.name })),
+        attachments: attachmentsRef.current.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
         userMessageId: opts?.userMessageId,
       });
 
@@ -149,7 +151,7 @@ export function useChatSend({
           pickerMsg,
           persisted,
           opts,
-          attachmentsRef.current.map((attachment) => ({ name: attachment.name })),
+          attachmentsRef.current.map((attachment) => ({ id: attachment.storageId ?? attachment.id, name: attachment.name, mimeType: attachment.mimeType })),
         );
       });
       inputBarRef.current?.clear();
@@ -164,6 +166,46 @@ export function useChatSend({
   useEffect(() => {
     attachCrewRosterPickerRef.current = attachCrewRosterPicker;
   }, [attachCrewRosterPicker, attachCrewRosterPickerRef]);
+
+  const uploadAttachments = useCallback(async (sessionId: string) => {
+    const refs: TurnAttachment[] = [];
+    const updated: FileAttachment[] = [];
+    for (const a of attachmentsRef.current) {
+      if (a.storageId && a.uploaded) {
+        refs.push({
+          id: a.id,
+          name: a.name,
+          mimeType: a.mimeType,
+          storageId: a.storageId,
+          type: a.mimeType.startsWith('image/') ? 'image' : 'file',
+          source: 'upload',
+        });
+        continue;
+      }
+      try {
+        const res = await attachmentApi.upload(sessionId, a.name, a.dataUrl);
+        if (res.ok) {
+          refs.push({
+            id: a.id,
+            name: a.name,
+            mimeType: a.mimeType,
+            storageId: res.attachment.id,
+            type: a.mimeType.startsWith('image/') ? 'image' : 'file',
+            source: 'upload',
+          });
+          updated.push({ ...a, storageId: res.attachment.id, uploaded: true });
+          continue;
+        }
+      } catch {
+        // fallthrough to keep local attachment
+      }
+      updated.push(a);
+    }
+    if (updated.length > 0) {
+      setAttachments((prev) => prev.map((p) => updated.find((u) => u.id === p.id) ?? p));
+    }
+    return refs;
+  }, [attachmentsRef, setAttachments]);
 
   // ─── executeSend ───
   const executeSend = useCallback(async (
@@ -181,7 +223,9 @@ export function useChatSend({
     if ((!trimmed && attachmentsRef.current.length === 0) && !options?.skipUserMessage) return;
     if (!currentProviderRef.current || !currentModelRef.current) return;
     rateLimitSeenRef.current = false;
-    if (!(await ensureSession())) return;
+    const sessionId = await ensureSession();
+    if (!sessionId) return;
+    const attachmentRefs = await uploadAttachments(sessionId);
 
     const priorUserMessages = messagesRef.current
       .filter((m) => m.role === 'user')
@@ -198,7 +242,7 @@ export function useChatSend({
         role: 'user',
         content: trimmed,
         streaming: false,
-        attachments: attachmentsRef.current.map((a) => ({ name: a.name })),
+        attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
       };
       setMessages((prev) => [
         ...prev,
@@ -211,7 +255,7 @@ export function useChatSend({
       requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     }
 
-    const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
+    const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     setAttachments([]);
 
     const crewResolved = options?.crewSuggestionResolved ?? Boolean(delegateCrewIds?.length);
@@ -301,7 +345,7 @@ export function useChatSend({
       role: 'user',
       content: sanitizeForJson(trimmed),
       streaming: false,
-      attachments: attachmentsRef.current.map((a) => ({ name: a.name })),
+      attachments: attachmentsRef.current.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
     };
 
     setMessages((prev) => [...prev, userMsg, evalAssistant]);
@@ -590,15 +634,17 @@ export function useChatSend({
   const handleStopAndSend = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed && attachmentsRef.current.length === 0) return;
-    if (!(await ensureSession())) return;
+    const sessionId = await ensureSession();
+    if (!sessionId) return;
+    const attachmentRefs = await uploadAttachments(sessionId);
     beginTurnUi();
     const userId = crypto.randomUUID();
     const placeholderId = crypto.randomUUID();
     outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
-    const userMsg: UIMessage = { id: userId, role: 'user', content: trimmed, streaming: false, attachments: attachmentsRef.current.map((a) => ({ name: a.name })) };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: trimmed, streaming: false, attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })) };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
-    const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
+    const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     setAttachments([]);
     try {
       const result = await chat.stopAndSend(trimmed, fileRefs);
@@ -621,25 +667,30 @@ export function useChatSend({
   const handleAddToQueue = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed && attachmentsRef.current.length === 0) return;
-    const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId) return;
+    const attachmentRefs = await uploadAttachments(sessionId);
+    const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     try { await chat.queue(trimmed, fileRefs); } catch { /* ignore */ }
     setAttachments([]);
-  }, [setAttachments, attachmentsRef]);
+  }, [setAttachments, attachmentsRef, currentSessionIdRef, uploadAttachments]);
 
   // ─── handleSteer ───
   const handleSteer = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed && attachmentsRef.current.length === 0) return;
-    if (!(await ensureSession())) return;
+    const sessionId = await ensureSession();
+    if (!sessionId) return;
+    const attachmentRefs = await uploadAttachments(sessionId);
     beginTurnUi();
     const userId = crypto.randomUUID();
     const placeholderId = crypto.randomUUID();
     const userContent = `↑ ${trimmed}`;
     outgoingTurnRef.current = { userId, userContent, placeholderId };
-    const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false, attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })) };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
-    const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
+    const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     setAttachments([]);
     try {
       const result = await chat.steer(trimmed, fileRefs);
@@ -658,18 +709,37 @@ export function useChatSend({
     endTurnUi();
   }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
 
+  const guessMimeType = (filename: string): string => {
+    const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+    const map: Record<string, string> = {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+      webp: 'image/webp', svg: 'image/svg+xml', pdf: 'application/pdf',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      txt: 'text/plain', md: 'text/markdown', html: 'text/html', json: 'application/json',
+      js: 'application/javascript', ts: 'application/typescript', py: 'text/x-python',
+      csv: 'text/csv',
+    };
+    return map[ext] ?? 'application/octet-stream';
+  };
+
   // ─── handleFileSelect ───
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files) return;
     Array.from(files).forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
-        setAttachments((prev) => [...prev, { name: file.name, content: reader.result as string }]);
+        setAttachments((prev) => [...prev, {
+          id: crypto.randomUUID(),
+          name: file.name,
+          mimeType: file.type || guessMimeType(file.name),
+          dataUrl: reader.result as string,
+          uploaded: false,
+        }]);
       };
-      reader.readAsText(file);
+      reader.readAsDataURL(file);
     });
-    e.target.value = '';
   }, [setAttachments]);
 
   // ─── handleRemoveAttachment ───

@@ -4,7 +4,7 @@ import { getEngine } from './engine.js';
 import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, attachChartPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
-import type { DeepSearchProgress, EngineEvent, EventHandler, Message, MessageMetadata } from '@agentx/shared';
+import type { DeepSearchProgress, EngineEvent, EventHandler, Message, MessageMetadata, NormalizedAttachment } from '@agentx/shared';
 import { MemoryFabric, MemoryIngestionService as MemoryService, TtlCache } from '@agentx/engine';
 import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
 
@@ -252,6 +252,7 @@ function appendContextFile(
     turnCostUsd?: number;
     tokenCount?: number;
     metadata?: MessageMetadata;
+    attachments?: NormalizedAttachment[];
   },
   messageId?: string,
 ): void {
@@ -277,6 +278,7 @@ function appendContextFile(
           thinking: extra?.thinking,
           plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
           parts: extra?.parts,
+          attachments: extra?.attachments,
           metadata: {
             ...extra?.metadata,
             crewId: crew.crewId,
@@ -313,6 +315,7 @@ function appendContextFile(
         thinking: extra?.thinking,
         plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
         parts: extra?.parts,
+        attachments: extra?.attachments,
         metadata,
       });
     }
@@ -778,6 +781,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     turnTokens?: number;
     turnCostUsd?: number;
     tokenCount?: number;
+    attachments?: NormalizedAttachment[];
   } {
     const toolCalls = Array.from(toolCallMap.values());
     const subAgents = Array.from(subAgentMap.values());
@@ -987,6 +991,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
           if (sessionId && text) {
             const thinkingText = accumulatedThinking || undefined;
             const extra = buildExtra(thinkingText);
+            extra.attachments = msg?.attachments;
             if (isUpdate && msg?.id) {
               const store = eng.sessionManager.getStorageAdapter();
               const existing = store.getMessages?.(sessionId)?.find((m) => m.id === msg.id);
@@ -996,6 +1001,7 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
               store.updateMessage?.(sessionId, msg.id, {
                 content: text,
                 ...(mergedParts.length > 0 ? { parts: mergedParts } : {}),
+                ...(msg?.attachments ? { attachments: msg.attachments } : {}),
               });
             } else {
               appendContextFile(sessionId, 'assistant', text, crew, extra, typeof msg?.id === 'string' ? msg.id : undefined);
