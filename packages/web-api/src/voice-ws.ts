@@ -624,22 +624,31 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
     return;
   }
 
-  const now = Date.now();
   const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
   if (!preview) return;
 
+  const now = Date.now();
   const { partial, wordsNow } = preview;
   session.duplexSilenceMs = now - session.duplexLastWordAt;
 
-  if (hasMeaningfulWords(wordsNow)) {
+  const meaningfulNow = hasMeaningfulWords(wordsNow);
+  // Only reset the word-silence clock when the transcript actually changed.
+  // Repeated previews of the same final words mean the user stopped speaking.
+  if (meaningfulNow && wordsNow !== session.duplexLastPartial) {
     session.duplexLastPartial = wordsNow;
     session.duplexLastWordAt = now;
     session.duplexHadWords = true;
     session.duplexSilenceMs = 0;
-    ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
-    if (partial) {
-      ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
-    }
+  }
+
+  ws.send(JSON.stringify({
+    type: 'duplex_silence',
+    elapsedMs: session.duplexSilenceMs,
+    thresholdMs: DUPLEX_END_SILENCE_MS,
+  }));
+
+  if (partial) {
+    ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
   }
 
   if (session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
@@ -777,6 +786,8 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       voiceSession?.setState('idle');
       return;
     }
+    // Apply the dashboard bypass chip to this agent so tools don't prompt when the user enabled it.
+    agent.setBypassPermissions(session.bypassChip);
     refreshAgentPersona(agent);
     if (session.clientSituation) {
       agent.setClientSituation(session.clientSituation);

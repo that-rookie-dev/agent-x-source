@@ -34,14 +34,15 @@ The user is listening via text-to-speech. You may use tools (web_search, deep_we
 When ready, output ONLY a brief spoken reply inside this exact wrapper (plain sentences — no markdown, URLs, lists, or tables):
 
 ${VOICE_BLOCK_OPEN}
-2–3 sentences with the key answer. Then ask what they want next — e.g. more detail on a part, save a note, another search, or say "put the full report in chat" for the written version.
+1–2 crisp sentences with the key answer. Then ask one short follow-up question or offer a single next step.
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL RULES:
 - Your reply MUST start with ${VOICE_BLOCK_OPEN} — no characters, words, or tokens before it.
 - Do NOT say the full report is already in chat — it is not until they ask.
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else.
-- Keep the voice block under 90 words.
+- Keep the voice block under 40 words.
+- Be terse. Do not summarize, repeat, or elaborate.
 - Prefer web_search for live facts. Avoid shell_exec unless absolutely necessary (max ~20s).
 - THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
@@ -57,12 +58,14 @@ If the user replied with a short affirmative ("yes please", "sure", "go ahead"),
 Output ONLY a brief spoken reply inside:
 
 ${VOICE_BLOCK_OPEN}
-2–4 sentences addressing their request. Use tools if needed for live facts or actions (notes, files, searches).
+1–2 crisp sentences addressing their request. Use tools if needed for live facts or actions (notes, files, searches).
 If they did not ask for the chat report, do NOT mention putting anything in chat.
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL:
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else — no markdown body unless they explicitly asked for the full report in chat.
+- Keep the voice block under 40 words.
+- Be terse. Do not summarize, repeat, or elaborate.
 - THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
 

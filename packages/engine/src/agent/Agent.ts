@@ -1043,8 +1043,9 @@ export class Agent {
       this.toolExecutor.setUserConfigRules(userRules);
     }
 
-    // Wire permission requests to event bus (skipped for ephemeral automation workers and channel sessions).
-    if (this.toolExecutor && !this.options.automationRun && !this.options.channelSession) {
+    // Wire permission requests to event bus (skipped for ephemeral automation workers and messaging channel sessions).
+    // Voice-only sessions still need the interactive permission modal, so keep binding for promptProfile === 'voice'.
+    if (this.toolExecutor && !this.options.automationRun && (!this.options.channelSession || this.options.promptProfile === 'voice')) {
       this.bindPermissionHandler();
 
       // Wire diff preview for file edit tools
@@ -1807,17 +1808,22 @@ export class Agent {
     this.toolExecutor?.setInboundSourceChannel(messagingChannelInbound ? (options?.sourceChannel ?? null) : null);
     this.toolExecutor?.setInboundSourceThreadId(messagingChannelInbound ? (options?.channelId ?? null) : null);
     this.toolExecutor?.setInboundSourceMessageId(messagingChannelInbound ? (options?.sourceMessageId ?? null) : null);
-    this.toolExecutor?.setPermissionPromptHook((details) => {
-      this.emit({
-        type: 'permission_required',
-        requestId: randomUUID(),
-        tool: details.toolId,
-        path: details.path,
-        riskLevel: details.riskLevel,
-        forAutomation: details.forAutomation,
-        integrationPreview: details.integrationPreview,
+    // For voice sessions the interactive permission request is fully handled by
+    // bindPermissionHandler(); the prompt hook's extra event has no matching
+    // pendingPermissions entry and would leave the voice turn hanging.
+    if (this.options.promptProfile !== 'voice') {
+      this.toolExecutor?.setPermissionPromptHook((details) => {
+        this.emit({
+          type: 'permission_required',
+          requestId: randomUUID(),
+          tool: details.toolId,
+          path: details.path,
+          riskLevel: details.riskLevel,
+          forAutomation: details.forAutomation,
+          integrationPreview: details.integrationPreview,
+        });
       });
-    });
+    }
     if (!options?.retry) {
       const clarificationBlock = buildClarificationPolicyInstruction(this.isMessagingChannelContext() || messagingChannelInbound);
       this.pendingInstruction = this.pendingInstruction
