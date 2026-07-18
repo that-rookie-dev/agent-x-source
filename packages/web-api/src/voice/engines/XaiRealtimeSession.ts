@@ -578,7 +578,8 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   private handleResponseCreated(event: Record<string, unknown>): void {
-    this.currentResponseId = String(event.response_id ?? '');
+    const responseObj = event.response as { id?: string } | undefined;
+    this.currentResponseId = (event.response_id as string | undefined) ?? responseObj?.id;
     this.assistantText = '';
     this.toolCalls = [];
     this.pendingToolCallIndex = 0;
@@ -667,7 +668,9 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   private async handleResponseDone(event: Record<string, unknown>): Promise<void> {
     this.responseDoneReceived = true;
     // A cancelled response should not be persisted or continued.
-    if (event.status === 'cancelled' || event.status === 'incomplete') {
+    const responseObj = event.response as { status?: string } | undefined;
+    const status = responseObj?.status ?? event.status;
+    if (status === 'cancelled' || status === 'incomplete') {
       this.assistantText = '';
       this.toolCalls = [];
       this.pendingToolCallIndex = 0;
@@ -761,11 +764,10 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   private handleSpeechStarted(): void {
-    if (this.state !== 'speaking' && this.state !== 'processing') return;
-    // Barge-in: the user started talking over the assistant. Stop local playback,
-    // cancel the current xAI response, and tell the client to switch to the
-    // listening state immediately. Do NOT clear the input buffer — we want to
-    // keep the incoming user speech.
+    // Barge-in: only act when the assistant is already speaking. Ignoring
+    // speech_started during processing prevents false VAD/noise from aborting a
+    // response before any audio has been produced.
+    if (this.state !== 'speaking') return;
     this.currentResponseId = undefined;
     void this.transport.stopPlayback();
     this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'listening' });

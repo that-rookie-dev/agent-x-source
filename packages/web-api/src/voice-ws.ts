@@ -35,7 +35,7 @@ const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
 const STT_PREVIEW_INTERVAL_MS = 200;
 /** Continuous silence after spoken words before auto-send in duplex mode. */
-export const DUPLEX_END_SILENCE_MS = 1_500;
+export const DUPLEX_END_SILENCE_MS = 2_000;
 /** Minimum gap between duplicate error frames to the client. */
 const DUPLEX_ERROR_COOLDOWN_MS = 8_000;
 /** PTT shorter than this is treated as accidental (mis-click). */
@@ -342,7 +342,7 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         session.duplexHadSpeech = false;
         session.duplexHadWords = false;
         session.duplexLastPartial = '';
-        session.duplexLastWordAt = 0;
+        session.duplexLastWordAt = Date.now();
         session.duplexTurnInFlight = false;
         session.pttLastSttAt = 0;
         session.pttLastPartial = '';
@@ -628,60 +628,21 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
   const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
   if (!preview) return;
 
-  const { partial, wordsNow, isSpeech } = preview;
+  const { partial, wordsNow } = preview;
+  session.duplexSilenceMs = now - session.duplexLastWordAt;
 
-  // ── VAD-based speech tracking (primary endpoint detector) ──
-  // VAD tells us in real-time whether the user is currently speaking.
-  // This is more reliable than waiting for STT to produce words, which
-  // can be slow or fail on short/quiet utterances.
-  if (isSpeech === true) {
-    session.duplexVadSpeech = true;
-    session.duplexHadSpeech = true;
-    session.duplexLastSpeechAt = now;
+  if (hasMeaningfulWords(wordsNow)) {
+    session.duplexLastPartial = wordsNow;
+    session.duplexLastWordAt = now;
+    session.duplexHadWords = true;
     session.duplexSilenceMs = 0;
     ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
-  } else if (isSpeech === false && session.duplexHadSpeech && session.duplexLastSpeechAt > 0) {
-    // VAD says no speech, but we had speech before — accumulate silence.
-    session.duplexVadSpeech = false;
-    session.duplexSilenceMs = now - session.duplexLastSpeechAt;
-    ws.send(JSON.stringify({
-      type: 'duplex_silence',
-      elapsedMs: session.duplexSilenceMs,
-      thresholdMs: DUPLEX_END_SILENCE_MS,
-    }));
-  }
-
-  // ── STT-based word tracking (refines endpoint + provides partial captions) ──
-  if (hasMeaningfulWords(wordsNow)) {
-    if (wordsNow !== session.duplexLastPartial) {
-      session.duplexLastPartial = wordsNow;
-      session.duplexLastWordAt = now;
-      session.duplexHadWords = true;
-      // STT words also count as speech evidence (fallback when VAD is unavailable).
-      session.duplexHadSpeech = true;
-      if (session.duplexLastSpeechAt === 0) session.duplexLastSpeechAt = now;
-      session.duplexSilenceMs = 0;
-      ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
-    }
     if (partial) {
       ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
     }
   }
 
-  // ── Endpoint decision ──
-  // Finalize when either VAD-based or STT-based silence threshold is reached.
-  // VAD path: silence after last detected speech.
-  // STT path: silence after last detected word change (fallback when VAD is absent).
-  const vadSilenceReached = session.duplexHadSpeech
-    && session.duplexLastSpeechAt > 0
-    && !session.duplexVadSpeech
-    && session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS;
-  const sttSilenceReached = session.duplexHadWords
-    && session.duplexLastWordAt > 0
-    && (now - session.duplexLastWordAt) >= DUPLEX_END_SILENCE_MS;
-  const shouldFinalize = vadSilenceReached || sttSilenceReached;
-
-  if (shouldFinalize && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
+  if (session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
     session.recording = false;
     await finishTurn(ws, session);
   }
@@ -695,7 +656,7 @@ async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
   session.duplexHadSpeech = false;
   session.duplexHadWords = false;
   session.duplexLastPartial = '';
-  session.duplexLastWordAt = 0;
+  session.duplexLastWordAt = Date.now();
   session.duplexLastSpeechAt = 0;
   session.duplexVadSpeech = false;
   session.pttLastPartial = '';
