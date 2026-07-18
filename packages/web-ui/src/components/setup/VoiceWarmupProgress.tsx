@@ -18,6 +18,8 @@ export type WarmupPhase = 'warming' | 'greeting' | 'playing' | 'done' | 'error';
 export interface VoiceWarmupProgressProps {
   /** User callsign — used to generate a personalised greeting. */
   callsign: string;
+  /** Agent persona name — used in the fallback greeting. */
+  agentName?: string;
   /** Fired when the entire warmup+greeting flow finishes successfully. */
   onComplete: () => void;
   /** Fired when an unrecoverable error occurs. */
@@ -46,7 +48,7 @@ function isTransientError(err: unknown): boolean {
     || msg.includes('not ready') || msg.includes('econnrefused') || msg.includes('fetch');
 }
 
-export function VoiceWarmupProgress({ callsign, onComplete, onError }: VoiceWarmupProgressProps) {
+export function VoiceWarmupProgress({ callsign, agentName, onComplete, onError }: VoiceWarmupProgressProps) {
   const [phase, setPhase] = useState<WarmupPhase>('warming');
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('Loading speech models…');
@@ -88,7 +90,8 @@ export function VoiceWarmupProgress({ callsign, onComplete, onError }: VoiceWarm
         const result = await voice.generateGreeting(callsign);
         greetingText = result.text;
       } catch {
-        greetingText = `Hello ${callsign}, Agent-X is online and ready.`;
+        const agent = agentName?.trim() || 'Agent-X';
+        greetingText = `Hey ${callsign}, ${agent} here. Voice is live and I'm ready to go.`;
       }
       if (cancelled) return;
 
@@ -142,7 +145,7 @@ export function VoiceWarmupProgress({ callsign, onComplete, onError }: VoiceWarm
 
     void run();
     return () => { cancelled = true; };
-  }, [callsign, onComplete, onError]);
+  }, [callsign, agentName, onComplete, onError]);
 
   const isError = phase === 'error';
 

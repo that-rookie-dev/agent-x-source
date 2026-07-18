@@ -241,16 +241,20 @@ function createVoiceRoutesRouter(): Router {
     }
   });
 
-  router.post('/voice/greeting', async (_req, res) => {
+  router.post('/voice/greeting', async (req, res) => {
     try {
       const engine = getEngine();
       const config = engine.configManager.load();
+      const callsign = String(req.body?.callsign ?? '').trim();
+      const persona = engine.storageAdapter.getPersona?.();
+      const agentName = persona?.name ?? 'Agent-X';
       const { createAiSdkModel } = await import('@agentx/engine');
       const { generateText } = await import('ai');
       const model = createAiSdkModel(config);
+      const userPart = callsign ? ` Address the user as ${callsign}.` : '';
       const result = await generateText({
         model,
-        prompt: 'Generate a single short, friendly spoken greeting (1-2 sentences, under 30 words) as if you are an AI agent announcing that voice comms are online. Be creative and varied — do not repeat the same greeting. Output only the greeting text, no quotes or labels.',
+        prompt: `You are ${agentName}, an AI assistant. Generate a single short, natural spoken greeting (1-2 sentences, under 30 words) announcing that voice comms are online. Speak as ${agentName} in first person.${userPart} Be creative and varied — do not repeat the same greeting. Sound natural and conversational, not robotic. Output only the greeting text, no quotes or labels.`,
         temperature: 1.2,
         maxOutputTokens: 60,
       });
@@ -258,13 +262,23 @@ function createVoiceRoutesRouter(): Router {
       res.json({ text: greeting });
     } catch {
       // Fallback greetings if LLM is not available
-      const fallbacks = [
-        'Voice comms online. Agent-X standing by.',
-        'Audio channel established. Ready when you are.',
-        'Voice systems activated. How can I help you today?',
-        'Speaker test complete. I can hear you loud and clear.',
-        'Voice link secured. What would you like to work on?',
-      ];
+      const engine = getEngine();
+      const persona = engine.storageAdapter.getPersona?.();
+      const agentName = persona?.name ?? 'Agent-X';
+      const callsign = String(req.body?.callsign ?? '').trim();
+      const fallbacks = callsign
+        ? [
+            `${agentName} here, ${callsign}. Voice is live — what's on your mind?`,
+            `Hey ${callsign}, ${agentName} online. Ready when you are.`,
+            `${callsign}, ${agentName} speaking. Audio channel is open.`,
+            `Voice is up, ${callsign}. ${agentName} at your service.`,
+          ]
+        : [
+            `${agentName} here. Voice comms are online.`,
+            `Audio channel open. ${agentName} standing by.`,
+            `Voice systems online. ${agentName} ready to help.`,
+            `${agentName} online. What can I do for you?`,
+          ];
       const greeting = fallbacks[Math.floor(Math.random() * fallbacks.length)];
       res.json({ text: greeting, fallback: true });
     }

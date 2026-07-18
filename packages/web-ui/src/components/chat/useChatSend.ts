@@ -206,6 +206,9 @@ export function useChatSend({
         { id: placeholderId, role: 'assistant', content: '', streaming: true },
       ]);
       inputBarRef.current?.clear();
+      // Force scroll to bottom after sending a message so the new message
+      // and the assistant placeholder are fully visible.
+      requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     }
 
     const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
@@ -275,7 +278,7 @@ export function useChatSend({
       });
       endTurnUi();
     }
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, setWarnings, setCrewSuggestionRequested, rateLimitSeenRef, outgoingTurnRef, activeTurnIdRef, crewSuggestionHandledRef, inputBarRef, messagesRef, attachmentsRef, currentProviderRef, currentModelRef, webSearchAvailableRef, webSearchForceRef, crewSuggestionRequestedRef, attachCrewRosterPickerRef]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, setWarnings, setCrewSuggestionRequested, rateLimitSeenRef, outgoingTurnRef, activeTurnIdRef, crewSuggestionHandledRef, inputBarRef, messagesRef, attachmentsRef, currentProviderRef, currentModelRef, webSearchAvailableRef, webSearchForceRef, crewSuggestionRequestedRef, attachCrewRosterPickerRef, scrollMessagesToBottom]);
 
   // ─── runCrewSuggestionGate ───
   const runCrewSuggestionGate = useCallback(async (trimmed: string): Promise<boolean> => {
@@ -304,6 +307,7 @@ export function useChatSend({
     setMessages((prev) => [...prev, userMsg, evalAssistant]);
     inputBarRef.current?.clear();
     setAttachments([]);
+    requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
 
     const priorUserMessages = [
       ...messagesRef.current.filter((m) => m.role === 'user').map((m) => m.content),
@@ -372,7 +376,7 @@ export function useChatSend({
       }
       return withoutAssistant;
     });
-    requestAnimationFrame(() => scrollMessagesToBottom('instant'));
+    requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
 
     try {
       const clientSituation = await collectClientSituation();
@@ -593,6 +597,7 @@ export function useChatSend({
     outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
     const userMsg: UIMessage = { id: userId, role: 'user', content: trimmed, streaming: false, attachments: attachmentsRef.current.map((a) => ({ name: a.name })) };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
+    requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
@@ -610,7 +615,7 @@ export function useChatSend({
       }
     } catch { /* handled by SSE */ }
     endTurnUi();
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
 
   // ─── handleAddToQueue ───
   const handleAddToQueue = useCallback(async (text: string) => {
@@ -633,6 +638,7 @@ export function useChatSend({
     outgoingTurnRef.current = { userId, userContent, placeholderId };
     const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
+    requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     const fileRefs = attachmentsRef.current.length > 0 ? attachmentsRef.current.map((a) => ({ name: a.name, content: a.content })) : undefined;
     setAttachments([]);
     try {
@@ -650,7 +656,7 @@ export function useChatSend({
       }
     } catch { /* handled by SSE */ }
     endTurnUi();
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
 
   // ─── handleFileSelect ───
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

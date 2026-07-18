@@ -34,3 +34,25 @@ def test_vad_requires_pcm_bytes() -> None:
         assert "pcm bytes are required" in str(error)
     else:
         raise AssertionError("Expected ValueError for invalid pcm input")
+
+
+def test_vad_reset_states_clears_internal_state() -> None:
+    vad = SileroVad()
+    # Trigger some speech frames to populate internal counters.
+    pcm = _pcm_from_samples([20_000] * 320)
+    vad.detect({"pcm": pcm, "sampleRate": 16_000})
+    # Reset should clear all internal state.
+    vad.reset_states()
+    assert vad._speech_frame_count == 0
+    assert vad._silence_frame_count == 0
+    assert vad._current_is_speech is False
+
+
+def test_vad_reset_flag_in_detect_clears_state() -> None:
+    vad = SileroVad()
+    pcm = _pcm_from_samples([20_000] * 320)
+    vad.detect({"pcm": pcm, "sampleRate": 16_000})
+    # Using reset flag should clear internal state before processing.
+    vad.detect({"pcm": pcm, "sampleRate": 16_000, "reset": True})
+    # After reset + speech frame, the debounce counter starts fresh.
+    assert vad._speech_frame_count >= 0

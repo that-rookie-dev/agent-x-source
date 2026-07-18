@@ -35,7 +35,7 @@ const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
 const STT_PREVIEW_INTERVAL_MS = 200;
 /** Continuous silence after spoken words before auto-send in duplex mode. */
-export const DUPLEX_END_SILENCE_MS = 5_000;
+export const DUPLEX_END_SILENCE_MS = 1_500;
 /** Minimum gap between duplicate error frames to the client. */
 const DUPLEX_ERROR_COOLDOWN_MS = 8_000;
 /** PTT shorter than this is treated as accidental (mis-click). */
@@ -76,6 +76,10 @@ interface VoiceWsSession {
   duplexLastSttAt: number;
   duplexTurnInFlight: boolean;
   duplexLastErrorAt: number;
+  /** VAD-based: last timestamp (Date.now) when speech was detected. */
+  duplexLastSpeechAt: number;
+  /** VAD-based: true if the current chunk has speech. */
+  duplexVadSpeech: boolean;
   /** PTT live-caption throttle (duplex reuses duplexLastSttAt). */
   pttLastSttAt: number;
   pttLastPartial: string;
@@ -139,7 +143,12 @@ function buildPermissionSpokenPrompt(tool: string, riskLevel: string, argsSummar
   const riskNote = riskLevel === 'critical' || riskLevel === 'high'
     ? ' This is a higher-risk action.'
     : '';
-  return `Agent-X wants to ${action}.${riskNote} Say allow, always, or deny.`;
+  let agentName = 'Agent-X';
+  try {
+    const persona = getEngine().storageAdapter.getPersona?.();
+    if (persona?.name) agentName = persona.name;
+  } catch { /* ignore */ }
+  return `${agentName} wants to ${action}.${riskNote} Say allow, always, or deny.`;
 }
 
 /** Clear any pending permission prompt (on resolve, timeout, or session teardown). */
@@ -539,6 +548,8 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     duplexLastSttAt: 0,
     duplexTurnInFlight: false,
     duplexLastErrorAt: 0,
+    duplexLastSpeechAt: 0,
+    duplexVadSpeech: false,
     pttLastSttAt: 0,
     pttLastPartial: '',
     transport,
@@ -554,7 +565,7 @@ async function requestTranscriptPreview(
   ws: WebSocket,
   session: VoiceWsSession,
   options: { throttleKey: 'duplex' | 'ptt' },
-): Promise<{ partial: string; wordsNow: string } | null> {
+): Promise<{ partial: string; wordsNow: string; isSpeech: boolean | null } | null> {
   const now = Date.now();
   const lastAt = options.throttleKey === 'duplex' ? session.duplexLastSttAt : session.pttLastSttAt;
   if (now - lastAt < STT_PREVIEW_INTERVAL_MS) return null;
@@ -591,7 +602,8 @@ async function requestTranscriptPreview(
 
   const partial = stream.partial?.trim() ?? '';
   const wordsNow = partial || stream.text?.trim() || '';
-  return { partial, wordsNow };
+  const isSpeech = stream.isSpeech ?? null;
+  return { partial, wordsNow, isSpeech };
 }
 
 async function handlePttChunk(ws: WebSocket, session: VoiceWsSession): Promise<void> {
@@ -616,22 +628,22 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
   const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
   if (!preview) return;
 
-  const { partial, wordsNow } = preview;
+  const { partial, wordsNow, isSpeech } = preview;
 
-  if (hasMeaningfulWords(wordsNow)) {
-    if (wordsNow !== session.duplexLastPartial) {
-      session.duplexLastPartial = wordsNow;
-      session.duplexLastWordAt = now;
-      session.duplexHadWords = true;
-      session.duplexHadSpeech = true;
-      session.duplexSilenceMs = 0;
-      ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
-    }
-    if (partial) {
-      ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
-    }
-  } else if (session.duplexHadWords && session.duplexLastWordAt > 0) {
-    session.duplexSilenceMs = now - session.duplexLastWordAt;
+  // ── VAD-based speech tracking (primary endpoint detector) ──
+  // VAD tells us in real-time whether the user is currently speaking.
+  // This is more reliable than waiting for STT to produce words, which
+  // can be slow or fail on short/quiet utterances.
+  if (isSpeech === true) {
+    session.duplexVadSpeech = true;
+    session.duplexHadSpeech = true;
+    session.duplexLastSpeechAt = now;
+    session.duplexSilenceMs = 0;
+    ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
+  } else if (isSpeech === false && session.duplexHadSpeech && session.duplexLastSpeechAt > 0) {
+    // VAD says no speech, but we had speech before — accumulate silence.
+    session.duplexVadSpeech = false;
+    session.duplexSilenceMs = now - session.duplexLastSpeechAt;
     ws.send(JSON.stringify({
       type: 'duplex_silence',
       elapsedMs: session.duplexSilenceMs,
@@ -639,10 +651,35 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
     }));
   }
 
-  const silenceReached = session.duplexHadWords
-    && session.duplexLastWordAt > 0
+  // ── STT-based word tracking (refines endpoint + provides partial captions) ──
+  if (hasMeaningfulWords(wordsNow)) {
+    if (wordsNow !== session.duplexLastPartial) {
+      session.duplexLastPartial = wordsNow;
+      session.duplexLastWordAt = now;
+      session.duplexHadWords = true;
+      // STT words also count as speech evidence (fallback when VAD is unavailable).
+      session.duplexHadSpeech = true;
+      if (session.duplexLastSpeechAt === 0) session.duplexLastSpeechAt = now;
+      session.duplexSilenceMs = 0;
+      ws.send(JSON.stringify({ type: 'duplex_silence', elapsedMs: 0, thresholdMs: DUPLEX_END_SILENCE_MS }));
+    }
+    if (partial) {
+      ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
+    }
+  }
+
+  // ── Endpoint decision ──
+  // Finalize when either VAD-based or STT-based silence threshold is reached.
+  // VAD path: silence after last detected speech.
+  // STT path: silence after last detected word change (fallback when VAD is absent).
+  const vadSilenceReached = session.duplexHadSpeech
+    && session.duplexLastSpeechAt > 0
+    && !session.duplexVadSpeech
     && session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS;
-  const shouldFinalize = session.duplexHadWords && silenceReached;
+  const sttSilenceReached = session.duplexHadWords
+    && session.duplexLastWordAt > 0
+    && (now - session.duplexLastWordAt) >= DUPLEX_END_SILENCE_MS;
+  const shouldFinalize = vadSilenceReached || sttSilenceReached;
 
   if (shouldFinalize && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
     session.recording = false;
@@ -659,6 +696,8 @@ async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
   session.duplexHadWords = false;
   session.duplexLastPartial = '';
   session.duplexLastWordAt = 0;
+  session.duplexLastSpeechAt = 0;
+  session.duplexVadSpeech = false;
   session.pttLastPartial = '';
   session.pttLastSttAt = 0;
   try {

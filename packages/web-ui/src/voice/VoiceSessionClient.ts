@@ -474,6 +474,7 @@ export class VoiceSessionClient {
   /** Stop local playback and return to a ready-to-listen state. Does not notify the server. */
   stopPlayback(): void {
     this.playback.stop();
+    this.pendingChunkMeta = null;
     this.duplexAwaitingPlaybackEnd = false;
     if (this.mode === 'duplex') {
       if (this.ws?.readyState === WebSocket.OPEN && this.state !== 'listening') {
@@ -649,6 +650,9 @@ export class VoiceSessionClient {
   }
 
   private async handleBinary(data: ArrayBuffer): Promise<void> {
+    // After barge-in, state is 'listening' — drop late-arriving assistant
+    // audio frames so they don't undo the interruption.
+    if (this.mode === 'duplex' && this.state === 'listening') return;
     const pcm = new Int16Array(data);
     if (this.events.onPlaybackLevel) {
       let sum = 0;
@@ -659,6 +663,6 @@ export class VoiceSessionClient {
     markVoiceOutputUnlocked();
     const sampleRate = this.pendingChunkMeta?.sampleRate ?? 24_000;
     await this.playback.enqueuePcm(pcm, sampleRate);
-    this.setState('speaking');
+    if (this.state !== 'listening') this.setState('speaking');
   }
 }

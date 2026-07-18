@@ -45,6 +45,7 @@ export interface PromptRegistrationContext {
     promptProfile?: string;
     channelSession?: boolean;
   };
+  personaName?: string;
   usesCompactContext(): boolean;
   createSectionContext(): SectionContext;
 }
@@ -88,7 +89,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
     if (ctx.usesCompactContext()) {
       ctx.promptAssembly
         .register(createCrewPrivateConductSection())
-        .register(createLocalPersonaGuardSection())
+        .register(createLocalPersonaGuardSection(ctx.personaName))
         .register(createWorkingDirectorySection(secCtx))
         .register(createUserSection(secCtx))
         .register(createSessionNarrativeSection(secCtx))
@@ -126,9 +127,9 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createPersonaToneSection(secCtx))
       .register(createWorkingDirectorySection(secCtx))
       .register(createCompactRulesSection())
-      .register(createChannelSuperSessionSection())
+      .register(createChannelSuperSessionSection(ctx.personaName))
       .register(createChannelLinkedContextSection(secCtx))
-      .register(createChannelMessagingSection())
+      .register(createChannelMessagingSection(ctx.personaName))
       .register(createThirdPartyServicesSection())
       .register(createChatMarkdownSection())
       .register(createMarkdownSection())
@@ -156,7 +157,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createProviderPromptSection(secCtx))
       .register(createIdentitySection(secCtx))
       .register(createPersonaToneSection(secCtx))
-      .register(createLocalPersonaGuardSection())
+      .register(createLocalPersonaGuardSection(ctx.personaName))
       .register(createWorkingDirectorySection(secCtx))
       .register(createCompactRulesSection())
       .register(createUserSection(secCtx))

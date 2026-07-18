@@ -15,8 +15,8 @@ export const VOICE_DEPLOY_STEPS = [
   'Open Chat, switch to Voice, and hold Space to speak.',
 ] as const;
 
-/** Hands-free (duplex) UI — hidden until push-to-talk is polished. */
-export const VOICE_HANDS_FREE_ENABLED = false;
+/** Hands-free (duplex) UI — enabled for both local and xAI engines. */
+export const VOICE_HANDS_FREE_ENABLED = true;
 
 export interface KokoroVoiceProfile {
   id: string;
@@ -147,6 +147,7 @@ export function applyVoicePreset(config: VoiceConfig): VoiceConfig {
   return mergeVoiceConfig({
     ...config,
     enabled: true,
+    // Preserve the user's chosen mode if set; default xAI to duplex, local to push-to-talk.
     mode: { ...config.mode, web: config.mode?.web && config.mode.web !== 'off' ? config.mode.web : (isXai ? 'duplex' : 'push-to-talk') },
     stt: { modelId: 'faster-distil-whisper-small.en', computeType: 'int8', device: 'auto' },
     tts: {

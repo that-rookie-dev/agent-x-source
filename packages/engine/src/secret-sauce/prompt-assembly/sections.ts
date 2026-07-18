@@ -261,11 +261,12 @@ export function createCompactRulesSection(): PromptSection<string> {
 }
 
 /** Prevents third-person meta-narration on small local models. */
-export function createLocalPersonaGuardSection(): PromptSection<string> {
+export function createLocalPersonaGuardSection(personaName?: string): PromptSection<string> {
+  const name = personaName ?? 'Agent-X';
   const GUARD = [
     `[LOCAL_MODEL_PERSONA]`,
-    `You ARE Agent-X speaking directly to the user in first person.`,
-    `- Never narrate the conversation in third person ("Based on the conversation between Agent-X and...").`,
+    `You ARE ${name} speaking directly to the user in first person.`,
+    `- Never narrate the conversation in third person ("Based on the conversation between ${name} and...").`,
     `- Never prefix replies with "assistant:" or role labels.`,
     `- Answer the user's latest message directly; do not summarize prior turns unless asked.`,
     `- Keep replies concise; use tools when they help.`,
@@ -681,16 +682,17 @@ interface ChannelFocusState {
   chatId: number | null;
 }
 
-export function createChannelSuperSessionSection(): PromptSection<null> {
+export function createChannelSuperSessionSection(personaName?: string): PromptSection<null> {
+  const name = personaName ?? 'Agent-X';
   return {
     key: 'core/channel-super-session',
     load: () => null,
     render: () => [
       '[SUPER_SESSION — MESSAGING CHANNEL]',
-      'You are Agent-X\'s global operator console on a messaging channel (Telegram, Slack, Discord, etc.).',
+      `You are ${name}'s global operator console on a messaging channel (Telegram, Slack, Discord, etc.).`,
       'You are NOT limited to this channel\'s chat history or session id.',
-      'You have fleet-wide visibility and control across the entire Agent-X installation:',
-      '- All chat sessions (Agent-X and crew-private)',
+      `You have fleet-wide visibility and control across the entire ${name} installation:`,
+      `- All chat sessions (${name} and crew-private)`,
       '- All automations — including those created in the web UI or other channels',
       '- Notifications, settings, channel plugins, and the active workspace',
       '- Crew roster, private specialist chats, and running automation runs',
@@ -734,7 +736,8 @@ export function buildClarificationPolicyInstruction(onMessagingChannel = false):
   return lines.join('\n');
 }
 
-export function createChannelMessagingSection(): PromptSection<null> {
+export function createChannelMessagingSection(personaName?: string): PromptSection<null> {
+  const name = personaName ?? 'Agent-X';
   return {
     key: 'core/channel-messaging',
     load: () => null,
@@ -742,7 +745,7 @@ export function createChannelMessagingSection(): PromptSection<null> {
       '[CHANNEL_MESSAGING]',
       'You are responding on a messaging channel. Keep replies concise and mobile-friendly (markdown ok).',
       'You are in normal Agent execution mode. Tools are gated by the session permission rules; very high-risk actions may surface an inline permission request.',
-      'You are a first-class Agent-X client: you have access to the full tool catalog, connected MCP integrations, web search, file creation, and automations.',
+      `You are a first-class ${name} client: you have access to the full tool catalog, connected MCP integrations, web search, file creation, and automations.`,
       'Use tools directly to satisfy the request. Only very high-risk actions may surface an inline permission request.',
       '',
       'AUTONOMY ON MESSAGING CHANNELS — CRITICAL:',

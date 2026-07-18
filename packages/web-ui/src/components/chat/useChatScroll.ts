@@ -65,7 +65,11 @@ export function useChatScroll({
   const scrollMessagesToBottom = useCallback((behavior: 'smooth' | 'instant' = 'instant') => {
     const el = messagesContainerRef.current;
     if (!el) return;
-    if (behavior === 'smooth') {
+    // Use bottomRef.scrollIntoView for reliable bottom alignment — works even
+    // when content-visibility: auto defers rendering of some messages.
+    if (bottomRef.current) {
+      bottomRef.current.scrollIntoView({ block: 'end', behavior });
+    } else if (behavior === 'smooth') {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     } else {
       el.scrollTop = el.scrollHeight;
@@ -131,7 +135,9 @@ export function useChatScroll({
   const resetScrollState = useCallback(() => {
     setShowJumpPill(false);
     prevRealCountRef.current = 0;
-    isAtBottomRef.current = false;
+    // Set to true so auto-scroll works immediately after session switch.
+    // The initial scroll effect will handle the actual scroll-to-bottom.
+    isAtBottomRef.current = true;
     paginationReadyRef.current = false;
     needsInitialScrollRef.current = true;
     lastScrollTopRef.current = 0;
@@ -221,6 +227,15 @@ export function useChatScroll({
     }
 
     if (needsInitialScrollRef.current && messages.length > 0) {
+      // Use scrollIntoView on the bottom sentinel for reliable bottom-scrolling,
+      // even when content-visibility: auto defers rendering of some messages.
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ block: 'end' });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+      // Also set scrollTop directly as a fallback (content-visibility may not
+      // have expanded all message heights yet).
       el.scrollTop = el.scrollHeight;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (atBottom) {
@@ -239,13 +254,17 @@ export function useChatScroll({
     }
   }, [messages.length, setSessionRestoring, sessionRestoringRef]);
 
-  // ─── Initial scroll timer (fallback for layout effect) ───
+  // ─── Initial scroll timer (fallback for layout effect + content-visibility re-scroll) ───
   useEffect(() => {
     if (!needsInitialScrollRef.current || messages.length === 0) return;
     const timer = window.setTimeout(() => {
       const el = messagesContainerRef.current;
       if (!el || !needsInitialScrollRef.current) return;
-      scrollMessagesToBottom('instant');
+      // Use bottomRef.scrollIntoView for reliable bottom alignment.
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ block: 'end' });
+      }
+      el.scrollTop = el.scrollHeight;
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       if (atBottom) {
         needsInitialScrollRef.current = false;
@@ -261,7 +280,28 @@ export function useChatScroll({
         }
       }
     }, 50);
-    return () => window.clearTimeout(timer);
+    // Second pass: content-visibility: auto may not have expanded all messages
+    // by 50ms. Re-scroll at 200ms to catch any late layout shifts.
+    const timer2 = window.setTimeout(() => {
+      if (!needsInitialScrollRef.current) return;
+      const el = messagesContainerRef.current;
+      if (!el) return;
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ block: 'end' });
+      }
+      el.scrollTop = el.scrollHeight;
+      needsInitialScrollRef.current = false;
+      initialScrollDoneRef.current = true;
+      setInitialScrollDone(true);
+      paginationReadyRef.current = true;
+      isAtBottomRef.current = true;
+      lastScrollTopRef.current = el.scrollTop;
+      if (sessionRestoringRef.current) {
+        setSessionRestoring(false);
+        sessionRestoringRef.current = false;
+      }
+    }, 200);
+    return () => { window.clearTimeout(timer); window.clearTimeout(timer2); };
   }, [messages.length, scrollMessagesToBottom, setSessionRestoring, sessionRestoringRef]);
 
   // ─── Safety net: never leave the restore overlay stuck if scroll anchoring fails ───

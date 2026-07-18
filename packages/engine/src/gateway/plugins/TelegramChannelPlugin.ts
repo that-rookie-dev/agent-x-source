@@ -95,6 +95,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     this.focusManager = fm;
   }
 
+  /** Resolve the agent's persona name for user-facing messages. */
+  private get agentName(): string {
+    return this.agent?.getPersona()?.name ?? 'Agent-X';
+  }
+
   async onLoad(): Promise<void> {}
 
   async onStart(): Promise<void> {
@@ -462,7 +467,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   private setupFileHandling(): void {
     this.bridge.setFileHandler((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => {
       if (!this.agent) {
-        void this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+        void this.bridge.sendToChat(chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
         return;
       }
       this.trackActiveChat(chatId);
@@ -500,7 +505,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private async handleVoiceNote(savedPath: string, caption: string | undefined, chatId: number): Promise<void> {
     if (!this.agent) {
-      await this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+      await this.bridge.sendToChat(chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
       return;
     }
 
@@ -697,7 +702,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       // Drain queue with error responses — agent not initialized yet
       while (this.messageQueue.length > 0) {
         const item = this.messageQueue.shift()!;
-        await this.bridge.sendToChat(item.chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+        await this.bridge.sendToChat(item.chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
       }
       return;
     }
@@ -719,7 +724,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         const item = this.messageQueue.shift()!;
         const agent = this.agent;
         if (!agent) {
-          await this.bridge.sendToChat(item.chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+          await this.bridge.sendToChat(item.chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
           continue;
         }
         getLogger().info(
@@ -821,7 +826,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
       case 'help':
         return [
-          '🤖 *Agent-X Channel Commands:*',
+          `🤖 *${this.agentName} Channel Commands:*`,
           '',
           '🔐 *Permissions:*',
           '  /permissions — List allowed/denied tools',
@@ -994,7 +999,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'status': {
         const tokens = this.agent.tokens;
         return [
-          '📊 *Agent-X Status*',
+          `📊 *${this.agentName} Status*`,
           `├ Provider: ${this.agent.config?.provider?.activeProvider ?? 'unknown'}`,
           `├ Model: ${this.agent.config?.provider?.activeModel ?? 'unknown'}`,
           `├ Tokens: ${tokens.tokensUsed} / ${tokens.tokensTotal}`,

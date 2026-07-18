@@ -8,7 +8,7 @@ import Typography from '@mui/material/Typography';
 import MicIcon from '@mui/icons-material/Mic';
 import { voice, type VoiceSetupStatus } from '../../api';
 import { useMicrophonePermission } from '../../hooks/useMicrophonePermission';
-import { applyVoicePreset, mergeVoiceConfig } from '../../voice/voice-config';
+import { applyVoicePreset, mergeVoiceConfig, KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
 import { markVoiceOutputUnlocked } from '../../voice/support';
 import { hasSeenMicPreprompt, markMicPrepromptSeen } from '../../utils/microphone-permission';
 import { VoicePermissionDialog } from '../VoicePermissionDialog';
@@ -23,6 +23,8 @@ export interface WizardVoiceStepProps {
   onBusyChange?: (busy: boolean) => void;
   /** User callsign — used to generate a personalised TTS greeting after warmup. */
   callsign?: string;
+  /** Agent persona name — used in the test voice greeting. */
+  agentName?: string;
 }
 
 function micStatusLabel(state: string): string {
@@ -32,7 +34,7 @@ function micStatusLabel(state: string): string {
   return 'UNKNOWN';
 }
 
-export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentName }: WizardVoiceStepProps) {
   const mic = useMicrophonePermission();
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
@@ -50,6 +52,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
   const [selectedXaiVoice, setSelectedXaiVoice] = useState('eve');
   const [xaiModel, setXaiModel] = useState('grok-voice-latest');
   const [xaiConfigured, setXaiConfigured] = useState(false);
+  const [selectedLocalVoice, setSelectedLocalVoice] = useState('kokoro-af');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -80,6 +83,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
             } catch { /* ignore */ }
           }
         } else {
+          setSelectedLocalVoice(merged.tts?.voiceId ?? 'kokoro-af');
           if (capRes.capabilities.pythonAvailable && capRes.capabilities.ffmpegAvailable) {
             const { status } = await voice.setupStatus();
             if (status.phase === 'complete') setInstallComplete(true);
@@ -207,6 +211,38 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
     }
   };
 
+  const revokeXaiKey = async () => {
+    setError(null);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, xai: { ...mergeVoiceConfig(cfg).xai, apiKey: undefined } });
+      await voice.updateConfig(applyVoicePreset(merged));
+      setXaiConfigured(false);
+      setXaiApiKey('');
+      setXaiVoices([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke API key');
+    }
+  };
+
+  const selectLocalVoice = async (voiceId: string) => {
+    setSelectedLocalVoice(voiceId);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, tts: { ...mergeVoiceConfig(cfg).tts, voiceId } });
+      await voice.updateConfig(applyVoicePreset(merged));
+    } catch { /* best-effort */ }
+  };
+
+  const selectXaiVoice = async (voiceId: string) => {
+    setSelectedXaiVoice(voiceId);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, xai: { ...mergeVoiceConfig(cfg).xai, voice: voiceId } });
+      await voice.updateConfig(applyVoicePreset(merged));
+    } catch { /* best-effort */ }
+  };
+
   const stopMicTest = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -258,7 +294,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
       await audio.play();
       return;
     }
-    const result = await voice.preview(text, 'kokoro', 'kokoro-af');
+    const result = await voice.preview(text, 'kokoro', selectedLocalVoice);
     const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
     await audio.play();
   };
@@ -267,14 +303,21 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
     setPreviewing(true);
     setError(null);
     markVoiceOutputUnlocked();
+    const user = callsign?.trim() || null;
+    const agent = agentName?.trim() || 'Agent-X';
+    // Natural, conversational greeting that uses both the agent's name and
+    // the user's callsign without awkward pauses.
+    const greeting = user
+      ? `Hey ${user}, ${agent} here. Voice is live and I'm ready to go.`
+      : `${agent} here. Voice is live and I'm ready to go.`;
     try {
       try {
-        await synthAndPlay('Voice comms online. Agent-X standing by.');
+        await synthAndPlay(greeting);
       } catch (err) {
         const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
         if (!msg.includes('abort') && !msg.includes('timeout') && !msg.includes('not ready')) throw err;
         await new Promise((r) => setTimeout(r, 600));
-        await synthAndPlay('Voice comms online. Agent-X standing by.');
+        await synthAndPlay(greeting);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speaker test failed');
@@ -373,30 +416,81 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
         </>
         )}
 
-        {engine === 'realtime_xai' ? (
-        <>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, my: 2 }}>
+        {/* Local voice selection dropdown — only after engine is ready */}
+        {engine === 'stt_llm_tts' && localComplete && (
+          <Box sx={{ my: 2 }}>
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
+              VOICE
+            </Typography>
             <TextField
-              label="xAI API key"
-              type="password"
+              select
               size="small"
               fullWidth
-              value={xaiApiKey}
-              onChange={(e) => setXaiApiKey(e.target.value)}
-              placeholder="sk-..."
-              sx={{ input: { fontFamily: 'monospace', fontSize: '0.65rem' } }}
-            />
-            <Button
-              fullWidth
-              variant="contained"
-              onClick={() => { void configureXai(); }}
-              disabled={xaiValidating || !xaiApiKey.trim()}
-              sx={{ ...wizardPrimaryBtnSx, py: 1.1 }}
+              value={selectedLocalVoice}
+              onChange={(e) => { void selectLocalVoice(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: WIZARD_MONO, fontSize: '0.65rem' } }}
             >
-              {xaiValidating ? 'VALIDATING…' : 'CONNECT XAI'}
-            </Button>
+              {KOKORO_VOICE_PROFILES.map((v) => (
+                <MenuItem key={v.id} value={v.id} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                  {v.name} — {v.gender} · {v.language} [{v.grade}]
+                </MenuItem>
+              ))}
+            </TextField>
           </Box>
+        )}
 
+        {engine === 'realtime_xai' ? (
+        <>
+          {!xaiConfigured ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, my: 2 }}>
+              <TextField
+                label="xAI API key"
+                type="password"
+                size="small"
+                fullWidth
+                value={xaiApiKey}
+                onChange={(e) => setXaiApiKey(e.target.value)}
+                placeholder="sk-..."
+                sx={{ input: { fontFamily: 'monospace', fontSize: '0.65rem' } }}
+              />
+              <Button
+                fullWidth
+                variant="contained"
+                onClick={() => { void configureXai(); }}
+                disabled={xaiValidating || !xaiApiKey.trim()}
+                sx={{ ...wizardPrimaryBtnSx, py: 1.1 }}
+              >
+                {xaiValidating ? 'VALIDATING…' : 'CONNECT XAI'}
+              </Button>
+            </Box>
+          ) : (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', my: 2, p: 1.5, borderRadius: 1, border: `1px solid ${wizardTheme.accentOk}`, bgcolor: alphaColor(colors.accent.green, 0.06) }}>
+              <Box>
+                <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.accentOk, mb: 0.25 }}>
+                  XAI CONNECTED
+                </Typography>
+                <Typography sx={{ fontSize: '0.55rem', color: wizardTheme.textDim }}>
+                  API key validated · voices loaded
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => { void revokeXaiKey(); }}
+                sx={{
+                  fontFamily: WIZARD_MONO,
+                  fontSize: '0.6rem',
+                  color: wizardTheme.accentErr,
+                  borderColor: alphaColor(colors.accent.red, 0.3),
+                  '&:hover': { borderColor: wizardTheme.accentErr, bgcolor: alphaColor(colors.accent.red, 0.06) },
+                }}
+              >
+                REVOKE KEY
+              </Button>
+            </Box>
+          )}
+
+          {xaiConfigured && (
           <Box sx={{ mb: 2 }}>
             <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
               MODEL
@@ -417,52 +511,92 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
               </MenuItem>
             </TextField>
           </Box>
+          )}
 
-          {xaiVoices.length > 0 && (
+          {xaiConfigured && xaiVoices.length > 0 && (
           <Box sx={{ mb: 2 }}>
             <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
               VOICE
             </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 0.75 }}>
-              {xaiVoices.map((v) => {
-                const isSelected = selectedXaiVoice === v.id;
-                return (
-                  <Box
-                    key={v.id}
-                    onClick={() => { setSelectedXaiVoice(v.id); }}
-                    sx={{
-                      cursor: 'pointer',
-                      p: 1,
-                      borderRadius: 1,
-                      border: `1px solid ${isSelected ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
-                      bgcolor: isSelected ? alphaColor(colors.accent.green, 0.08) : 'transparent',
-                    }}
-                  >
-                    <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem', color: wizardTheme.text }}>
-                      {v.name}
-                    </Typography>
-                    {v.language && (
-                      <Typography sx={{ fontSize: '0.52rem', color: wizardTheme.textSecondary }}>
-                        {v.language}
-                      </Typography>
-                    )}
-                  </Box>
-                );
-              })}
-            </Box>
+            <TextField
+              select
+              size="small"
+              fullWidth
+              value={selectedXaiVoice}
+              onChange={(e) => { void selectXaiVoice(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: WIZARD_MONO, fontSize: '0.65rem' } }}
+            >
+              {xaiVoices.map((v) => (
+                <MenuItem key={v.id} value={v.id} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                  {v.name}{v.language ? ` — ${v.language}` : ''}
+                </MenuItem>
+              ))}
+            </TextField>
           </Box>
           )}
 
           {xaiConfigured && (
-            <Button
-              fullWidth
-              variant="outlined"
-              onClick={() => { void previewSpeaker(); }}
-              disabled={previewing}
-              sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.textSecondary, borderColor: wizardTheme.panelBorder, mb: 1 }}
-            >
-              {previewing ? 'TRANSMITTING…' : 'TEST VOICE'}
-            </Button>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => { void runMicTest(); }}
+                disabled={testingMic || (mic.blocked && mic.state === 'denied')}
+                sx={{
+                  fontFamily: WIZARD_MONO,
+                  fontSize: '0.62rem',
+                  color: wizardTheme.textSecondary,
+                  borderColor: wizardTheme.panelBorder,
+                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
+                  '&.Mui-disabled': {
+                    color: testingMic ? wizardTheme.accentSignal : undefined,
+                    borderColor: testingMic ? wizardTheme.panelBorder : undefined,
+                    opacity: testingMic ? 1 : undefined,
+                  },
+                }}
+              >
+                {testingMic ? 'Listening…' : mic.state === 'granted' ? 'Test microphone' : 'Grant & test mic'}
+              </Button>
+              {testingMic && (
+                <Button size="small" onClick={stopMicTest} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.textDim }}>
+                  Stop
+                </Button>
+              )}
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => { void previewSpeaker(); }}
+                disabled={previewing}
+                sx={{
+                  fontFamily: WIZARD_MONO,
+                  fontSize: '0.62rem',
+                  color: wizardTheme.textSecondary,
+                  borderColor: wizardTheme.panelBorder,
+                  '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
+                }}
+              >
+                {previewing ? 'Transmitting…' : 'TEST VOICE'}
+              </Button>
+            </Box>
+          )}
+
+          {xaiConfigured && testingMic && (
+            <>
+              <LinearProgress
+                variant="determinate"
+                value={micLevel * 100}
+                sx={{
+                  mb: 1,
+                  height: 3,
+                  borderRadius: 1,
+                  bgcolor: alphaColor(colors.ink, 0.06),
+                  '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.accentSignal },
+                }}
+              />
+              <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1 }}>
+                Speak — the bar should move with your voice.
+              </Typography>
+            </>
           )}
         </>
         ) : (
@@ -502,6 +636,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
           {installComplete && !warmupComplete && (
             <VoiceWarmupProgress
               callsign={callsign || 'Operator'}
+              agentName={agentName}
               onComplete={handleWarmupComplete}
               onError={handleWarmupError}
             />
@@ -576,7 +711,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign }: Wizar
                     '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
                   }}
                 >
-                  {previewing ? 'Transmitting…' : 'Replay greeting'}
+                  {previewing ? 'Transmitting…' : 'TEST VOICE'}
                 </Button>
               </Box>
 

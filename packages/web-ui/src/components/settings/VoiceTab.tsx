@@ -138,9 +138,20 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     }
   }, [engine]);
 
-  // Keep a ref so callers (selectEngine) can invoke the latest load after await
-  const loadRef = useRef(load);
-  loadRef.current = load;
+  // Fetch xAI voices when the engine switches to xAI. No full reload needed —
+  // capabilities and catalog don't change between engines.
+  const refreshXaiVoices = useCallback(async (effEngine: string) => {
+    if (effEngine === 'realtime_xai') {
+      try {
+        const voiceRes = await voice.xaiVoices();
+        setXaiVoices(voiceRes.voices);
+      } catch {
+        setXaiVoices([]);
+      }
+    } else {
+      setXaiVoices([]);
+    }
+  }, []);
 
   useEffect(() => {
     void load();
@@ -149,11 +160,9 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     };
   }, []);
 
-  useEffect(() => {
-    const onVoiceUpdated = () => { void loadRef.current(); };
-    window.addEventListener('agentx:voice-updated', onVoiceUpdated);
-    return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
-  }, []);
+  // No reload on agentx:voice-updated — local state updates via patch() are
+  // sufficient for all config changes (voice selection, mode toggle, engine
+  // switch). Capabilities/catalog don't change between config updates.
 
   // Reload installed assets when any TTS download completes or errors
   const allDownloads = useAllVoiceAssetDownloads();
@@ -320,17 +329,28 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     setCapabilities(null);
     const isXai = nextEngine === 'realtime_xai';
     const currentWeb = voiceConfig.mode?.web;
+    // xAI is always duplex. Local engine preserves the user's previous mode
+    // choice (defaults to push-to-talk for first-time users).
     const nextWeb = voiceConfig.enabled
-      ? (isXai ? 'duplex' : 'push-to-talk')
+      ? (isXai ? 'duplex' : (currentWeb && currentWeb !== 'off' ? currentWeb : 'push-to-talk'))
       : currentWeb;
     await persistVoice({
       ...voiceConfig,
       engine: nextEngine,
       mode: { ...voiceConfig.mode, web: nextWeb ?? 'off' },
     });
-    // Reload with the new engine explicitly — loadRef.current may still
-    // reference the old engine closure, so pass the override.
-    await loadRef.current(nextEngine);
+    // Just refresh xAI voices for the new engine — no full reload needed.
+    void refreshXaiVoices(nextEngine);
+    // Re-fetch capabilities since the engine change may affect them.
+    voice.capabilities().then((res) => setCapabilities(res.capabilities)).catch(() => {});
+  };
+
+  const selectWebMode = async (nextMode: 'push-to-talk' | 'duplex') => {
+    if (nextMode === voiceConfig.mode?.web) return;
+    await persistVoice({
+      ...voiceConfig,
+      mode: { ...voiceConfig.mode, web: nextMode },
+    });
   };
 
   const hasXaiKey = Boolean(voiceConfig.xai?.apiKey);
@@ -583,10 +603,11 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               checked={Boolean(voiceConfig.enabled)}
               onChange={(e) => {
                 const isXai = engine === 'realtime_xai';
+                const currentWeb = voiceConfig.mode?.web;
                 void persistVoice({
                   ...voiceConfig,
                   enabled: e.target.checked,
-                  mode: { ...voiceConfig.mode, web: e.target.checked ? (isXai ? 'duplex' : 'push-to-talk') : 'off' },
+                  mode: { ...voiceConfig.mode, web: e.target.checked ? (currentWeb && currentWeb !== 'off' ? currentWeb : (isXai ? 'duplex' : 'push-to-talk')) : 'off' },
                 });
               }}
               disabled={engine === 'stt_llm_tts' ? !kitReady : !xaiConfigured}
@@ -931,6 +952,60 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               Use the footer mic or wake word for live voice. Run these checks before your first session.
             </Typography>
           </>
+        )}
+
+        {/* Voice input mode — local engine only (xAI is always duplex) */}
+        {engine === 'stt_llm_tts' && (
+          <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${settingsTheme.border.default}` }}>
+            <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Voice input mode</Typography>
+            <Box sx={{ display: 'flex', gap: 1.5 }}>
+              <Box
+                onClick={() => void selectWebMode('push-to-talk')}
+                sx={{
+                  flex: 1,
+                  cursor: 'pointer',
+                  p: 1.5,
+                  borderRadius: 1,
+                  border: `1.5px solid ${voiceConfig.mode?.web === 'push-to-talk' ? settingsTheme.accent.hud : settingsTheme.border.default}`,
+                  bgcolor: voiceConfig.mode?.web === 'push-to-talk' ? `${settingsTheme.accent.hud}14` : 'transparent',
+                  transition: 'border-color 0.15s, background-color 0.15s',
+                  '&:hover': { borderColor: settingsTheme.accent.hud },
+                }}
+              >
+                <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx, mb: 0.5 }}>
+                  Push-to-Talk
+                </Typography>
+                <Typography sx={{ ...settingsHelperSx, fontSize: '0.6rem' }}>
+                  Hold Space to speak. Works on dashboard only. Best for precise control.
+                </Typography>
+              </Box>
+              <Box
+                onClick={() => void selectWebMode('duplex')}
+                sx={{
+                  flex: 1,
+                  cursor: 'pointer',
+                  p: 1.5,
+                  borderRadius: 1,
+                  border: `1.5px solid ${voiceConfig.mode?.web === 'duplex' ? settingsTheme.accent.signal : settingsTheme.border.default}`,
+                  bgcolor: voiceConfig.mode?.web === 'duplex' ? `${settingsTheme.accent.signal}14` : 'transparent',
+                  transition: 'border-color 0.15s, background-color 0.15s',
+                  '&:hover': { borderColor: settingsTheme.accent.signal },
+                }}
+              >
+                <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx, mb: 0.5 }}>
+                  Duplex (Hands-free)
+                </Typography>
+                <Typography sx={{ ...settingsHelperSx, fontSize: '0.6rem' }}>
+                  Always listening. Works on any page. Auto-detects speech start and end.
+                </Typography>
+              </Box>
+            </Box>
+            <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
+              {voiceConfig.mode?.web === 'duplex'
+                ? 'Local engine uses Silero VAD for speech detection. The agent listens continuously and auto-detects when you finish speaking.'
+                : 'Hold Space on the dashboard to speak. Release when done.'}
+            </Typography>
+          </Box>
         )}
       </SettingsCard>
       )}

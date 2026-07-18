@@ -61,6 +61,10 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
   const releaseEpochRef = useRef(0);
   const bootingStartedAtRef = useRef<number | null>(null);
   const runWarmupRef = useRef<(force?: boolean) => Promise<void> | undefined>(async () => {});
+  /** Tracks whether this is the first warmup attempt on app launch.
+   * On first load we always force-start the engine so it becomes visible/active,
+   * even if "keep engine running at launch" (autoStart) is disabled. */
+  const initialLoadRef = useRef(true);
 
   const applyReady = useCallback((sidecarHealth?: VoiceSidecarHealth) => {
     bootingStartedAtRef.current = null;
@@ -121,18 +125,27 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
     }
 
     if (!force && !autoStartRef.current) {
-      setError(null);
-      try {
-        const ready = await probeSidecarStatus();
-        if (!ready) {
+      // On initial app load, force-start the engine once so it becomes
+      // visible/active even when "keep engine running at launch" is off.
+      // The autoStart setting controls whether the engine *stays* running
+      // (via releaseSidecar), not whether it starts initially.
+      if (initialLoadRef.current) {
+        initialLoadRef.current = false;
+        // Fall through to the warmup logic below instead of returning.
+      } else {
+        setError(null);
+        try {
+          const ready = await probeSidecarStatus();
+          if (!ready) {
+            setPhase((current) => (current === 'booting' ? current : 'idle'));
+            setHealth(undefined);
+          }
+        } catch {
           setPhase((current) => (current === 'booting' ? current : 'idle'));
           setHealth(undefined);
         }
-      } catch {
-        setPhase((current) => (current === 'booting' ? current : 'idle'));
-        setHealth(undefined);
+        return;
       }
-      return;
     }
 
     if (warmupInFlightRef.current) {
@@ -229,7 +242,10 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
         // keep it running — only probe to see if it's still healthy.
         setPhase((current) => {
           if (current === 'ready' || current === 'booting') return current;
-          void runWarmupRef.current(false);
+          // On initial load, force-start the engine regardless of autoStart.
+          const force = initialLoadRef.current;
+          initialLoadRef.current = false;
+          void runWarmupRef.current(force);
           return current;
         });
       });
@@ -321,7 +337,7 @@ export function useVoiceWarmup(voiceEnabled: boolean, canRunWeb: boolean): Voice
         const result = await voice.sidecarStatus();
         const sidecar = result.sidecar;
         const sidecarHealth = 'health' in sidecar ? sidecar.health : undefined;
-        if (isSidecarFullyReady(sidecar.state, sidecarHealth) && autoStartRef.current) {
+        if (isSidecarFullyReady(sidecar.state, sidecarHealth)) {
           applyReady(sidecarHealth);
         } else if (phase === 'ready' && !isSidecarFullyReady(sidecar.state, sidecarHealth)) {
           setPhase('idle');

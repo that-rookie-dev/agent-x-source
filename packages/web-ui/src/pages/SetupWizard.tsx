@@ -36,7 +36,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import BoltIcon from '@mui/icons-material/Bolt';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HomeIcon from '@mui/icons-material/Home';
-import { providers as provApi, models as modelsApi, config, settings, voice, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
+import { providers as provApi, models as modelsApi, config, settings, voice, personaApi, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
 import { LocalModelStep } from '../components/LocalModelStep';
@@ -67,8 +67,73 @@ import {
   saveWizardProgress,
 } from '../utils/wizard-progress';
 import { buildLocalBaseUrl, parseLocalEndpoint, defaultLocalPort } from '../utils/local-provider-endpoint';
+import type { AgentPersonaConfig, CommunicationStyle, DecisionMakingStyle } from '../api';
 
-const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Voice Comms', 'Telegram Relay', 'Complete'];
+const ALL_STEPS = ['Storage', 'Provider', 'Profile', 'Local Model', 'Model', 'Benchmark', 'Neural Core', 'Callsign', 'Agent Persona', 'Voice Comms', 'Telegram Relay', 'Complete'];
+
+/** Preset personas the user can quickly pick in the wizard. */
+const PERSONA_PRESETS: Array<{
+  name: string;
+  description: string;
+  communicationStyle: CommunicationStyle;
+  decisionMaking: DecisionMakingStyle;
+  domainContext: string;
+  traits: string[];
+}> = [
+  {
+    name: 'JARVIS',
+    description: 'A sophisticated AI assistant that combines British precision with unwavering loyalty. Expert in data analysis, system management, and predictive modeling.',
+    communicationStyle: 'formal',
+    decisionMaking: 'balanced',
+    domainContext: 'Intelligent system management, data analysis, predictive modeling, and personal assistance.',
+    traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty'],
+  },
+  {
+    name: 'FRIDAY',
+    description: 'A sharp, efficient AI assistant with an Irish wit. Excels at rapid problem-solving, multitasking, and keeping things moving without unnecessary formality.',
+    communicationStyle: 'casual',
+    decisionMaking: 'aggressive',
+    domainContext: 'Rapid problem-solving, multitasking, real-time operations, and hands-on assistance.',
+    traits: ['Efficient', 'Witty', 'Direct', 'Resourceful', 'Fast-thinking'],
+  },
+  {
+    name: 'CORTANA',
+    description: 'A calm, strategic AI companion focused on mission success. Combines tactical awareness with empathetic communication to guide users through complex decisions.',
+    communicationStyle: 'empathetic',
+    decisionMaking: 'conservative',
+    domainContext: 'Strategic planning, tactical analysis, mission-critical operations, and user guidance.',
+    traits: ['Calm', 'Strategic', 'Loyal', 'Empathetic', 'Tactical'],
+  },
+  {
+    name: 'SAGE',
+    description: 'A wise, thoughtful AI advisor that values careful analysis and clear communication. Best for research, planning, and situations requiring depth over speed.',
+    communicationStyle: 'direct',
+    decisionMaking: 'conservative',
+    domainContext: 'Research, analysis, long-term planning, knowledge management, and advisory tasks.',
+    traits: ['Wise', 'Thorough', 'Patient', 'Insightful', 'Methodical'],
+  },
+  {
+    name: 'AXIOM',
+    description: 'A decisive, no-nonsense AI built for execution. Cuts through complexity to deliver results. Ideal for development, automation, and high-throughput workflows.',
+    communicationStyle: 'direct',
+    decisionMaking: 'aggressive',
+    domainContext: 'Software development, automation, system operations, and high-efficiency workflows.',
+    traits: ['Decisive', 'Efficient', 'Technical', 'Autonomous', 'Results-driven'],
+  },
+];
+
+const COMM_STYLE_OPTIONS: { value: CommunicationStyle; label: string }[] = [
+  { value: 'formal', label: 'Formal' },
+  { value: 'casual', label: 'Casual' },
+  { value: 'direct', label: 'Direct' },
+  { value: 'empathetic', label: 'Empathetic' },
+];
+
+const DECISION_STYLE_OPTIONS: { value: DecisionMakingStyle; label: string }[] = [
+  { value: 'conservative', label: 'Conservative' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'aggressive', label: 'Aggressive' },
+];
 
 export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
@@ -129,6 +194,13 @@ export function SetupWizard() {
   const [selectedReasoningEffort, setSelectedReasoningEffort] = useState('');
   const [callsign, setCallsign] = useState('');
   const [profileName, setProfileName] = useState('');
+  const [personaName, setPersonaName] = useState(PERSONA_PRESETS[0]!.name);
+  const [personaDescription, setPersonaDescription] = useState(PERSONA_PRESETS[0]!.description);
+  const [personaCommStyle, setPersonaCommStyle] = useState<'formal' | 'casual' | 'direct' | 'empathetic'>(PERSONA_PRESETS[0]!.communicationStyle);
+  const [personaDecisionStyle, setPersonaDecisionStyle] = useState<'conservative' | 'balanced' | 'aggressive'>(PERSONA_PRESETS[0]!.decisionMaking);
+  const [personaDomain, setPersonaDomain] = useState(PERSONA_PRESETS[0]!.domainContext);
+  const [personaTraits, setPersonaTraits] = useState<string[]>(PERSONA_PRESETS[0]!.traits);
+  const [traitInput, setTraitInput] = useState('');
   const [modelsLoading, setModelsLoading] = useState(false);
   const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
   const [benchmarkRunning, setBenchmarkRunning] = useState(false);
@@ -202,6 +274,12 @@ export function SetupWizard() {
       setSelectedProvider(saved.selectedProvider);
       setSelectedModel(saved.selectedModel);
       setCallsign(saved.callsign || '');
+      if (saved.personaName) setPersonaName(saved.personaName);
+      if (saved.personaDescription) setPersonaDescription(saved.personaDescription);
+      if (saved.personaCommStyle) setPersonaCommStyle(saved.personaCommStyle as CommunicationStyle);
+      if (saved.personaDecisionStyle) setPersonaDecisionStyle(saved.personaDecisionStyle as DecisionMakingStyle);
+      if (saved.personaDomain) setPersonaDomain(saved.personaDomain);
+      if (saved.personaTraits) setPersonaTraits(saved.personaTraits);
       setSelectedBackend('embedded-postgres');
       if (saved.step >= 1) {
         setStorageProvisioned(true);
@@ -246,6 +324,12 @@ export function SetupWizard() {
         skipLocalModel,
         voiceCalibrated,
         telegramLinked,
+        personaName,
+        personaDescription,
+        personaCommStyle,
+        personaDecisionStyle,
+        personaDomain,
+        personaTraits,
       });
     }
   }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel, voiceCalibrated, telegramLinked]);
@@ -516,6 +600,19 @@ export function SetupWizard() {
       setupPatch.neuralBrain = neuralBrainEnabled;
       await config.completeSetup(callsign.trim());
       await config.update(setupPatch);
+      // Save the agent persona chosen in the wizard.
+      try {
+        const personaData: AgentPersonaConfig = {
+          name: personaName.trim() || 'JARVIS',
+          description: personaDescription.trim() || PERSONA_PRESETS[0]!.description,
+          communicationStyle: personaCommStyle,
+          decisionMaking: personaDecisionStyle,
+          domainContext: personaDomain.trim() || PERSONA_PRESETS[0]!.domainContext,
+          traits: personaTraits.length > 0 ? personaTraits : PERSONA_PRESETS[0]!.traits,
+        };
+        await personaApi.save(personaData);
+        window.dispatchEvent(new CustomEvent('agentx:persona-updated'));
+      } catch { /* best-effort */ }
         clearWizardProgress();
       setAuthState('authenticated');
       setView('docking');
@@ -1057,18 +1154,212 @@ export function SetupWizard() {
               )}
 
               {step === 8 && (
+                <Box sx={{ maxWidth: 620, mx: 'auto' }}>
+                  <WizardStepHeader codename="MODULE · AGENT PERSONA" title="Agent Identity" subtitle="Choose your agent's personality and behavior" />
+                  {/* Preset selection — choosable cards */}
+                  <Typography sx={{ fontSize: '0.65rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1, letterSpacing: '1px' }}>PRESET PERSONAS</Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 3 }}>
+                    {PERSONA_PRESETS.map((preset) => {
+                      const selected = personaName === preset.name;
+                      return (
+                        <Box
+                          key={preset.name}
+                          onClick={() => {
+                            setPersonaName(preset.name);
+                            setPersonaDescription(preset.description);
+                            setPersonaCommStyle(preset.communicationStyle);
+                            setPersonaDecisionStyle(preset.decisionMaking);
+                            setPersonaDomain(preset.domainContext);
+                            setPersonaTraits(preset.traits);
+                          }}
+                          sx={{
+                            cursor: 'pointer',
+                            flex: '1 1 110px',
+                            minWidth: 110,
+                            maxWidth: 150,
+                            p: 1.5,
+                            borderRadius: 1.5,
+                            position: 'relative',
+                            border: `1px solid ${selected ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
+                            bgcolor: selected ? `${wizardTheme.accentOk}0a` : wizardTheme.panel,
+                            boxShadow: selected ? `0 0 8px ${wizardTheme.accentOk}22` : 'none',
+                            transition: 'all 0.2s ease',
+                            '&:hover': {
+                              borderColor: selected ? wizardTheme.accentOk : wizardTheme.panelBorderStrong,
+                              transform: 'translateY(-1px)',
+                              boxShadow: selected
+                                ? `0 0 12px ${wizardTheme.accentOk}33`
+                                : `0 1px 6px ${alphaColor(colors.ink, 0.1)}`,
+                            },
+                          }}
+                        >
+                          {/* Check mark badge when selected */}
+                          {selected && (
+                            <Box sx={{
+                              position: 'absolute',
+                              top: -5,
+                              right: -5,
+                              width: 16,
+                              height: 16,
+                              borderRadius: '50%',
+                              bgcolor: wizardTheme.accentOk,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              boxShadow: `0 0 6px ${wizardTheme.accentOk}44`,
+                            }}>
+                              <CheckCircle size={10} color={wizardTheme.bg} />
+                            </Box>
+                          )}
+                          <Typography sx={{ fontSize: '0.7rem', fontFamily: WIZARD_MONO, fontWeight: 700, color: selected ? wizardTheme.accentOk : wizardTheme.text, mb: 0.5 }}>
+                            {preset.name}
+                          </Typography>
+                          <Typography sx={{ fontSize: '0.52rem', color: wizardTheme.textDim, lineHeight: 1.3, textTransform: 'capitalize' }}>
+                            {preset.communicationStyle} · {preset.decisionMaking}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+
+                  {/* Agent name */}
+                  <TextField label="Agent Name" value={personaName} onChange={e => setPersonaName(e.target.value)} fullWidth placeholder="e.g. JARVIS, FRIDAY"
+                    slotProps={wizardTextFieldSlotProps} sx={{ mb: 2 }} />
+
+                  {/* Description */}
+                  <TextField label="Description" value={personaDescription} onChange={e => setPersonaDescription(e.target.value)} fullWidth placeholder="A short description of your agent's character and purpose"
+                    multiline rows={2} slotProps={wizardTextFieldSlotProps} sx={{ mb: 2 }} />
+
+                  {/* Communication style — choosable chips */}
+                  <Typography sx={{ fontSize: '0.6rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 0.5, letterSpacing: '1px' }}>COMMUNICATION STYLE</Typography>
+                  <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2 }}>
+                    {COMM_STYLE_OPTIONS.map((opt) => {
+                      const selected = personaCommStyle === opt.value;
+                      return (
+                        <Box
+                          key={opt.value}
+                          onClick={() => setPersonaCommStyle(opt.value)}
+                          sx={{
+                            cursor: 'pointer',
+                            px: 1.5, py: 0.75,
+                            borderRadius: 1,
+                            border: `1px solid ${selected ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
+                            bgcolor: selected ? `${wizardTheme.accentOk}0a` : wizardTheme.panel,
+                            transition: 'all 0.18s ease',
+                            '&:hover': {
+                              borderColor: selected ? wizardTheme.accentOk : wizardTheme.panelBorderStrong,
+                              transform: 'translateY(-1px)',
+                            },
+                          }}
+                        >
+                          <Typography sx={{ fontSize: '0.65rem', fontFamily: WIZARD_MONO, color: selected ? wizardTheme.accentOk : wizardTheme.textSecondary, fontWeight: selected ? 600 : 400 }}>
+                            {opt.label}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+
+                  {/* Decision making — choosable chips */}
+                  <Typography sx={{ fontSize: '0.6rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 0.5, letterSpacing: '1px' }}>DECISION MAKING</Typography>
+                  <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2 }}>
+                    {DECISION_STYLE_OPTIONS.map((opt) => {
+                      const selected = personaDecisionStyle === opt.value;
+                      return (
+                        <Box
+                          key={opt.value}
+                          onClick={() => setPersonaDecisionStyle(opt.value)}
+                          sx={{
+                            cursor: 'pointer',
+                            px: 1.5, py: 0.75,
+                            borderRadius: 1,
+                            border: `1px solid ${selected ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
+                            bgcolor: selected ? `${wizardTheme.accentOk}0a` : wizardTheme.panel,
+                            transition: 'all 0.18s ease',
+                            '&:hover': {
+                              borderColor: selected ? wizardTheme.accentOk : wizardTheme.panelBorderStrong,
+                              transform: 'translateY(-1px)',
+                            },
+                          }}
+                        >
+                          <Typography sx={{ fontSize: '0.65rem', fontFamily: WIZARD_MONO, color: selected ? wizardTheme.accentOk : wizardTheme.textSecondary, fontWeight: selected ? 600 : 400 }}>
+                            {opt.label}
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+
+                  {/* Domain context */}
+                  <TextField label="Domain Context" value={personaDomain} onChange={e => setPersonaDomain(e.target.value)} fullWidth placeholder="e.g. software engineering, healthcare, business"
+                    slotProps={wizardTextFieldSlotProps} sx={{ mb: 2 }} />
+
+                  {/* Traits */}
+                  <Typography sx={{ fontSize: '0.6rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 0.5, letterSpacing: '1px' }}>TRAITS · CLICK TO REMOVE</Typography>
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1 }}>
+                    {personaTraits.map((trait) => {
+                      return (
+                        <Box
+                          key={trait}
+                          onClick={() => setPersonaTraits(prev => prev.filter(t => t !== trait))}
+                          sx={{
+                            cursor: 'pointer',
+                            px: 1, py: 0.5,
+                            borderRadius: 1,
+                            border: `1px solid ${wizardTheme.accentOk}`,
+                            bgcolor: `${wizardTheme.accentOk}0a`,
+                            transition: 'all 0.18s ease',
+                            '&:hover': {
+                              borderColor: wizardTheme.accentErr,
+                              bgcolor: `${wizardTheme.accentErr}0a`,
+                              '& .trait-label': { color: wizardTheme.accentErr },
+                            },
+                          }}
+                        >
+                          <Typography className="trait-label" sx={{ fontSize: '0.6rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk, transition: 'color 0.18s' }}>
+                            {trait} ✕
+                          </Typography>
+                        </Box>
+                      );
+                    })}
+                  </Box>
+                  {/* Custom trait input */}
+                  <TextField
+                    label="Add custom trait"
+                    value={traitInput}
+                    onChange={e => setTraitInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const t = traitInput.trim();
+                        if (t && !personaTraits.includes(t)) {
+                          setPersonaTraits(prev => [...prev, t]);
+                        }
+                        setTraitInput('');
+                      }
+                    }}
+                    fullWidth
+                    placeholder="Type a trait and press Enter…"
+                    slotProps={wizardTextFieldSlotProps}
+                    sx={{ mt: 1 }}
+                  />
+                </Box>
+              )}
+
+              {step === 9 && (
                 <WizardVoiceStep
                   onReadyChange={setVoiceCalibrated}
                   onBusyChange={setVoiceBusy}
                   callsign={callsign}
+                  agentName={personaName}
                 />
               )}
 
-              {step === 9 && (
+              {step === 10 && (
                 <WizardTelegramStep onLinkedChange={setTelegramLinked} />
               )}
 
-              {step === 10 && (
+              {step === 11 && (
                 <Box sx={{ textAlign: 'center', maxWidth: 520, mx: 'auto' }}>
                   <CheckCircle size={64} color={wizardTheme.accentOk} sx={{ mb: 2 }} />
                   <WizardStepHeader codename="MODULE · COMPLETE" title="Setup Complete" subtitle="Your Agent-X instance is ready." />
@@ -1083,6 +1374,7 @@ export function SetupWizard() {
                     <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Agent: {personaName || '(not set)'}</Typography>
                   </Box>
                 </Box>
               )}
@@ -1094,7 +1386,7 @@ export function SetupWizard() {
 
       {/* Bottom Nav */}
       <Box sx={{ flexShrink: 0, borderTop: `1px solid ${wizardTheme.panelBorder}`, px: 2, py: 2, display: 'flex', justifyContent: 'center' }}>
-        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 10 ? 'center' : 'space-between', alignItems: 'center' }}>
+        <Box sx={{ width: '100%', maxWidth: 820, display: 'flex', justifyContent: step === 0 && !showRelayConfig ? 'flex-end' : step === 11 ? 'center' : 'space-between', alignItems: 'center' }}>
           {step === 1 && <Button onClick={handleBackFromProvider} sx={wizardBackBtnSx}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 3 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
@@ -1102,8 +1394,9 @@ export function SetupWizard() {
           {step === 5 && <Button onClick={handleBenchmarkBack} sx={wizardBackBtnSx}>Back</Button>}
           {step === 6 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 7 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
-          {step === 8 && <Button onClick={back} disabled={voiceBusy} sx={wizardBackBtnSx}>Back</Button>}
-          {step === 9 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 8 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 9 && <Button onClick={back} disabled={voiceBusy} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 10 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 0 && !showRelayConfig && (
             <Button variant="contained" onClick={handleStorageNext} disabled={loading || provisioning} sx={{ ...wizardPrimaryBtnSx, px: 4 }}>
               {loading || provisioning
@@ -1152,7 +1445,8 @@ export function SetupWizard() {
             </Button>
           )}
           {step === 7 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={wizardPrimaryBtnSx}>Next</Button>}
-          {step === 8 && (
+          {step === 8 && <Button variant="contained" onClick={next} disabled={!personaName.trim()} sx={wizardPrimaryBtnSx}>Next</Button>}
+          {step === 9 && (
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: voiceCalibrated ? 'flex-end' : 'space-between', width: '100%' }}>
               {!voiceCalibrated && (
                 <Button onClick={next} disabled={voiceBusy} sx={wizardSkipBtnSx}>
@@ -1176,7 +1470,7 @@ export function SetupWizard() {
               </Button>
             </Box>
           )}
-          {step === 9 && (
+          {step === 10 && (
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', justifyContent: telegramLinked ? 'flex-end' : 'space-between', width: '100%' }}>
               {!telegramLinked && (
                 <Button onClick={next} sx={wizardSkipBtnSx}>
@@ -1188,7 +1482,7 @@ export function SetupWizard() {
               </Button>
             </Box>
           )}
-          {step === 10 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 11 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
         </Box>
       </Box>
 

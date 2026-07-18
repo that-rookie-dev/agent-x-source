@@ -250,10 +250,13 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     const toolList = registry.list().filter((t) => t.category !== 'ai_meta' && t.category !== 'agent_meta');
     const tools = registry.toSchemas(toolList);
     // xAI default VAD threshold is 0.85 (very aggressive — cuts off on brief pauses).
-    // Use 0.5 for sensitive speech detection + 2000ms silence to require a full
-    // 2-second pause before endpointing. This prevents mid-sentence cutoffs.
+    // Use 0.5 for sensitive speech detection + 1000ms silence for natural turn-taking.
+    // interrupt_response: true lets xAI automatically cancel the in-progress
+    // response when the user barges in (speech_started during agent response).
+    // create_response: true lets xAI automatically generate a response after the
+    // user finishes speaking (no manual response.create needed).
     const turnDetection = this.mode === 'duplex'
-      ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 2000 }
+      ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 1000, interrupt_response: true, create_response: true }
       : { type: null };
 
     const payload = {
@@ -296,6 +299,24 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       if (persona.traits?.length) parts.push(`Traits: ${persona.traits.join(', ')}`);
     }
     parts.push(buildAgentInstruction());
+    // Voice-specific: keep responses crisp and conversational.
+    parts.push(
+      'VOICE MODE RULES: Keep responses short and crisp — ideally 1-3 sentences. ' +
+      'Answer the question directly, then stop. Do not elaborate, summarize, or ' +
+      'repeat unless the user explicitly asks for more detail. ' +
+      'Ask crisp follow-up questions only when needed to move the conversation forward. ' +
+      'Never read back what the user just said. Never preface answers with "Sure", "Great", etc.',
+    );
+    // Clarifying questions: ask directly via voice, one at a time. Do NOT use
+    // questionnaire forms or multi-question payloads — the user is in a voice
+    // conversation and cannot interact with UI forms. Ask one question, wait for
+    // the answer, then ask the next if needed.
+    parts.push(
+      'CLARIFICATION RULES: When you need more information, ask the question directly ' +
+      'in your voice response — one question at a time. Wait for the user to answer ' +
+      'before asking the next question. Never present multiple questions at once. ' +
+      'Never use forms, questionnaires, or structured input — this is a voice conversation.',
+    );
     if (this.searchWeb) parts.push('Use web search when the answer may benefit from current information.');
     if (this.clientSituation) {
       const situationParts: string[] = [];
@@ -444,6 +465,11 @@ export class XaiRealtimeSession implements VoiceEngineSession {
 
   private handleXaiAudio(data: Buffer): void {
     if (this.closed) return;
+    // After barge-in, currentResponseId is cleared and state is 'listening'.
+    // Drop late-arriving audio frames from the cancelled response so they
+    // don't undo the interruption by setting state back to 'speaking'.
+    if (!this.currentResponseId) return;
+    if (this.state !== 'speaking' && this.state !== 'processing') return;
     this.setState('speaking');
     void this.transport.playAudio(data, OUTPUT_SAMPLE_RATE);
   }
@@ -590,6 +616,12 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     const delta = String(event.delta ?? '');
     if (!delta) return;
     this.assistantText += delta;
+    // Transition to 'speaking' on text deltas too — not just audio deltas.
+    // This prevents the turn from finishing prematurely when xAI sends a
+    // text-only response (no audio) or when audio arrives after text.
+    if (this.state !== 'speaking') {
+      this.setState('speaking');
+    }
     this.transport.sendControl({
       type: 'agent_status',
       sessionId: this.sessionId,

@@ -8,13 +8,33 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useLocation } from 'react-router-dom';
 import { voice, personaApi } from '../../api';
 import { getCoreSessionId } from '../../perf/api-cache';
 import { useWakeWord } from '../../hooks/useWakeWord';
 import { useVoiceWarmup, type VoiceWarmupPhase } from '../../hooks/useVoiceWarmup';
+import { useVoiceCommsSession, type VoiceCommsContextInput } from '../../hooks/useVoiceCommsSession';
 import { voiceDisabledReason } from '../../voice/support';
 import { resolveWakePhrase } from '../../voice/wake-phrase';
 import type { VoiceConfig, VoiceSidecarHealth } from '../../api';
+import { VoiceToolPermissionModal } from './VoiceToolPermissionModal';
+const VOICE_ACTIVE_STORAGE_KEY = 'agentx_voice_active_v1';
+
+function readVoiceActiveFromStorage(): boolean {
+  try {
+    return localStorage.getItem(VOICE_ACTIVE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeVoiceActiveToStorage(active: boolean): void {
+  try {
+    localStorage.setItem(VOICE_ACTIVE_STORAGE_KEY, active ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}
 
 interface VoiceContextValue {
   /** Switch the active chat session to inline voice mode (chat page only). */
@@ -41,9 +61,19 @@ interface VoiceContextValue {
   releaseVoiceEngine: () => void;
   releaseVoiceSidecar: () => void;
   retryVoiceWarmup: () => void;
+  /** Dashboard voice card active state (persisted across navigation). */
+  voiceActive: boolean;
+  setVoiceActive: (active: boolean) => void;
+}
+
+/** Separate context for the dashboard comms session — avoids circular type
+ *  dependency between VoiceContextValue and useVoiceCommsSession's return type. */
+interface VoiceCommsContextValue {
+  comms: ReturnType<typeof useVoiceCommsSession> | null;
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
+const VoiceCommsContext = createContext<VoiceCommsContextValue | null>(null);
 
 export interface VoiceChatBridge {
   onVoiceUserPending?: () => void;
@@ -64,11 +94,19 @@ export function useVoiceOptional(): VoiceContextValue | null {
   return useContext(VoiceContext);
 }
 
+/** Access the dashboard voice comms session (stays alive across navigation). */
+export function useVoiceCommsOptional(): VoiceCommsContextValue | null {
+  return useContext(VoiceCommsContext);
+}
+
 interface VoiceProviderProps {
   children: ReactNode;
 }
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
+  const location = useLocation();
+  // PTT (Space key) only works on the dashboard page. Duplex works everywhere.
+  const isDashboard = location.pathname === '/' || location.pathname === '/console' || location.pathname === '/console/dashboard';
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -76,12 +114,40 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const [wakePhrase, setWakePhrase] = useState(() => resolveWakePhrase());
   const [canRunWeb, setCanRunWeb] = useState(false);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
+  const [voiceActive, setVoiceActiveState] = useState(() => readVoiceActiveFromStorage());
   const inlineVoiceHandlerRef = useRef<((autoStart?: boolean) => void) | null>(null);
   const voiceChatBridgeRef = useRef<VoiceChatBridge | null>(null);
   const voiceConsumersRef = useRef(0);
   const releaseTimerRef = useRef<number | null>(null);
 
   const warmup = useVoiceWarmup(voiceEnabled, canRunWeb);
+
+  const voiceReady = voiceEnabled && canRunWeb && !voiceDisabledReason();
+
+  // Build the voice context input for useVoiceCommsSession (avoids circular dep
+  // on useVoiceOptional when called from within VoiceProvider).
+  const commsVoiceContext: VoiceCommsContextInput = useMemo(() => ({
+    voiceConfig,
+    warmupPhase: warmup.phase,
+    voiceReady,
+    warmupError: warmup.error,
+  }), [voiceConfig, warmup.phase, voiceReady, warmup.error]);
+
+  // Dashboard voice-only comms session — lives at VoiceProvider level so the
+  // WebSocket stays alive across page navigation. PTT keyboard is gated to the
+  // dashboard page only; duplex mode works on any page.
+  const dashboardComms = useVoiceCommsSession({
+    active: voiceActive && voiceReady,
+    voiceOnly: true,
+    requestMicOnActivate: true,
+    voiceContext: commsVoiceContext,
+    pttKeyboardEnabled: isDashboard,
+  });
+
+  const setVoiceActive = useCallback((active: boolean) => {
+    setVoiceActiveState(active);
+    writeVoiceActiveToStorage(active);
+  }, []);
 
   const retainVoiceEngine = useCallback(() => {
     voiceConsumersRef.current += 1;
@@ -107,6 +173,16 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       }
     }, 400);
   }, [warmup.releaseSidecar, warmup.engineWarmAtLaunch]);
+
+  // Retain/release the voice engine based on dashboard voiceActive state.
+  // This keeps the engine warm as long as the dashboard voice card is active,
+  // even when the user navigates to other pages.
+  useEffect(() => {
+    if (voiceActive && voiceReady) {
+      retainVoiceEngine();
+      return () => { releaseVoiceEngine(); };
+    }
+  }, [voiceActive, voiceReady, retainVoiceEngine, releaseVoiceEngine]);
 
   const applyVoiceConfigSnapshot = useCallback((cfg: VoiceConfig) => {
     setVoiceConfig(cfg);
@@ -202,7 +278,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     getVoiceChatBridge,
     inlineVoiceAvailable: Boolean(activeChatSessionId),
     coreSessionId,
-    voiceReady: voiceEnabled && canRunWeb && !voiceDisabledReason(),
+    voiceReady,
     voiceConfig,
     wakeWordEnabled,
     wakePhrase,
@@ -216,6 +292,8 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     releaseVoiceEngine,
     releaseVoiceSidecar: releaseVoiceEngine,
     retryVoiceWarmup: warmup.retry,
+    voiceActive,
+    setVoiceActive,
   }), [
     activateInlineVoice,
     registerChatSession,
@@ -224,8 +302,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     getVoiceChatBridge,
     activeChatSessionId,
     coreSessionId,
-    voiceEnabled,
-    canRunWeb,
+    voiceReady,
     voiceConfig,
     wakeWordEnabled,
     wakePhrase,
@@ -238,11 +315,26 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     retainVoiceEngine,
     releaseVoiceEngine,
     warmup.retry,
+    voiceActive,
+    setVoiceActive,
   ]);
+
+  const commsContextValue = useMemo<VoiceCommsContextValue>(() => ({
+    comms: dashboardComms,
+  }), [dashboardComms]);
 
   return (
     <VoiceContext.Provider value={value}>
-      {children}
+      <VoiceCommsContext.Provider value={commsContextValue}>
+        {children}
+        {/* Global voice permission modal — rendered at the app root so it's
+            available on any page, not just the dashboard or chat. */}
+        <VoiceToolPermissionModal
+          open={Boolean(dashboardComms.session.permissionPrompt)}
+          prompt={dashboardComms.session.permissionPrompt}
+          onRespond={dashboardComms.session.respondToPermission}
+        />
+      </VoiceCommsContext.Provider>
     </VoiceContext.Provider>
   );
 }

@@ -9,8 +9,7 @@ import MicOffIcon from '@mui/icons-material/MicOff';
 import PublicIcon from '@mui/icons-material/Public';
 import ShieldIcon from '@mui/icons-material/Shield';
 import { colors, alphaColor, MONO } from '../../theme';
-import { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
-import { useVoiceOptional } from './VoiceProvider';
+import { useVoiceOptional, useVoiceCommsOptional } from './VoiceProvider';
 import { voiceDisabledReason } from '../../voice/support';
 import { VoiceWaveform } from './VoiceWaveform';
 import { CommsSpinner } from './CommsSpinner';
@@ -23,7 +22,11 @@ import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
  * Voice Agent card for the Bento dashboard — futuristic centerpiece.
  *
  * Uses a segregated voice-only session (__channel__:voice) with a lean prompt
- * profile. Features:
+ * profile. The comms session lives in VoiceProvider so it stays alive across
+ * page navigation. This component is a pure presentation layer that reads
+ * voiceActive and comms state from context.
+ *
+ * Features:
  *  - Particle physics canvas background (80+ particles, phase-reactive)
  *  - Circular mic button with phase-reactive glow
  *  - Toggle chips (web search, bypass) in card header — icon-only, circular
@@ -45,48 +48,36 @@ export function VoiceAgentCard({
   bypassChip: boolean;
 }) {
   const voiceCtx = useVoiceOptional();
+  const commsCtx = useVoiceCommsOptional();
   const envBlocked = voiceDisabledReason();
-  const [voiceActive, setVoiceActive] = useState(false);
+  const voiceActive = voiceCtx?.voiceActive ?? false;
+  const setVoiceActive = voiceCtx?.setVoiceActive;
+  const comms = commsCtx?.comms;
 
   const sessionReady = Boolean(voiceCtx?.voiceReady) && !envBlocked;
 
-  // Wire voice comms to a segregated voice-only session
-  const comms = useVoiceCommsSession({
-    active: voiceActive && sessionReady,
-    voiceOnly: true,
-    requestMicOnActivate: true,
-  });
-
-  // Retain/release the voice engine
-  useEffect(() => {
-    if (voiceActive && sessionReady) {
-      voiceCtx?.retainVoiceEngine();
-      return () => { voiceCtx?.releaseVoiceEngine(); };
-    }
-  }, [voiceActive, sessionReady, voiceCtx?.retainVoiceEngine, voiceCtx?.releaseVoiceEngine]);
-
   // Push toggle state to backend
   useEffect(() => {
-    if (voiceActive && sessionReady) {
+    if (voiceActive && sessionReady && comms) {
       comms.session.setToggles({ searchWeb, bypassChip });
     }
-  }, [voiceActive, sessionReady, searchWeb, bypassChip, comms.session]);
+  }, [voiceActive, sessionReady, searchWeb, bypassChip, comms]);
 
   // Derive button phase
   const phase: ButtonPhase = useMemo(() => {
-    if (!voiceActive || !sessionReady) return 'disabled';
+    if (!voiceActive || !sessionReady || !comms) return 'disabled';
     if (comms.commsPhase === 'operator_record') return 'recording';
     if (comms.commsPhase === 'agent_tx') return 'speaking';
     if (comms.commsPhase === 'operator_stt' || comms.commsPhase === 'relay_process' || comms.commsPhase === 'agent_prep') return 'thinking';
     if (comms.commsPhase === 'boot' || comms.commsPhase === 'link') return 'thinking';
     return 'idle';
-  }, [voiceActive, sessionReady, comms.commsPhase]);
+  }, [voiceActive, sessionReady, comms]);
 
   const particlePhase: ParticlePhase = phase;
 
   const handleClick = () => {
-    if (!sessionReady) return;
-    setVoiceActive((prev) => !prev);
+    if (!sessionReady || !setVoiceActive) return;
+    setVoiceActive(!voiceActive);
   };
 
   // Notify parent of active state changes (for connection pulses)
@@ -100,19 +91,19 @@ export function VoiceAgentCard({
   }, [particlePhase, onPhaseChange]);
 
   const waveLevel = phase === 'recording'
-    ? comms.session.audioLevel
+    ? (comms?.session.audioLevel ?? 0)
     : phase === 'speaking'
-      ? comms.session.playbackLevel
+      ? (comms?.session.playbackLevel ?? 0)
       : 0;
 
   const statusText = (() => {
     if (!voiceActive) return 'Click to activate';
     if (!sessionReady) return 'Voice kit required';
     if (phase === 'disabled') return 'Click to activate';
-    if (phase === 'recording') return comms.isDuplex ? 'Listening…' : 'Listening… release Space';
-    if (phase === 'thinking') return comms.statusLabel || 'Thinking…';
+    if (phase === 'recording') return comms?.isDuplex ? 'Listening…' : 'Listening… release Space';
+    if (phase === 'thinking') return comms?.statusLabel || 'Thinking…';
     if (phase === 'speaking') return 'Agent speaking';
-    return comms.isDuplex ? 'Listening…' : 'Hold Space to speak';
+    return comms?.isDuplex ? 'Listening…' : 'Hold Space to speak';
   })();
 
   return (

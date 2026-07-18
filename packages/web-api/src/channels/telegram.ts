@@ -380,10 +380,12 @@ export async function sendTelegramGreeting(overrides?: {
   syncChannelSuperSessionContext(eng, 'telegram');
 
   const nonce = randomUUID().slice(0, 8);
+  const persona = eng.storageAdapter.getPersona?.();
+  const agentName = persona?.name ?? 'Agent-X';
   let greeting: string;
   try {
     greeting = await agent.generateOutboundText(
-      `Write a fresh, friendly Telegram greeting welcoming the user to Agent-X. Unique request ${nonce} — use different wording every time (avoid stock phrases like "Hello there" every time). Mention you are connected on Telegram and ready to help. Keep it to 1–3 sentences.`,
+      `Write a fresh, friendly Telegram greeting welcoming the user. You are ${agentName}. Unique request ${nonce} — use different wording every time (avoid stock phrases like "Hello there" every time). Mention you are connected on Telegram and ready to help. Keep it to 1–3 sentences.`,
     );
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Failed to generate greeting' };

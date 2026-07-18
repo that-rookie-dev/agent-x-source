@@ -14,7 +14,6 @@ import { VoiceControl } from './VoiceControl';
 import { VoiceDeniedBanner } from './VoiceDeniedBanner';
 import { VoiceOnboardingCard, dismissVoiceOnboarding, isVoiceOnboardingDismissed } from './VoiceOnboardingCard';
 import { VoicePermissionDialog } from './VoicePermissionDialog';
-import { VoiceToolPermissionModal } from './voice/VoiceToolPermissionModal';
 import { VoicePlaybackControls } from './VoicePlaybackControls';
 import { VoiceSessionBar } from './VoiceSessionBar';
 
@@ -295,11 +294,6 @@ export const VoiceComposerSection = React.forwardRef<ChatInputBarHandle, VoiceCo
         onRequest={() => { void handlePrepromptContinue(); }}
         onClose={() => setPrepromptOpen(false)}
         onOpenSettings={() => { void mic.openSettings(); }}
-      />
-      <VoiceToolPermissionModal
-        open={Boolean(session.permissionPrompt)}
-        prompt={session.permissionPrompt}
-        onRespond={session.respondToPermission}
       />
     </>
   );

@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
 import { colors } from '../theme';
 import { health } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
 import { useCapabilitiesReady } from '../hooks/useSystemCapabilities';
-import { useVoiceOptional } from './voice/VoiceProvider';
+import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
 import { useApp } from '../store/AppContext';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
@@ -28,8 +28,31 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const capabilitiesReady = useCapabilitiesReady();
   const { config: appConfig } = useApp();
   const voice = useVoiceOptional();
+  const commsCtx = useVoiceCommsOptional();
+  const comms = commsCtx?.comms;
   const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+
+  // Derive voice status text from the dashboard comms session so the user can
+  // see the exact voice state (listening/thinking/speaking) from any page.
+  const voiceStatusText = useMemo(() => {
+    if (!voice?.voiceActive || !comms) return null;
+    const phase = comms.commsPhase;
+    if (phase === 'operator_record') return 'listening';
+    if (phase === 'agent_tx') return 'speaking';
+    if (phase === 'operator_stt' || phase === 'relay_process' || phase === 'agent_prep') return 'thinking';
+    if (phase === 'boot' || phase === 'link') return 'connecting';
+    return comms.isDuplex ? 'listening' : 'idle';
+  }, [voice?.voiceActive, comms?.commsPhase, comms?.isDuplex]);
+
+  const voiceStatusColor = (() => {
+    if (!voiceStatusText) return colors.text.dim;
+    if (voiceStatusText === 'listening') return colors.accent.green;
+    if (voiceStatusText === 'speaking') return colors.accent.purple;
+    if (voiceStatusText === 'thinking') return colors.accent.orange;
+    if (voiceStatusText === 'connecting') return colors.accent.orange;
+    return colors.text.secondary;
+  })();
 
   // Neural brain is shown when it's enabled in config (regardless of hardware
   // support — the user may have opted in on a low-RAM system).
@@ -190,6 +213,18 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                 }}
               />
               <MicIcon sx={{ fontSize: 13 }} />
+              {voiceStatusText && (
+                <Box
+                  component="span"
+                  sx={{
+                    color: voiceStatusColor,
+                    transition: 'color 0.2s',
+                    minWidth: 52,
+                  }}
+                >
+                  {voiceStatusText}
+                </Box>
+              )}
             </Box>
             <span style={{ color: colors.border.default }}>/</span>
           </>

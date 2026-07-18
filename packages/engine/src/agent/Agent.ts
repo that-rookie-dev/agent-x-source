@@ -617,7 +617,7 @@ export class Agent {
       };
     }
     if (this.options.promptProfile !== 'crew_worker') {
-      return { kind: 'agent', name: 'Agent-X' };
+      return { kind: 'agent', name: this.persona?.name ?? 'Agent-X' };
     }
     return undefined;
   }
@@ -855,20 +855,20 @@ export class Agent {
       if (isGeneralKnowledgeQuery(taskDescription)) {
         return {
           success: false,
-          output: 'Crew delegation blocked: this is a general information question. Answer directly as Agent-X (use web search if needed).',
+          output: `Crew delegation blocked: this is a general information question. Answer directly as ${this.persona?.name ?? 'Agent-X'} (use web search if needed).`,
         };
       }
       if (!crewDelegationMatchesTask(taskDescription, [member])) {
         return {
           success: false,
-          output: `Crew delegation blocked: @${member.crew.callsign} does not have expertise for this task. Answer directly as Agent-X.`,
+          output: `Crew delegation blocked: @${member.crew.callsign} does not have expertise for this task. Answer directly as ${this.persona?.name ?? 'Agent-X'}.`,
         };
       }
       const guard = await this.guardCrewDelegation(taskDescription, [member]);
       if (!guard.allowed) {
         return {
           success: false,
-          output: `Crew delegation blocked: ${guard.reason} Handle this yourself as Agent-X.`,
+          output: `Crew delegation blocked: ${guard.reason} Handle this yourself as ${this.persona?.name ?? 'Agent-X'}.`,
         };
       }
       const result = await this.runCrewMissionAndPublish([member], taskDescription, { emitLoading: true });
@@ -1679,8 +1679,9 @@ export class Agent {
   ): Promise<string> {
     const model = createAiSdkModel(this.config, this.getApiKey());
     const callsign = this.config.user?.callsign;
+    const agentName = this.persona?.name ?? 'Agent-X';
     const defaultSystem = [
-      'You are Agent-X composing a short outbound Telegram message.',
+      `You are ${agentName} composing a short outbound Telegram message.`,
       callsign ? `The user's name/callsign is "${callsign}".` : '',
       'Reply with ONLY the message body — warm, concise, no markdown headers, no tool names, no meta commentary.',
     ].filter(Boolean).join(' ');
@@ -2061,7 +2062,7 @@ export class Agent {
       this.emit({
         type: 'error',
         code: 'crew_deploy_failed',
-        message: 'Selected crew specialists could not be attached to this session. Continuing with Agent-X.',
+        message: `Selected crew specialists could not be attached to this session. Continuing with ${this.persona?.name ?? 'Agent-X'}.`,
         recoverable: true,
       });
     }
@@ -2912,6 +2913,7 @@ export class Agent {
       {
         promptAssembly: this.promptAssembly,
         options: this.options,
+        personaName: this.persona?.name,
         usesCompactContext: () => this.usesCompactContext(),
         createSectionContext: () => this.createSectionContext(),
       },

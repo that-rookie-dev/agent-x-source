@@ -295,7 +295,7 @@ function appendContextFile(
     const store = eng.sessionManager.getStorageAdapter();
     if (store?.insertMessage) {
       // Augment with the active provider/model if the caller didn't supply them.
-      let metadata: Record<string, unknown> = { ...(extra?.metadata as Record<string, unknown> | undefined) };
+      const metadata: Record<string, unknown> = { ...(extra?.metadata as Record<string, unknown> | undefined) };
       if (!metadata['provider'] || !metadata['model']) {
         try {
           const cfg = eng.configManager.load();

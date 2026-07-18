@@ -12,6 +12,17 @@ import {
 } from '../voice/voice-ptt-orchestration';
 import { pipelineStatusLabel } from '../voice/voice-turn-pipeline';
 import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
+import type { VoiceConfig } from '../api';
+import type { VoiceWarmupPhase } from './useVoiceWarmup';
+
+/** Subset of voice context that useVoiceCommsSession needs to function.
+ *  Defined here (not in VoiceProvider) to avoid circular type dependencies. */
+export interface VoiceCommsContextInput {
+  voiceConfig: VoiceConfig | null;
+  warmupPhase: VoiceWarmupPhase;
+  voiceReady: boolean;
+  warmupError: string | null;
+}
 
 export interface UseVoiceCommsSessionOptions {
   active: boolean;
@@ -25,6 +36,11 @@ export interface UseVoiceCommsSessionOptions {
   requestMicOnActivate?: boolean;
   /** Use a segregated voice-only session (__channel__:voice) instead of a chat session. */
   voiceOnly?: boolean;
+  /** Direct voice context injection (used when called from VoiceProvider itself). */
+  voiceContext?: VoiceCommsContextInput | null;
+  /** When false, PTT keyboard (Space) is disabled even if mode is push-to-talk.
+   *  Used to restrict PTT to the dashboard page only. */
+  pttKeyboardEnabled?: boolean;
 }
 
 export function useVoiceCommsSession({
@@ -37,15 +53,20 @@ export function useVoiceCommsSession({
   onVoiceTiming,
   requestMicOnActivate = false,
   voiceOnly = false,
+  voiceContext,
+  pttKeyboardEnabled = true,
 }: UseVoiceCommsSessionOptions) {
   const mic = useMicrophonePermission();
-  const voiceCtx = useVoiceOptional();
+  const fallbackCtx = useVoiceOptional();
+  const voiceCtx = voiceContext !== undefined ? voiceContext : fallbackCtx;
   const envBlocked = voiceDisabledReason();
 
-  // Mode is driven by the active voice engine: xAI is always duplex (server-side VAD),
-  // local is always push-to-talk. The input-mode preference is ignored.
+  // Mode is driven by the voice config: xAI defaults to duplex, local engine
+  // can be either push-to-talk or duplex depending on user preference.
   const engine = voiceCtx?.voiceConfig?.engine ?? 'stt_llm_tts';
-  const isDuplex = engine === 'realtime_xai';
+  const configMode = voiceCtx?.voiceConfig?.mode?.web ?? 'off';
+  // xAI is always duplex (server-side VAD). Local engine respects the config.
+  const isDuplex = engine === 'realtime_xai' || configMode === 'duplex';
   const effectiveInputMode: VoiceInputMode = isDuplex ? 'duplex' : 'push-to-talk';
 
   const bootPhase = voiceCtx?.warmupPhase ?? 'idle';
@@ -120,10 +141,10 @@ export function useVoiceCommsSession({
 
   useVoiceKeyboard({
     enabled: active,
-    globalSpace: active,
+    globalSpace: active && (isDuplex || pttKeyboardEnabled),
     composerFocused: false,
     composerEmpty: true,
-    pushToTalk: !isDuplex && pttEnabled,
+    pushToTalk: !isDuplex && pttEnabled && pttKeyboardEnabled,
     pushToTalkBlocked,
     onBeginPushToTalk: handleBeginPushToTalk,
     onEndPushToTalk: () => { void endVoice(); },
