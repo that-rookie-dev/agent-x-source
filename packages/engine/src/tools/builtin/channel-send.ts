@@ -4,6 +4,10 @@ import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { isAgentInternalPath } from '@agentx/shared';
 import { getChannelServiceInstance } from '../../services/ServiceContext.js';
 import type { ChannelId, OutboundMessage } from '../../services/channel/IChannelService.js';
+import { createTransport } from 'nodemailer';
+import { TelegramBridge } from '../../telegram/TelegramBridge.js';
+import { resolveTelegramNotifyCredentials, resolveEmailSmtpConfig } from './notify-config.js';
+import { notifyTelegram, notifySlack, notifyDiscord } from './notifications.js';
 
 const SUPPORTED_CHANNELS: ChannelId[] = ['telegram', 'discord', 'slack', 'email'];
 
@@ -79,6 +83,22 @@ interface ResolvedChannel {
   error?: string;
 }
 
+function getConfiguredDefaultRecipient(config: ToolExecutionContext['config'], channel: ChannelId): string | undefined {
+  const channels = config?.channels as Record<string, { chatId?: string; channelId?: string; toAddress?: string; allowedUserIds?: string }> | undefined;
+  const cfg = channels?.[channel];
+  if (!cfg) return undefined;
+  if (channel === 'telegram') {
+    return cfg.chatId?.trim() || cfg.allowedUserIds?.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean)[0];
+  }
+  if (channel === 'discord') {
+    return cfg.channelId;
+  }
+  if (channel === 'email') {
+    return cfg.toAddress;
+  }
+  return undefined;
+}
+
 function resolveChannel(
   context: ToolExecutionContext,
   expectedChannel: ChannelId,
@@ -91,15 +111,76 @@ function resolveChannel(
   // Cross-channel routing: if the user explicitly asks to send to a DIFFERENT channel
   // than the one they're on (e.g. "send to Telegram" while on Slack), allow it as long
   // as a recipient/thread is provided. Only block if no recipient and channel mismatch.
-  if (activeChannel && activeChannel !== expectedChannel && !explicitRecipient) {
-    // Same-channel default: use the active thread
-    if (activeChannel && SUPPORTED_CHANNELS.includes(activeChannel)) {
-      // User is on a different channel — they need to specify a recipient for the target channel
-      return { channel: expectedChannel, error: `To send to ${expectedChannel} from ${activeChannel}, provide a recipient (chat_id, channel, or email address).` };
-    }
-  }
-  const threadId = explicitRecipient ?? (activeChannel === expectedChannel ? context.sourceThreadId : undefined);
+  const activeThreadId = activeChannel === expectedChannel ? context.sourceThreadId : undefined;
+  const threadId = explicitRecipient ?? activeThreadId ?? getConfiguredDefaultRecipient(context.config, expectedChannel);
   return { channel: expectedChannel, threadId };
+}
+
+async function sendDirect(
+  channel: ChannelId,
+  text: string,
+  attachment: { name: string; content: Buffer; contentType: string } | undefined,
+  caption: string | undefined,
+  subject: string | undefined,
+  recipient: string | undefined,
+  context: ToolExecutionContext,
+): Promise<ToolResult> {
+  const messageText = text || caption || '';
+
+  if (channel === 'telegram') {
+    if (attachment) {
+      const { botToken, chatId } = resolveTelegramNotifyCredentials(context.config);
+      if (!botToken || !chatId) {
+        return { success: false, output: 'Telegram is not configured for outbound messages.', error: 'CONFIG_MISSING' };
+      }
+      const bridge = new TelegramBridge({ botToken });
+      const result = await bridge.sendDocumentToChat(Number(chatId), { name: attachment.name, content: attachment.content }, caption);
+      return result.ok
+        ? { success: true, output: 'Telegram file sent' }
+        : { success: false, output: result.description ?? 'Failed to send Telegram file', error: 'SEND_ERROR' };
+    }
+    return notifyTelegram({ message: messageText }, context);
+  }
+
+  if (channel === 'slack') {
+    if (attachment) {
+      return { success: false, output: 'Slack file upload requires the Slack channel bridge; it cannot be sent through webhook fallback.', error: 'SEND_ERROR' };
+    }
+    return notifySlack({ message: messageText }, context);
+  }
+
+  if (channel === 'discord') {
+    if (attachment) {
+      return { success: false, output: 'Discord file upload requires the Discord channel bridge; it cannot be sent through webhook fallback.', error: 'SEND_ERROR' };
+    }
+    return notifyDiscord({ message: messageText }, context);
+  }
+
+  if (channel === 'email') {
+    const cfg = resolveEmailSmtpConfig(context.config);
+    const to = recipient ?? cfg.toAddress;
+    if (!cfg.smtpHost || !cfg.smtpUser || !cfg.smtpPassword || !to) {
+      return { success: false, output: 'Email/SMTP is not configured.', error: 'CONFIG_MISSING' };
+    }
+    const transporter = createTransport({
+      host: cfg.smtpHost,
+      port: cfg.smtpPort ?? 587,
+      secure: (cfg.smtpPort ?? 587) === 465,
+      auth: { user: cfg.smtpUser, pass: cfg.smtpPassword },
+    });
+    await transporter.sendMail({
+      from: cfg.fromAddress ?? cfg.smtpUser,
+      to,
+      subject: subject || (attachment ? 'Agent-X attachment' : 'Agent-X message'),
+      text: messageText,
+      attachments: attachment
+        ? [{ filename: attachment.name, content: attachment.content, contentType: attachment.contentType }]
+        : undefined,
+    });
+    return { success: true, output: 'Email sent' };
+  }
+
+  return { success: false, output: `Unsupported channel: ${channel}`, error: 'INVALID_CHANNEL' };
 }
 
 async function sendToChannel(
@@ -111,11 +192,6 @@ async function sendToChannel(
   recipient?: string,
   subject?: string,
 ): Promise<ToolResult> {
-  const channelService = getChannelServiceInstance();
-  if (!channelService) {
-    return { success: false, output: 'Channel service is not initialized.', error: 'CHANNEL_SERVICE_UNAVAILABLE' };
-  }
-
   const resolved = resolveChannel(context, channel, recipient);
   if (resolved.error) {
     return { success: false, output: resolved.error, error: 'INVALID_CHANNEL' };
@@ -148,11 +224,19 @@ async function sendToChannel(
     message.replyTo = context.sourceMessageId;
   }
 
+  const channelService = getChannelServiceInstance();
+  if (!channelService) {
+    return sendDirect(channel, messageText, attachment, caption, subject, recipient, context);
+  }
+
   try {
     await channelService.send(channel, message);
     return { success: true, output: `Message sent via ${channel}.` };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('not registered') || msg.includes('is not registered')) {
+      return sendDirect(channel, messageText, attachment, caption, subject, recipient, context);
+    }
     return { success: false, output: `Failed to send ${channel} message: ${msg}`, error: 'SEND_ERROR' };
   }
 }

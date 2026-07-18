@@ -1,9 +1,12 @@
 import { execSync } from 'node:child_process';
+import { createTransport } from 'nodemailer';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { IS_WINDOWS, IS_MACOS, IS_LINUX } from '../platform.js';
 import {
   resolveSlackWebhookUrl,
+  resolveDiscordWebhookUrl,
   resolveTelegramNotifyCredentials,
+  resolveEmailSmtpConfig,
 } from './notify-config.js';
 
 export async function notifyDesktop(args: Record<string, unknown>): Promise<ToolResult> {
@@ -105,32 +108,72 @@ export async function notifySlack(args: Record<string, unknown>, context: ToolEx
   }
 }
 
-export async function notifyEmail(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function notifyEmail(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const message = args['message'] as string;
+  const subject = (args['subject'] as string) ?? '';
+  const to = (args['to'] as string | undefined) ?? undefined;
 
   if (!message) {
     return { success: false, output: 'message is required', error: 'MISSING_INPUT' };
   }
 
-  return {
-    success: false,
-    output: 'Email notifications are delivered via Settings → Channels when automations complete. Configure SMTP there.',
-    error: 'CONFIG_VIA_SETTINGS',
-  };
+  const cfg = resolveEmailSmtpConfig(context.config);
+  const recipient = to ?? cfg.toAddress;
+
+  if (!cfg.smtpHost || !cfg.smtpUser || !cfg.smtpPassword || !recipient) {
+    return {
+      success: false,
+      output: 'Email/SMTP is not configured. Set it up in Settings → Channels.',
+      error: 'CONFIG_MISSING',
+    };
+  }
+
+  try {
+    const transporter = createTransport({
+      host: cfg.smtpHost,
+      port: cfg.smtpPort ?? 587,
+      secure: (cfg.smtpPort ?? 587) === 465,
+      auth: { user: cfg.smtpUser, pass: cfg.smtpPassword },
+    });
+    await transporter.sendMail({
+      from: cfg.fromAddress ?? cfg.smtpUser,
+      to: recipient,
+      subject,
+      text: message,
+    });
+    return { success: true, output: 'Email notification sent' };
+  } catch (error) {
+    return { success: false, output: `Email send failed: ${(error as Error).message}`, error: 'SEND_ERROR' };
+  }
 }
 
-export async function notifyDiscord(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function notifyDiscord(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const message = args['message'] as string;
 
   if (!message) {
     return { success: false, output: 'message is required', error: 'MISSING_INPUT' };
   }
 
-  return {
-    success: false,
-    output: 'Discord notifications are delivered via Settings → Channels webhook when automations complete.',
-    error: 'CONFIG_VIA_SETTINGS',
-  };
+  const webhookUrl = resolveDiscordWebhookUrl(context.config);
+  if (!webhookUrl) {
+    return { success: false, output: 'Discord webhook not configured (Settings → Channels)', error: 'CONFIG_MISSING' };
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) {
+      return { success: false, output: `Discord webhook error: ${response.status}`, error: 'API_ERROR' };
+    }
+    return { success: true, output: 'Discord notification sent' };
+  } catch (error) {
+    return { success: false, output: `Discord send failed: ${(error as Error).message}`, error: 'SEND_ERROR' };
+  }
 }
 
 export async function clipboardRead(): Promise<ToolResult> {
