@@ -1,4 +1,4 @@
-import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind } from '@agentx/shared';
+import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind, AgentXConfig } from '@agentx/shared';
 import { formatPermissionInstructedToolOutput, type PermissionHandlerResult } from '@agentx/shared';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
@@ -73,6 +73,7 @@ export class ToolExecutor implements ToolPermissionHost {
   private userConfigRules: PermissionRule[] = [];
   private voiceTurnActive = false;
   private sessionContextKind?: SessionContextKind;
+  private runtimeConfig: AgentXConfig | null = null;
   private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
   private turnAborted = false;
   private permissionPromptHook?: PermissionPromptHook;
@@ -135,6 +136,10 @@ export class ToolExecutor implements ToolPermissionHost {
 
   setPolicyEngine(engine: PolicyEngine): void {
     this.policyEngine = engine;
+  }
+
+  setConfig(config: AgentXConfig | null): void {
+    this.runtimeConfig = config;
   }
 
   setBeforeToolHook(hook: (toolId: string, args: Record<string, unknown>, path?: string) => void): void {
@@ -431,6 +436,7 @@ export class ToolExecutor implements ToolPermissionHost {
       contextKind: this.sessionContextKind,
       timeout: this.voiceTurnActive ? 22_000 : 30_000,
       voiceTurn: this.voiceTurnActive,
+      config: this.runtimeConfig ?? undefined,
       ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
       ...(this.inboundSourceThreadId ? { sourceThreadId: this.inboundSourceThreadId } : {}),
       ...(this.inboundSourceMessageId ? { sourceMessageId: this.inboundSourceMessageId } : {}),

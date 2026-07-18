@@ -1,9 +1,21 @@
-import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import type { ToolResult, ToolExecutionContext, AutomationNotifyChannel } from '@agentx/shared';
 import { isChannelSessionId, resolveFleetToolSessionScope, parseChannelBindingFromSessionId } from '@agentx/shared';
 import { getAutomationBridge } from '../../automation/automation-bridge.js';
-import { inferAutomationSourceChannel } from '../../automation/automation-notify.js';
+import { inferAutomationSourceChannel, getNotificationChannelStatus } from '../../automation/automation-notify.js';
 import { getAgentXOverviewBridge } from '../../agent/agent-x-overview-bridge.js';
 import { inferAutomationTools, toolsNeedingConsent, NOTIFY_TOOL_IDS } from '../../automation/infer-automation-tools.js';
+
+const AUTOMATION_NOTIFY_CHANNELS: AutomationNotifyChannel[] = ['in_app', 'desktop', 'telegram', 'slack', 'email', 'discord'];
+
+function resolveNotifyChannelsFromConfig(config?: import('@agentx/shared').AgentXConfig | null): AutomationNotifyChannel[] {
+  const status = getNotificationChannelStatus(config ?? undefined, {});
+  const out: AutomationNotifyChannel[] = ['in_app'];
+  if (status.telegram.configured && status.telegram.enabled) out.push('telegram');
+  if (status.slack.configured && status.slack.enabled) out.push('slack');
+  if (status.email.configured && status.email.enabled) out.push('email');
+  if (status.discord.configured && status.discord.enabled) out.push('discord');
+  return out;
+}
 
 export async function automationRegister(
   args: Record<string, unknown>,
@@ -46,7 +58,22 @@ export async function automationRegister(
     return { success: false, output: 'cron expression is required for recurring tasks', error: 'INVALID_ARGS' };
   }
 
-  const notifyChannels = await bridge.promptNotifyChannels(context.sessionId);
+  const explicitNotifyRaw = args['notify_channels'];
+  const explicitNotify = Array.isArray(explicitNotifyRaw)
+    ? explicitNotifyRaw.filter((c): c is AutomationNotifyChannel =>
+        typeof c === 'string' && AUTOMATION_NOTIFY_CHANNELS.includes(c as AutomationNotifyChannel)
+      )
+    : undefined;
+
+  let notifyChannels: AutomationNotifyChannel[];
+  if (explicitNotify && explicitNotify.length > 0) {
+    notifyChannels = explicitNotify;
+  } else if (context.voiceTurn) {
+    // Voice sessions should not show a questionnaire. Use configured channels automatically.
+    notifyChannels = resolveNotifyChannelsFromConfig(context.config);
+  } else {
+    notifyChannels = await bridge.promptNotifyChannels(context.sessionId);
+  }
   await bridge.grantNotifyChannelTools(context.sessionId, notifyChannels);
 
   const inferred = inferAutomationTools(instruction, notifyChannels, explicitTools);

@@ -1047,6 +1047,7 @@ export class Agent {
         this.toolExecutor.registerHandler(name, handler);
       }
     }
+    this.toolExecutor?.setConfig(this.config);
     setToolRegistryInstance(this.toolRegistry ?? null);
 
     this.sessionRunner = new SessionRunner({

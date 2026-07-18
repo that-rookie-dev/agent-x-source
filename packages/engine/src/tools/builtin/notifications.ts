@@ -33,14 +33,14 @@ export async function notifyDesktop(args: Record<string, unknown>): Promise<Tool
   }
 }
 
-export async function notifyTelegram(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function notifyTelegram(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const message = args['message'] as string;
 
   if (!message) {
     return { success: false, output: 'message is required', error: 'MISSING_INPUT' };
   }
 
-  const { botToken, chatId } = resolveTelegramNotifyCredentials();
+  const { botToken, chatId } = resolveTelegramNotifyCredentials(context.config);
 
   if (!botToken || !chatId) {
     return {
@@ -75,14 +75,14 @@ export async function notifyTelegram(args: Record<string, unknown>, _context: To
   }
 }
 
-export async function notifySlack(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+export async function notifySlack(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const message = args['message'] as string;
 
   if (!message) {
     return { success: false, output: 'message is required', error: 'MISSING_INPUT' };
   }
 
-  const webhookUrl = resolveSlackWebhookUrl();
+  const webhookUrl = resolveSlackWebhookUrl(context.config);
 
   if (!webhookUrl) {
     return { success: false, output: 'Slack webhook not configured (Settings → Channels)', error: 'CONFIG_MISSING' };

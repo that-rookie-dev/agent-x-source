@@ -330,18 +330,6 @@ function TelegramFields({
           required
           gridColumn="1 / -1"
         />
-        <CredentialField
-          label="Chat ID"
-          value={chatId}
-          onChange={(v) => onChange(setField(value, 'telegram', 'chatId', v))}
-          placeholder="Auto-filled on verify"
-        />
-        <CredentialField
-          label="Allowed User IDs"
-          value={getField(value, 'telegram', 'allowedUserIds')}
-          onChange={(v) => onChange(setField(value, 'telegram', 'allowedUserIds', v))}
-          placeholder="Comma-separated"
-        />
       </Box>
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>

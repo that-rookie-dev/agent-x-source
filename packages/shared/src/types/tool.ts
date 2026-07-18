@@ -1,4 +1,5 @@
 import type { ParallelMode } from './communication.js';
+import type { AgentXConfig } from './config.js';
 
 export interface ToolDefinition {
   id: string;
@@ -86,6 +87,8 @@ export interface ToolExecutionContext {
   sourceThreadId?: string;
   /** Originating channel message id (e.g. Slack thread_ts, email Message-Id) used for threaded replies. */
   sourceMessageId?: string;
+  /** Decrypted runtime Agent-X configuration (channels, provider, etc.). */
+  config?: AgentXConfig;
   onOutput?: (output: string) => void;
   /** Abort signal that should be checked by long-running tool handlers. */
   signal?: AbortSignal;
