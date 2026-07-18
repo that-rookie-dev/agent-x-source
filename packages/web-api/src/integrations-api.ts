@@ -285,6 +285,32 @@ router.get('/integrations/:connectionId/health', (req: Request, res: Response) =
   res.json({ health });
 });
 
+router.get('/integrations/:connectionId/tools', (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const connectionId = req.params.connectionId!;
+    const mapped = eng.integrationHub.getConnectionToolDefinitions(connectionId);
+    if (!mapped) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+    const cfg = eng.configManager.load();
+    const permissions = cfg.permissions ?? {};
+    const tools = mapped.map(({ mcpName, definition }) => {
+      const defaultDecision = definition.riskLevel === 'low' ? 'allow' : definition.riskLevel === 'critical' ? 'deny' : 'ask';
+      return {
+        mcpName,
+        name: definition.name,
+        description: definition.description,
+        riskLevel: definition.riskLevel,
+        defaultDecision: permissions[definition.id] ?? defaultDecision,
+      };
+    });
+    res.json({ tools });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 function oauthResultPage(success: boolean, message: string): string {
   const color = success ? '#22c55e' : '#ef4444';
   const payload = JSON.stringify({ type: 'agentx-integration-oauth', success, message });

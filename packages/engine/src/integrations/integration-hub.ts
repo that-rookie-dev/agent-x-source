@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { generateText } from 'ai';
 import type {
+  AgentXConfig,
   ConnectIntegrationRequest,
   IntegrationAnalytics,
   IntegrationConnection,
@@ -12,9 +14,12 @@ import type {
   OAuthStartResponse,
   SetupPreflightCheckId,
   SetupPreflightResult,
+  ToolDefinition,
   ToolResult,
 } from '@agentx/shared';
 import { getLogger, assertHubOAuthReady, resolveProviderOAuthConfig } from '@agentx/shared';
+import { ConfigManager } from '../config/ConfigManager.js';
+import { createAiSdkModel } from '../agent/AiSdkBridge.js';
 import type { ToolExecutionContext } from '@agentx/shared';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
@@ -32,6 +37,7 @@ import {
 } from './catalog/index.js';
 import {
   integrationToolId,
+  integrationToolRiskLevel,
   integrationToolUnregisterPrefixes,
   parseIntegrationToolId,
   isReadOnlyIntegrationTool,
@@ -79,6 +85,12 @@ import {
   usesNativeMcpStdioBrowserOAuth,
 } from './mcp-stdio-oauth-flow.js';
 import { runPreflightChecks, type PreflightContext } from './preflight.js';
+
+interface McpToolShape {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
 
 interface ActiveSession {
   connectionId: string;
@@ -271,6 +283,99 @@ export class IntegrationHub {
 
   private currentDek(): Buffer | null {
     return resolveIntegrationDek(this.getDek?.() ?? this.dek ?? null);
+  }
+
+  /** The DEK used to encrypt the user's AgentXConfig — must not be confused with the AGENTX_VAULT_KEY used for integration secrets. */
+  private authDek(): Buffer | null {
+    return this.getDek?.() ?? this.dek ?? null;
+  }
+
+  private loadAgentConfig(): AgentXConfig {
+    return new ConfigManager(undefined, this.authDek() ?? undefined).load();
+  }
+
+  private saveAgentConfig(config: AgentXConfig): void {
+    new ConfigManager(undefined, this.authDek() ?? undefined).save(config);
+  }
+
+  private async deriveMcpToolDefaults(
+    provider: IntegrationProvider,
+    tools: McpToolShape[],
+  ): Promise<Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>> {
+    const cfg = this.loadAgentConfig();
+    const model = createAiSdkModel(cfg);
+    const toolList = tools.map((t) => ({ name: t.name, description: t.description?.slice(0, 500) ?? '', hasInputSchema: !!t.inputSchema }));
+    const prompt = `For provider "${provider.name}", classify each MCP tool by risk and default permission.
+
+Tools:
+${JSON.stringify(toolList, null, 2)}
+
+Return ONLY a JSON object mapping tool name to { "riskLevel": "low"|"medium"|"high"|"critical", "defaultDecision": "allow"|"ask"|"deny" }.
+Rules:
+- read/search/list/info/status/ping = low risk, defaultDecision allow
+- create/update/write/set/add/put = medium risk, defaultDecision ask
+- pay/book/purchase/charge/transfer/delete/remove/cancel = critical risk, defaultDecision deny
+- unknown or potentially destructive = high risk, defaultDecision ask`;
+    try {
+      const { text } = await generateText({ model, prompt, maxOutputTokens: 2048, temperature: 0.1 });
+      const jsonStart = text.indexOf('{');
+      const jsonEnd = text.lastIndexOf('}');
+      if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON object in LLM response');
+      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as Record<string, { riskLevel?: string; defaultDecision?: string }>;
+      const out: Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }> = {};
+      for (const [name, value] of Object.entries(parsed)) {
+        const risk = ['low', 'medium', 'high', 'critical'].includes(value?.riskLevel ?? '') ? (value.riskLevel as 'low' | 'medium' | 'high' | 'critical') : 'high';
+        const decision = ['allow', 'deny', 'ask'].includes(value?.defaultDecision ?? '') ? (value.defaultDecision as 'allow' | 'deny' | 'ask') : 'ask';
+        out[name] = { riskLevel: risk, defaultDecision: decision };
+      }
+      return out;
+    } catch (error) {
+      getLogger().warn('MCP_DEFAULT_CLASSIFICATION_FAILED', error instanceof Error ? error.message : String(error));
+      return {};
+    }
+  }
+
+  private applyMcpDefaults(
+    provider: IntegrationProvider,
+    tools: McpToolShape[],
+    classifications: Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>,
+    adapted: ToolDefinition[],
+  ): void {
+    const cfg = this.loadAgentConfig();
+    const permissions = cfg.permissions ?? {};
+    let changed = false;
+    const defaults: Record<string, 'allow' | 'deny' | 'ask'> = {};
+    for (const tool of tools) {
+      const toolId = integrationToolId(provider.id, tool.name);
+      const classification = classifications[tool.name];
+      const effectiveRisk = classification?.riskLevel ?? integrationToolRiskLevel(tool.name, provider);
+      const defaultDecision = classification?.defaultDecision ?? (effectiveRisk === 'low' ? 'allow' : effectiveRisk === 'critical' ? 'deny' : 'ask');
+      if (!(toolId in permissions)) {
+        permissions[toolId] = defaultDecision;
+        defaults[toolId] = defaultDecision;
+        changed = true;
+      }
+      const def = adapted.find((d) => d.id === toolId);
+      if (def) {
+        def.riskLevel = effectiveRisk;
+      }
+    }
+    if (changed) {
+      cfg.permissions = permissions;
+      this.saveAgentConfig(cfg);
+    }
+  }
+
+  getConnectionToolDefinitions(connectionId: string): { mcpName: string; toolId: string; definition: ToolDefinition }[] {
+    return this.sessions.get(connectionId)?.tools ?? [];
+  }
+
+  getAllConnectedToolDefinitions(): { connectionId: string; providerId: string; tools: { mcpName: string; toolId: string; definition: ToolDefinition }[] }[] {
+    return [...this.sessions.entries()].map(([connectionId, active]) => ({
+      connectionId,
+      providerId: active.providerId,
+      tools: active.tools,
+    }));
   }
 
   private assertProviderAllowed(providerId: string): void {
@@ -708,7 +813,9 @@ export class IntegrationHub {
       await this.ensureFreshOAuthToken(connectionId);
       const session = await this.openSession(connection, provider);
       const listed = await session.listTools();
+      const classifications = await this.deriveMcpToolDefaults(provider, listed);
       const adapted = adaptMcpTools(provider, listed);
+      this.applyMcpDefaults(provider, listed, classifications, adapted);
       const tools = listed.map((tool, index) => ({
         mcpName: tool.name,
         toolId: adapted[index]!.id,

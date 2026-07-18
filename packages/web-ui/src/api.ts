@@ -603,9 +603,12 @@ export interface PermissionToolEntry {
   description: string;
   category: string;
   riskLevel: string;
-  defaultDecision: 'allow' | 'ask';
+  defaultDecision: 'allow' | 'deny' | 'ask';
   currentDecision: 'allow' | 'deny' | 'ask';
   overridden: boolean;
+  source: 'native' | 'mcp';
+  providerId?: string;
+  providerName?: string;
 }
 
 export const settingsPermissionTools = {
@@ -2391,6 +2394,10 @@ export const integrations = {
   health: (connectionId: string) =>
     request<{ health: { status: string; toolCount: number; error?: string; lastSyncAt?: string } }>(
       `/integrations/${connectionId}/health`,
+    ),
+  tools: (connectionId: string) =>
+    request<{ tools: Array<{ mcpName: string; name: string; description: string; riskLevel: string; defaultDecision: 'allow' | 'deny' | 'ask' }> }>(
+      `/integrations/${connectionId}/tools`,
     ),
   startOAuth: (providerId: string, remoteUrl?: string) =>
     request<{ authUrl: string; state: string; redirectUri?: string }>(`/integrations/${providerId}/oauth/start`, {

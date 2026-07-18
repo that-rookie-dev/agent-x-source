@@ -209,8 +209,7 @@ export function createSettingsRouter(): Router {
       const eng = getEngine();
       const cfg = eng.configManager.load();
       const overrides = cfg.permissions ?? {};
-      const allTools = eng.toolkit.registry.list();
-      const tools = allTools.map((t) => ({
+      const nativeTools = eng.toolkit.registry.list().map((t) => ({
         id: t.id,
         name: t.name,
         description: t.description,
@@ -219,7 +218,30 @@ export function createSettingsRouter(): Router {
         defaultDecision: (t.riskLevel === 'low' ? 'allow' : 'ask') as 'allow' | 'ask',
         currentDecision: (overrides[t.id] ?? (t.riskLevel === 'low' ? 'allow' : 'ask')) as 'allow' | 'deny' | 'ask',
         overridden: t.id in overrides,
+        source: 'native' as const,
       }));
+      const mcpTools: typeof nativeTools = [];
+      for (const { providerId, tools } of eng.integrationHub.getAllConnectedToolDefinitions()) {
+        const provider = eng.integrationHub.getProvider(providerId);
+        for (const mapped of tools) {
+          const t = mapped.definition;
+          const defaultDecision = t.riskLevel === 'low' ? 'allow' : t.riskLevel === 'critical' ? 'deny' : 'ask';
+          mcpTools.push({
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            category: 'integrations' as const,
+            riskLevel: t.riskLevel,
+            defaultDecision: defaultDecision as 'allow' | 'ask' | 'deny',
+            currentDecision: (overrides[t.id] ?? defaultDecision) as 'allow' | 'deny' | 'ask',
+            overridden: t.id in overrides,
+            source: 'mcp' as const,
+            providerId,
+            providerName: provider?.name ?? providerId,
+          } as unknown as typeof nativeTools[number]);
+        }
+      }
+      const tools = [...nativeTools, ...mcpTools];
       res.json({ tools, permissions: overrides });
     } catch (e: unknown) {
       getLogger().error('GET_API_SETTINGS_PERMISSIONS_TOOLS', e instanceof Error ? e : String(e));

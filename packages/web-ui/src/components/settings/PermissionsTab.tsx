@@ -112,9 +112,9 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
 
   const permissions = value ?? {};
 
-  /** Resolve the effective decision for a tool: override > default. */
+  /** Resolve the effective decision for a tool: override > backend default > risk heuristic. */
   const effectiveDecision = (tool: PermissionToolEntry): ToolDecision =>
-    permissions[tool.id] ?? defaultDecisionFor(tool.riskLevel);
+    permissions[tool.id] ?? tool.defaultDecision ?? defaultDecisionFor(tool.riskLevel);
 
   const setDecision = (toolId: string, decision: ToolDecision) => {
     onChange({ ...permissions, [toolId]: decision });
@@ -160,15 +160,26 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
     return result;
   }, [tools, permissions, filter, search]);
 
-  // Group tools by category for display
-  const grouped = useMemo(() => {
+  // Split tools into native and MCP groups
+  const nativeTools = useMemo(() => filteredTools.filter((t) => t.source !== 'mcp'), [filteredTools]);
+  const mcpTools = useMemo(() => filteredTools.filter((t) => t.source === 'mcp'), [filteredTools]);
+  const nativeGrouped = useMemo(() => {
     const groups: Record<string, PermissionToolEntry[]> = {};
-    for (const t of filteredTools) {
+    for (const t of nativeTools) {
       if (!groups[t.category]) groups[t.category] = [];
       groups[t.category].push(t);
     }
     return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filteredTools]);
+  }, [nativeTools]);
+  const mcpGrouped = useMemo(() => {
+    const groups: Record<string, PermissionToolEntry[]> = {};
+    for (const t of mcpTools) {
+      const key = t.providerName ?? 'Connected MCP';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    return Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [mcpTools]);
 
   const filterChips: Array<{ id: typeof filter; label: string; count: number }> = [
     { id: 'all', label: 'All', count: tools.length },
@@ -255,7 +266,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
         )}
 
         {/* Tool table grouped by category */}
-        {!loading && grouped.map(([category, catTools]) => (
+        {!loading && nativeGrouped.map(([category, catTools]) => (
           <Box key={category} sx={{ mb: 2 }}>
             <Typography sx={{
               ...settingsMonoSx,
@@ -373,6 +384,139 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
                   </RadioGroup>
 
                   {/* Reset single tool */}
+                  <Box sx={{ textAlign: 'center' }}>
+                    {isOverridden && (
+                      <Tooltip title="Reset to default" placement="top" arrow>
+                        <IconButton
+                          size="small"
+                          onClick={() => resetTool(tool.id)}
+                          sx={{ color: settingsTheme.text.dim, '&:hover': { color: settingsTheme.accent.hud }, padding: '2px' }}
+                        >
+                          <RefreshIcon sx={{ fontSize: 12 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        ))}
+
+        {mcpTools.length > 0 && mcpGrouped.map(([providerName, providerTools]) => (
+          <Box key={providerName} sx={{ mb: 2 }}>
+            <Typography sx={{
+              ...settingsMonoSx,
+              fontSize: '0.6rem',
+              color: settingsTheme.accent.hud,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              mb: 0.5,
+              borderBottom: `1px solid ${settingsTheme.border.subtle}`,
+              pb: 0.25,
+            }}>
+              MCP · {providerName} ({providerTools.length})
+            </Typography>
+
+            {/* Table header */}
+            <Box sx={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 60px 50px 50px 50px 28px',
+              gap: 0.5,
+              alignItems: 'center',
+              px: 1,
+              py: 0.3,
+              ...settingsMonoSx,
+              fontSize: '0.55rem',
+              color: settingsTheme.text.dim,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}>
+              <Box>Tool</Box>
+              <Box sx={{ textAlign: 'center' }}>Risk</Box>
+              <Box sx={{ textAlign: 'center' }}>Allow</Box>
+              <Box sx={{ textAlign: 'center' }}>Ask</Box>
+              <Box sx={{ textAlign: 'center' }}>Deny</Box>
+              <Box />
+            </Box>
+
+            {providerTools.map((tool) => {
+              const decision = effectiveDecision(tool);
+              const isOverridden = tool.id in permissions;
+              return (
+                <Box
+                  key={tool.id}
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 60px 50px 50px 50px 28px',
+                    gap: 0.5,
+                    alignItems: 'center',
+                    px: 1,
+                    py: 0.5,
+                    borderBottom: `1px solid ${settingsTheme.border.subtle}`,
+                    '&:hover': { bgcolor: settingsTheme.bg.inset },
+                    ...(isOverridden ? { borderLeft: `2px solid ${DECISION_COLORS[decision]}` } : {}),
+                  }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Tooltip title={tool.description} placement="top" arrow>
+                      <Typography sx={{
+                        fontSize: '0.65rem',
+                        fontFamily: "'JetBrains Mono', monospace",
+                        color: isOverridden ? settingsTheme.text.primary : settingsTheme.text.dim,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {tool.name}
+                        <Box component="span" sx={{ color: settingsTheme.text.dim, ml: 0.5, fontSize: '0.6rem' }}>
+                          ({tool.id})
+                        </Box>
+                      </Typography>
+                    </Tooltip>
+                  </Box>
+
+                  <Box sx={{ textAlign: 'center' }}>
+                    <Box sx={{
+                      display: 'inline-block',
+                      px: 0.5,
+                      py: 0.1,
+                      borderRadius: 0.5,
+                      fontSize: '0.55rem',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      color: RISK_COLORS[tool.riskLevel] ?? settingsTheme.text.dim,
+                      bgcolor: `${RISK_COLORS[tool.riskLevel] ?? settingsTheme.text.dim}15`,
+                    }}>
+                      {RISK_LABELS[tool.riskLevel] ?? tool.riskLevel}
+                    </Box>
+                  </Box>
+
+                  <RadioGroup
+                    row
+                    value={decision}
+                    onChange={(e) => setDecision(tool.id, e.target.value as ToolDecision)}
+                    sx={{ display: 'contents' }}
+                  >
+                    {(['allow', 'ask', 'deny'] as ToolDecision[]).map((d) => (
+                      <Box key={d} sx={{ textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
+                        <Tooltip title={DECISION_LABELS[d]} placement="top" arrow>
+                          <Radio
+                            size="small"
+                            value={d}
+                            checked={decision === d}
+                            onChange={() => setDecision(tool.id, d)}
+                            sx={{
+                              padding: '2px',
+                              color: DECISION_COLORS[d],
+                              '&.Mui-checked': { color: DECISION_COLORS[d] },
+                              '& .MuiSvgIcon-root': { fontSize: 14 },
+                            }}
+                          />
+                        </Tooltip>
+                      </Box>
+                    ))}
+                  </RadioGroup>
+
                   <Box sx={{ textAlign: 'center' }}>
                     {isOverridden && (
                       <Tooltip title="Reset to default" placement="top" arrow>
