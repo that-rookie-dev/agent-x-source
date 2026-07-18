@@ -33,7 +33,16 @@ function resolveMessagingChannelForSession(
 function resolveAgentForAutomationSession(sessionId: string) {
   const eng = getEngine();
   const channel = parseChannelBindingFromSessionId(sessionId);
-  if (channel) return ensureChannelAgent(channel);
+  if (channel) {
+    // Voice sessions use the live engine agent so questionnaires and permissions
+    // are surfaced through the active voice websocket, not a separate channel agent.
+    if (channel === 'voice') {
+      const active = eng.agent;
+      if (active?.currentSessionId === sessionId) return active;
+      return null;
+    }
+    return ensureChannelAgent(channel);
+  }
   const session = eng.sessionManager.getSessionById(sessionId);
   if (!session) return null;
 

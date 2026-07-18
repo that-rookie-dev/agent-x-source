@@ -718,6 +718,10 @@ export class Agent {
       ? questionnaire
       : { ...questionnaire, source: this.clarificationSource() };
 
+    if (this.options.promptProfile === 'voice') {
+      return this.waitForVoiceClarification(payload);
+    }
+
     if (!shouldUseQuestionnaireClarification(payload)) {
       const prompt = payload.questions.map((q) => q.prompt).filter(Boolean).join('\n') || 'Could you clarify?';
       getLogger().warn('CLARIFICATION', 'Text-only questionnaire redirected to plain chat');
@@ -787,6 +791,52 @@ export class Agent {
     this.emit({
       type: 'loading_start',
       stage: this.options.promptProfile === 'crew_private' ? 'crew_private' : 'thinking',
+    });
+    return response;
+  }
+
+  private async waitForVoiceClarification(questionnaire: QuestionnairePayload): Promise<string> {
+    if (this.userCancelledTurn) {
+      const err = new Error('Turn aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
+
+    this.turnState.setPhase('awaiting_permission', 'clarification');
+    this.discardStreamPreambleBeforeQuestionnaire();
+
+    const messageId = generateMessageId();
+    this.activeClarificationResume = {
+      kind: this.activeClarificationResume?.kind ?? 'questionnaire',
+      questionnaireMessageId: messageId,
+      userText: this.activeClarificationResume?.userText,
+      delegateCrewIds: this.activeClarificationResume?.delegateCrewIds,
+      primaryCrewId: this.activeClarificationResume?.primaryCrewId,
+      crewIntakeFromPicker: this.activeClarificationResume?.crewIntakeFromPicker,
+    };
+    this.emit({ type: 'clarification_required', questionnaire });
+
+    let response: string;
+    try {
+      response = await new Promise<string>((resolve, reject) => {
+        this.clarificationResolve = resolve;
+        this.clarificationReject = reject;
+      });
+    } finally {
+      this.clarificationResolve = null;
+      this.clarificationReject = null;
+    }
+    this.activeClarificationResume = null;
+
+    if (response && response !== '(skipped)') {
+      this.messages.push({ role: 'user', content: response });
+    }
+
+    this.discardStreamPreambleBeforeQuestionnaire();
+    this.turnState.setPhase('running', 'resuming');
+    this.emit({
+      type: 'loading_start',
+      stage: 'thinking',
     });
     return response;
   }

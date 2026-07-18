@@ -26,7 +26,7 @@ import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS } from './c
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
 import { normalizeClientSituation, getAgentFilesDir } from '@agentx/shared';
-import type { ProviderId } from '@agentx/shared';
+import type { ProviderId, QuestionnairePayload } from '@agentx/shared';
 import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
@@ -149,6 +149,52 @@ function buildPermissionSpokenPrompt(tool: string, riskLevel: string, argsSummar
     if (persona?.name) agentName = persona.name;
   } catch { /* ignore */ }
   return `${agentName} wants to ${action}.${riskNote} Say allow, always, or deny.`;
+}
+
+/** Format a choice questionnaire as a spoken prompt for voice interaction. */
+function formatQuestionnaireForVoice(payload: QuestionnairePayload): string {
+  const lines: string[] = [];
+  if (payload.title?.trim()) {
+    lines.push(payload.title.trim());
+  }
+  for (const [i, q] of payload.questions.entries()) {
+    if (payload.questions.length > 1) {
+      lines.push(`Question ${i + 1}: ${q.prompt}`);
+    } else {
+      lines.push(q.prompt);
+    }
+    if (q.type === 'single_choice' || q.type === 'multi_choice') {
+      const opts = (q.options ?? []).filter((o) => !o.disabled);
+      opts.forEach((o, j) => {
+        lines.push(`${j + 1}: ${o.label ?? o.value}${o.recommended ? ' (suggested)' : ''}`);
+      });
+      if (q.allowCustom !== false) {
+        lines.push(
+          q.type === 'multi_choice'
+            ? 'Reply with the numbers or names, separated by commas, or say none.'
+            : 'Reply with the number or name of your choice.',
+        );
+      } else {
+        lines.push('Reply with the number of your choice.');
+      }
+    } else {
+      lines.push('Reply with your answer.');
+    }
+  }
+  return lines.join('. ').trim();
+}
+
+async function handleVoiceClarificationRequired(
+  _ws: WebSocket,
+  session: VoiceWsSession,
+  questionnaire: QuestionnairePayload,
+): Promise<void> {
+  const line = formatQuestionnaireForVoice(questionnaire);
+  await speakSystemLine(session, line);
+  // Re-open the mic so the operator can answer hands-free.
+  if (session.mode === 'duplex') {
+    await resetDuplexListening(session);
+  }
 }
 
 /** Clear any pending permission prompt (on resolve, timeout, or session teardown). */
@@ -454,7 +500,7 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   const existingAgent = eng.agent;
   const keepAgent = !!existingAgent
     && existingAgent.sessionId === chatSessionId
-    && !existingAgent.processing;
+    && (!existingAgent.processing || existingAgent.isAwaitingClarification());
   if (keepAgent) return true;
 
   destroyAgent();
@@ -786,6 +832,15 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       voiceSession?.setState('idle');
       return;
     }
+
+    // If the agent is waiting for a clarification answer (e.g. automation notify
+    // channels), feed this utterance directly to the in-flight turn instead of
+    // starting a brand-new one.
+    if (agent.isAwaitingClarification() && agent.respondToClarification(text)) {
+      ws.send(JSON.stringify({ type: 'clarification_answered', text }));
+      return;
+    }
+
     // Apply the dashboard bypass chip to this agent so tools don't prompt when the user enabled it.
     agent.setBypassPermissions(session.bypassChip);
     refreshAgentPersona(agent);
@@ -846,6 +901,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       const ev = event as {
         type?: string; content?: string; stage?: string; tool?: string;
         requestId?: string; riskLevel?: string; argsSummary?: string; commandPreview?: string; forAutomation?: boolean;
+        questionnaire?: QuestionnairePayload;
       };
       if (ev.type === 'stream_chunk' && typeof ev.content === 'string' && ev.content) {
         agentDisplayText = normalizeVoiceAssistantContent(agentDisplayText + ev.content);
@@ -860,6 +916,9 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
           argsSummary: ev.argsSummary,
           commandPreview: ev.commandPreview,
         });
+      }
+      if (ev.type === 'clarification_required' && ev.questionnaire) {
+        void handleVoiceClarificationRequired(ws, session, ev.questionnaire);
       }
       void progress.handleEngineEvent(ev);
     });
