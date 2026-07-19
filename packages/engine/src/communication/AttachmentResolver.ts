@@ -145,6 +145,7 @@ export class AttachmentResolver {
   }
 
   private sanitizeFileName(name: string): string {
+    // eslint-disable-next-line no-control-regex -- strip illegal filename characters
     return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
   }
 }

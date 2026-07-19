@@ -331,7 +331,13 @@ export class IntegrationHub {
     provider: IntegrationProvider,
     tools: McpToolShape[],
   ): Promise<Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>> {
-    const cfg = this.loadAgentConfig();
+    let cfg: AgentXConfig;
+    try {
+      cfg = this.loadAgentConfig();
+    } catch {
+      // CI / MCP-only flows (no wizard config) — catalog defaults apply without LLM classification.
+      return {};
+    }
     const model = createAiSdkModel(cfg);
     const toolList = tools.map((t) => ({ name: t.name, description: t.description?.slice(0, 500) ?? '', hasInputSchema: !!t.inputSchema }));
     const prompt = `For provider "${provider.name}", classify each MCP tool by risk and default permission.
@@ -370,7 +376,23 @@ Rules:
     classifications: Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>,
     adapted: ToolDefinition[],
   ): void {
-    const cfg = this.loadAgentConfig();
+    for (const tool of tools) {
+      const toolId = integrationToolId(provider.id, tool.name);
+      const classification = classifications[tool.name];
+      const effectiveRisk = classification?.riskLevel ?? integrationToolRiskLevel(tool.name, provider);
+      const def = adapted.find((d) => d.id === toolId);
+      if (def) {
+        def.riskLevel = effectiveRisk;
+      }
+    }
+
+    let cfg: AgentXConfig;
+    try {
+      cfg = this.loadAgentConfig();
+    } catch {
+      // Unconfigured CI / fresh installs — skip persisting permission defaults.
+      return;
+    }
     const permissions = cfg.permissions ?? {};
     let changed = false;
     const defaults: Record<string, 'allow' | 'deny' | 'ask'> = {};
@@ -383,10 +405,6 @@ Rules:
         permissions[toolId] = defaultDecision;
         defaults[toolId] = defaultDecision;
         changed = true;
-      }
-      const def = adapted.find((d) => d.id === toolId);
-      if (def) {
-        def.riskLevel = effectiveRisk;
       }
     }
     if (changed) {
@@ -901,7 +919,7 @@ Rules:
     const provider = this.resolveProvider(connection.providerId);
     if (!provider) throw new Error(`Provider "${connection.providerId}" not found`);
 
-    let active = this.sessions.get(connectionId);
+    const active = this.sessions.get(connectionId);
     if (!active) {
       await this.syncConnection(connectionId);
       return this.store.getConnection(connectionId) ?? connection;

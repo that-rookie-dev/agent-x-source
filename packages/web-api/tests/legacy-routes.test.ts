@@ -154,6 +154,7 @@ vi.mock('../src/crew-chat.js', () => ({
   postCrewChatSession: vi.fn(),
   postCrewChatVoiceSession: vi.fn(),
   listCrewChatVoiceSessions: vi.fn(),
+  deleteCrewChatVoiceSession: vi.fn(),
 }));
 
 vi.mock('../src/agent-x-core.js', () => ({

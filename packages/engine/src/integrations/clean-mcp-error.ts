@@ -3,7 +3,7 @@
  */
 export function cleanMcpErrorMessage(raw: unknown, maxLen = 480): string {
   let text = typeof raw === 'string' ? raw : raw == null ? '' : String(raw);
-  text = text.replace(/\u0000/g, '').trim();
+  text = text.split('\u0000').join('').trim();
   if (!text) return 'Unknown MCP error';
 
   // Prefer nested JSON message when the payload is structured.

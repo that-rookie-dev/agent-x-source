@@ -338,6 +338,7 @@ export class AttachmentService {
   }
 
   private sanitizeFilename(name: string): string {
+    // eslint-disable-next-line no-control-regex -- strip illegal filename characters
     return basename(name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') || 'attachment';
   }
 
