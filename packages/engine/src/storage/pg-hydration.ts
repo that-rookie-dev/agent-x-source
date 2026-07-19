@@ -27,6 +27,9 @@ export interface HydrationContext {
 
 export async function hydrateEssentialCache(ctx: HydrationContext): Promise<void> {
   try {
+    // Drain pending writes first — otherwise a just-created crew can vanish from
+    // cache when we replace cache.crews from a stale DB snapshot.
+    await flushWriteQueue(ctx);
     const sessions = await ctx.pool.query(
       `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
               scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
@@ -92,6 +95,7 @@ export async function ensureSessionHydrated(ctx: HydrationContext, sessionId: st
 
 export async function hydrateCache(ctx: HydrationContext): Promise<void> {
   try {
+    await flushWriteQueue(ctx);
     const sessions = await ctx.pool.query(
       `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
               scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
@@ -249,24 +253,69 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
   }
 }
 
+const FLUSH_WRITE_QUEUE_TIMEOUT_MS = 10_000;
+
 export async function flushWriteQueue(ctx: HydrationContext): Promise<void> {
   // Drain until idle so hydrate/checkpoint never race ahead of pending INSERTs.
+  const deadline = Date.now() + FLUSH_WRITE_QUEUE_TIMEOUT_MS;
   for (let i = 0; i < 20; i++) {
     if (ctx.writeQueue.length === 0 && !ctx.drainPromise) return;
+    if (Date.now() >= deadline) {
+      logger.warn(
+        'PG_FLUSH_WRITE_QUEUE',
+        `Timed out after ${FLUSH_WRITE_QUEUE_TIMEOUT_MS}ms with ${ctx.writeQueue.length} pending write(s) — continuing`,
+      );
+      return;
+    }
     ctx.scheduleWriteDrain();
-    if (ctx.drainPromise) await ctx.drainPromise;
+    if (ctx.drainPromise) {
+      const remaining = Math.max(50, deadline - Date.now());
+      await Promise.race([
+        ctx.drainPromise,
+        new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+      ]);
+    }
   }
 }
 
 export async function hydrateMessageCache(ctx: HydrationContext, sessionId: string): Promise<void> {
   try {
     await flushWriteQueue(ctx);
+    // Message inserts require the session row in cache. Lazy hydrate previously
+    // loaded messages only — voice persist then hit PG_INSERT_MESSAGE_SKIP when
+    // the session existed in DB but not yet in cache.sessions.
+    if (!ctx.cache.sessions.has(sessionId)) {
+      const sessionRes = await ctx.pool.query(
+        `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
+                scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
+                compaction_count as "compactionCount",
+                context_kind as "contextKind",host_crew_id as "hostCrewId",
+                host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
+                host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
+                host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
+                parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
+         FROM sessions WHERE id = $1`,
+        [sessionId],
+      );
+      const row = sessionRes.rows[0] as StorableSession | undefined;
+      if (row) ctx.cache.sessions.set(sessionId, row);
+    }
     const messages = await ctx.pool.query(
       `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",token_count as "tokenCount",created_at as "createdAt"
        FROM messages WHERE session_id = $1 AND archived_at IS NULL ORDER BY created_at ASC`,
       [sessionId]
     );
     const msgs = messages.rows as StorableMessage[];
+    // Merge DB snapshot with any in-flight cache rows not yet flushed when the
+    // SELECT ran — otherwise a concurrent voice persist can vanish from cache.
+    const prior = ctx.cache.messages.get(sessionId) ?? [];
+    if (prior.length > 0) {
+      const seen = new Set(msgs.map((m) => m.id));
+      for (const m of prior) {
+        if (m.id && !seen.has(m.id)) msgs.push(m);
+      }
+      msgs.sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
+    }
     ctx.cache.messages.set(sessionId, msgs);
     const parts = await ctx.pool.query(
       'SELECT * FROM message_parts WHERE session_id = $1 ORDER BY created_at ASC',

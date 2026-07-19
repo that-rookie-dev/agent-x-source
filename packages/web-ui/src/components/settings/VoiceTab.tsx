@@ -328,12 +328,10 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     setXaiStatus('idle');
     setCapabilities(null);
     const isXai = nextEngine === 'realtime_xai';
-    const currentWeb = voiceConfig.mode?.web;
-    // xAI is always duplex. Local engine preserves the user's previous mode
-    // choice (defaults to push-to-talk for first-time users).
+    // xAI → duplex. Local → always PTT (clear any leftover duplex setting).
     const nextWeb = voiceConfig.enabled
-      ? (isXai ? 'duplex' : (currentWeb && currentWeb !== 'off' ? currentWeb : 'push-to-talk'))
-      : currentWeb;
+      ? (isXai ? 'duplex' : 'push-to-talk')
+      : (isXai ? voiceConfig.mode?.web : 'push-to-talk');
     await persistVoice({
       ...voiceConfig,
       engine: nextEngine,
@@ -343,14 +341,6 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     void refreshXaiVoices(nextEngine);
     // Re-fetch capabilities since the engine change may affect them.
     voice.capabilities().then((res) => setCapabilities(res.capabilities)).catch(() => {});
-  };
-
-  const selectWebMode = async (nextMode: 'push-to-talk' | 'duplex') => {
-    if (nextMode === voiceConfig.mode?.web) return;
-    await persistVoice({
-      ...voiceConfig,
-      mode: { ...voiceConfig.mode, web: nextMode },
-    });
   };
 
   const hasXaiKey = Boolean(voiceConfig.xai?.apiKey);
@@ -463,13 +453,12 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             onClick={() => {
               if (voiceConfig.enabled) return;
               const isXai = engine === 'realtime_xai';
-              const currentWeb = voiceConfig.mode?.web;
               const ready = engine === 'stt_llm_tts' ? kitReady : xaiConfigured;
               if (!ready) return;
               void persistVoice({
                 ...voiceConfig,
                 enabled: true,
-                mode: { ...voiceConfig.mode, web: currentWeb && currentWeb !== 'off' ? currentWeb : (isXai ? 'duplex' : 'push-to-talk') },
+                mode: { ...voiceConfig.mode, web: isXai ? 'duplex' : 'push-to-talk' },
               });
             }}
             sx={{
@@ -704,7 +693,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
         </SettingsCard>
 
         {engine === 'stt_llm_tts' && (
-        <SettingsCard title="Local voice settings" subtitle="TTS model, voice profile, and chat input mode">
+        <SettingsCard title="Local voice settings" subtitle="TTS model, voice profile, and push-to-talk input">
           <TtsModelRow
             name="Kokoro"
             description="Fast, natural local TTS. Installed with the voice kit and used for fillers."
@@ -804,53 +793,21 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
 
           <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${settingsTheme.border.default}` }}>
             <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Voice input mode</Typography>
-            <Box sx={{ display: 'flex', gap: 1.5 }}>
-              <Box
-                onClick={() => void selectWebMode('push-to-talk')}
-                sx={{
-                  flex: 1,
-                  cursor: 'pointer',
-                  p: 1.5,
-                  borderRadius: 1,
-                  border: `1.5px solid ${voiceConfig.mode?.web === 'push-to-talk' ? settingsTheme.accent.hud : settingsTheme.border.default}`,
-                  bgcolor: voiceConfig.mode?.web === 'push-to-talk' ? `${settingsTheme.accent.hud}14` : 'transparent',
-                  transition: 'border-color 0.15s, background-color 0.15s',
-                  '&:hover': { borderColor: settingsTheme.accent.hud },
-                }}
-              >
-                <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx, mb: 0.5 }}>
-                  Push-to-Talk
-                </Typography>
-                <Typography sx={{ ...settingsHelperSx, fontSize: '0.6rem' }}>
-                  Hold Space to speak. Works on dashboard only. Best for precise control.
-                </Typography>
-              </Box>
-              <Box
-                onClick={() => void selectWebMode('duplex')}
-                sx={{
-                  flex: 1,
-                  cursor: 'pointer',
-                  p: 1.5,
-                  borderRadius: 1,
-                  border: `1.5px solid ${voiceConfig.mode?.web === 'duplex' ? settingsTheme.accent.signal : settingsTheme.border.default}`,
-                  bgcolor: voiceConfig.mode?.web === 'duplex' ? `${settingsTheme.accent.signal}14` : 'transparent',
-                  transition: 'border-color 0.15s, background-color 0.15s',
-                  '&:hover': { borderColor: settingsTheme.accent.signal },
-                }}
-              >
-                <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx, mb: 0.5 }}>
-                  Duplex (Hands-free)
-                </Typography>
-                <Typography sx={{ ...settingsHelperSx, fontSize: '0.6rem' }}>
-                  Always listening. Works on any page. Auto-detects speech start and end.
-                </Typography>
-              </Box>
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                border: `1.5px solid ${settingsTheme.accent.hud}`,
+                bgcolor: `${settingsTheme.accent.hud}14`,
+              }}
+            >
+              <Typography sx={{ fontSize: '0.72rem', color: settingsTheme.text.primary, ...settingsMonoSx, mb: 0.5 }}>
+                Push-to-Talk
+              </Typography>
+              <Typography sx={{ ...settingsHelperSx, fontSize: '0.6rem' }}>
+                Hold Space on the dashboard to speak. Release when done. Hands-free duplex is available with the xAI engine.
+              </Typography>
             </Box>
-            <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
-              {voiceConfig.mode?.web === 'duplex'
-                ? 'Local engine uses Silero VAD for speech detection. The agent listens continuously and auto-detects when you finish speaking.'
-                : 'Hold Space on the dashboard to speak. Release when done.'}
-            </Typography>
           </Box>
         </SettingsCard>
         )}

@@ -12,6 +12,7 @@ import {
   sanitizeVoiceDisplayText,
   buildCrewCallTurnInstruction,
   buildCrewCallOpenerInstruction,
+  crewCallSessionHasSpokenHistory,
 } from '../src/voice-speakable.js';
 
 describe('holdBackVoiceCloseSuffix', () => {
@@ -157,9 +158,30 @@ describe('crew call voice instructions', () => {
     expect(instr).not.toContain('put the full report');
   });
 
-  it('asks the persona to speak first on open and resume', () => {
+  it('asks the persona to speak first on open', () => {
     expect(buildCrewCallOpenerInstruction('open')).toMatch(/speak first/i);
     expect(buildCrewCallOpenerInstruction('open')).toMatch(/welcome/i);
-    expect(buildCrewCallOpenerInstruction('resume')).toMatch(/on hold/i);
+  });
+
+  it('detects spoken history vs call_event markers', () => {
+    expect(crewCallSessionHasSpokenHistory([
+      { role: 'user', content: '[call_event:open]' },
+    ])).toBe(false);
+    expect(crewCallSessionHasSpokenHistory([
+      { role: 'user', content: '[call_event:open]' },
+      { role: 'assistant', content: 'Welcome — where are we flying?' },
+    ])).toBe(true);
+  });
+
+  it('names the crew member and forbids generic crew phrasing', () => {
+    const instr = buildCrewCallOpenerInstruction('open', {
+      name: 'Elena',
+      title: 'Luxury Travel Concierge',
+      expertise: ['private aviation', 'villas'],
+    });
+    expect(instr).toContain('Elena');
+    expect(instr).toContain('Luxury Travel Concierge');
+    expect(instr).toMatch(/never say "crew"/i);
+    expect(instr).toMatch(/under 45 words/i);
   });
 });

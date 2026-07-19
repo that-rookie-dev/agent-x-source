@@ -72,6 +72,14 @@ import {
   type ResumeStateContext,
 } from './pg-resume-state.js';
 import {
+  getVoiceRealtimeState as getVoiceRealtimeStateImpl,
+  upsertVoiceRealtimeState as upsertVoiceRealtimeStateImpl,
+  touchVoiceRealtimeActive as touchVoiceRealtimeActiveImpl,
+  type VoiceRealtimeContext,
+  type VoiceRealtimeStatePatch,
+} from './pg-voice-realtime.js';
+import type { VoiceRealtimeState } from '@agentx/shared';
+import {
   listCrews as listCrewsImpl,
   getCrew as getCrewImpl,
   getDefaultCrew as getDefaultCrewImpl,
@@ -110,7 +118,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   private lazyHydrate: boolean;
   private onProgress?: (line: string) => void;
   private hydratedSessions = new Set<string>();
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map(), voiceRealtime: new Map() };
 
   constructor(config: PostgresConfig) {
     const poolConfig = {
@@ -171,6 +179,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   async disconnect(): Promise<void> {
+    try {
+      await this.flushWriteQueue();
+    } catch (error) {
+      logger.error('PG_DISCONNECT_FLUSH', error);
+    }
     await this.pool.end();
     this.connected = false;
   }
@@ -261,7 +274,12 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   private async drainWriteQueue(): Promise<void> {
-    await this.connect();
+    // doConnect → hydrateEssentialCache → flushWriteQueue → drainWriteQueue must not
+    // await connect() while doConnect is still in flight (same connectPromise) — that
+    // deadlocks startup and every later ensureSessionHydrated/chat turn.
+    if (!this.connected && !this.connectPromise) {
+      await this.connect();
+    }
     while (this.writeQueue.length > 0) {
       const item = this.writeQueue.shift()!;
       try {
@@ -400,6 +418,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   async flushWriteQueue(): Promise<void> {
     await flushWriteQueue(this.hydrationCtx());
+  }
+
+  /** Public StorageAdapter hook — drain the write queue before shutdown / after crew mutations. */
+  async flushWrites(): Promise<void> {
+    await this.flushWriteQueue();
   }
 
   private async hydrateMessageCache(sessionId: string): Promise<void> {
@@ -913,6 +936,26 @@ export class PostgresStorageAdapter implements StorageAdapter {
     clearSessionResumeStateImpl(this.resumeStateCtx(), sessionId);
   }
 
+  private voiceRealtimeCtx(): VoiceRealtimeContext {
+    return {
+      pool: this.pool,
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  async getVoiceRealtimeState(sessionId: string): Promise<VoiceRealtimeState | null> {
+    return getVoiceRealtimeStateImpl(this.voiceRealtimeCtx(), sessionId);
+  }
+
+  async upsertVoiceRealtimeState(sessionId: string, patch: VoiceRealtimeStatePatch): Promise<VoiceRealtimeState> {
+    return upsertVoiceRealtimeStateImpl(this.voiceRealtimeCtx(), sessionId, patch);
+  }
+
+  async touchVoiceRealtimeActive(sessionId: string, at?: string): Promise<void> {
+    await touchVoiceRealtimeActiveImpl(this.voiceRealtimeCtx(), sessionId, at);
+  }
+
   async getMessagesPage(
     sessionId: string,
     opts: { limit?: number; before?: string },
@@ -935,15 +978,28 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   createCrew(input: CrewCreateInput): Crew {
-    return createCrewImpl(this.crewCtx(), input);
+    const crew = createCrewImpl(this.crewCtx(), input);
+    // Kick an immediate drain so user-created crews are not left only in the
+    // async write queue (lost on crash / clearEngine / restart).
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'createCrew', id: crew.id });
+    });
+    return crew;
   }
 
   updateCrew(id: string, updates: Partial<Crew>): Crew | null {
-    return updateCrewImpl(this.crewCtx(), id, updates);
+    const crew = updateCrewImpl(this.crewCtx(), id, updates);
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'updateCrew', id });
+    });
+    return crew;
   }
 
   deleteCrew(id: string): void {
     deleteCrewImpl(this.crewCtx(), id);
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'deleteCrew', id });
+    });
   }
 
   // ─── Agent Persona ────────────────────────────────────────────
@@ -995,10 +1051,17 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.turnFeedback.clear();
     this.cache.permissionRules.clear();
     this.cache.taskSnapshots.clear();
+    this.cache.voiceRealtime.clear();
     this.write('TRUNCATE sessions CASCADE');
+    this.write('TRUNCATE voice_realtime_state');
   }
 
   close(): void {
-    this.pool.end().catch(() => {});
+    // Best-effort flush so pending crew/session writes are not discarded with the pool.
+    void this.flushWriteQueue()
+      .catch((error) => logger.error('PG_CLOSE_FLUSH', error))
+      .finally(() => {
+        this.pool.end().catch(() => {});
+      });
   }
 }

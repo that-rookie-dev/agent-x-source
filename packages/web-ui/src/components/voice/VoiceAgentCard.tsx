@@ -34,7 +34,7 @@ import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
  *  - No message listing, questionnaire, or deep web search UI
  */
 
-type ButtonPhase = 'disabled' | 'idle' | 'recording' | 'thinking' | 'speaking';
+type ButtonPhase = 'disabled' | 'connecting' | 'idle' | 'recording' | 'thinking' | 'speaking';
 
 export function VoiceAgentCard({
   onActiveChange,
@@ -63,13 +63,14 @@ export function VoiceAgentCard({
     }
   }, [voiceActive, sessionReady, searchWeb, bypassChip, comms]);
 
-  // Derive button phase
+  // Derive button phase — connecting stays blue; thinking is orange only after a turn.
   const phase: ButtonPhase = useMemo(() => {
     if (!voiceActive || !sessionReady || !comms) return 'disabled';
+    if (comms.commsPhase === 'boot' || comms.commsPhase === 'link') return 'connecting';
+    if (comms.session.state === 'connecting') return 'connecting';
     if (comms.commsPhase === 'operator_record') return 'recording';
     if (comms.commsPhase === 'agent_tx') return 'speaking';
     if (comms.commsPhase === 'operator_stt' || comms.commsPhase === 'relay_process' || comms.commsPhase === 'agent_prep') return 'thinking';
-    if (comms.commsPhase === 'boot' || comms.commsPhase === 'link') return 'thinking';
     return 'idle';
   }, [voiceActive, sessionReady, comms]);
 
@@ -100,10 +101,11 @@ export function VoiceAgentCard({
     if (!voiceActive) return 'Click to activate';
     if (!sessionReady) return 'Voice kit required';
     if (phase === 'disabled') return 'Click to activate';
+    if (phase === 'connecting') return comms?.statusLabel || 'Connecting…';
     if (phase === 'recording') return comms?.isDuplex ? 'Listening…' : 'Listening… release Space';
     if (phase === 'thinking') return comms?.statusLabel || 'Thinking…';
     if (phase === 'speaking') return 'Agent speaking';
-    return comms?.isDuplex ? 'Listening…' : 'Hold Space to speak';
+    return comms?.statusLabel || (comms?.isDuplex ? 'Listening…' : 'Hold Space to speak');
   })();
 
   return (
@@ -137,7 +139,7 @@ export function VoiceAgentCard({
               border: `2px solid ${phaseColor(phase, true)}`,
               bgcolor: phase === 'disabled'
                 ? alphaColor(colors.text.dim, '0a')
-                : phase === 'idle'
+                : phase === 'idle' || phase === 'connecting'
                   ? alphaColor(colors.accent.blue, '14')
                   : phase === 'recording'
                     ? alphaColor(colors.accent.green, '1a')
@@ -149,6 +151,13 @@ export function VoiceAgentCard({
                 transform: 'scale(1.05)',
                 boxShadow: `0 0 20px ${alphaColor(colors.accent.blue, '44')}`,
               } : {},
+              ...(phase === 'connecting' && {
+                animation: 'voicePulseLink 1.4s ease-in-out infinite',
+                '@keyframes voicePulseLink': {
+                  '0%, 100%': { boxShadow: `0 0 10px ${alphaColor(colors.accent.blue, '33')}` },
+                  '50%': { boxShadow: `0 0 22px ${alphaColor(colors.accent.blue, '66')}` },
+                },
+              }),
               ...(phase === 'recording' && {
                 animation: 'voicePulseRec 1.5s ease-in-out infinite',
                 '@keyframes voicePulseRec': {
@@ -175,6 +184,8 @@ export function VoiceAgentCard({
                   height={36}
                 />
               </Box>
+            ) : phase === 'connecting' ? (
+              <CommsSpinner color={colors.accent.blue} size={28} />
             ) : phase === 'thinking' ? (
               <CommsSpinner color={colors.accent.orange} size={28} />
             ) : phase === 'disabled' ? (
@@ -197,7 +208,9 @@ export function VoiceAgentCard({
               ? colors.accent.purple
               : phase === 'thinking'
                 ? colors.accent.orange
-                : colors.text.secondary,
+                : phase === 'connecting'
+                  ? colors.accent.blue
+                  : colors.text.secondary,
         textAlign: 'center',
         letterSpacing: '0.03em',
         transition: 'color 0.2s',
@@ -647,6 +660,7 @@ function ConfigChip({ label, onClick, active }: { label: string; onClick: (e: Re
 function phaseColor(phase: ButtonPhase, border: boolean): string {
   switch (phase) {
     case 'disabled': return colors.border.default;
+    case 'connecting':
     case 'idle': return border ? alphaColor(colors.accent.blue, '66') : colors.accent.blue;
     case 'recording': return border ? alphaColor(colors.accent.green, '66') : colors.accent.green;
     case 'thinking': return border ? alphaColor(colors.accent.orange, '66') : colors.accent.orange;

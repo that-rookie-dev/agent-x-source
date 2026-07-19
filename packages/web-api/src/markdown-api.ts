@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import { getLogger } from '@agentx/shared';
-import { getEngine } from './engine.js';
+import { getEngine, awaitStorageForApi } from './engine.js';
 import { MarkdownDocumentStore } from '@agentx/engine';
 import { validate, createMarkdownDocumentSchema } from './validation.js';
 import { broadcast } from './ws.js';
@@ -9,7 +9,7 @@ export function registerMarkdownRoutes(app: Express): void {
   app.get('/api/markdown', async (req: Request, res: Response) => {
     try {
       const eng = getEngine();
-      await eng.storageReady;
+      await awaitStorageForApi();
       if (!eng.pgPool) {
         res.json({ documents: [] });
         return;
@@ -31,7 +31,7 @@ export function registerMarkdownRoutes(app: Express): void {
   app.get('/api/markdown/:id', async (req: Request, res: Response) => {
     try {
       const eng = getEngine();
-      await eng.storageReady;
+      await awaitStorageForApi();
       if (!eng.pgPool) {
         res.status(503).json({ error: 'storage-unavailable' });
         return;
@@ -55,7 +55,7 @@ export function registerMarkdownRoutes(app: Express): void {
   app.post('/api/markdown', validate(createMarkdownDocumentSchema), async (req: Request, res: Response) => {
     try {
       const eng = getEngine();
-      await eng.storageReady;
+      await awaitStorageForApi();
       if (!eng.pgPool) {
         res.status(503).json({ error: 'storage-unavailable' });
         return;
@@ -88,7 +88,7 @@ export function registerMarkdownRoutes(app: Express): void {
   app.delete('/api/markdown/:id', async (req: Request, res: Response) => {
     try {
       const eng = getEngine();
-      await eng.storageReady;
+      await awaitStorageForApi();
       if (!eng.pgPool) {
         res.status(503).json({ error: 'storage-unavailable' });
         return;

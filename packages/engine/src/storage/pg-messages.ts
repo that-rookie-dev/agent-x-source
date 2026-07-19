@@ -3,6 +3,7 @@ import { generateId, getLogger } from '@agentx/shared';
 import type {
   StorableMessage,
   StorableMessageInput,
+  StorableSession,
 } from '@agentx/shared';
 import type { CacheState } from './pg-helpers.js';
 
@@ -54,6 +55,48 @@ export function getMessageCount(ctx: MessageContext, sessionId: string): number 
   return (ctx.cache.messages.get(sessionId) ?? []).length;
 }
 
+/**
+ * Voice / channel turns can race ahead of session creation (xAI prep timeout,
+ * deferred ensureChatSession). Materialize a cache + DB row so message INSERTs
+ * are not silently dropped by the session-existence guard.
+ * Uses ON CONFLICT DO NOTHING so we never clobber a real session row.
+ */
+export function ensureSessionRowForWrite(ctx: MessageContext, sessionId: string): boolean {
+  if (!sessionId) return false;
+  if (ctx.cache.sessions.has(sessionId)) return true;
+  const now = new Date().toISOString();
+  const title = sessionId === '__channel__:voice' || sessionId.startsWith('voice:')
+    ? 'Voice'
+    : 'Chat';
+  const stub: StorableSession = {
+    id: sessionId,
+    title,
+    status: 'active',
+    providerId: 'unknown',
+    modelId: 'unknown',
+    scopePath: '',
+    parentId: null,
+    contextKind: 'agent_x',
+    hostCrewId: null,
+    tokenUsed: 0,
+    tokenAvailable: 128_000,
+    createdAt: now,
+    updatedAt: now,
+  };
+  ctx.cache.sessions.set(sessionId, stub);
+  ctx.write(
+    `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      sessionId, title, 'active', 'unknown', 'unknown', '', null, 0, 128_000,
+      'agent_x', null, null, null, null, null, null, null, now, now,
+    ],
+  );
+  _logger.warn('PG_ENSURE_SESSION', `Materialized missing session row for writes: ${sessionId.slice(0, 48)}`);
+  return true;
+}
+
 export function insertMessage(
   ctx: MessageContext,
   msg: {
@@ -76,8 +119,11 @@ export function insertMessage(
   },
 ): void {
   // Session existence guard — prevent FK violations before they reach the DB.
-  // If the session is not in the cache, it was never created (or was deleted).
-  // Skip the write and log a warning so the caller can investigate.
+  // If the session is missing from cache (voice race / lazy hydrate), materialize
+  // a row instead of silently dropping the message.
+  if (!ctx.cache.sessions.has(msg.sessionId)) {
+    ensureSessionRowForWrite(ctx, msg.sessionId);
+  }
   if (!ctx.cache.sessions.has(msg.sessionId)) {
     _logger.warn('PG_INSERT_MESSAGE_SKIP', `Skipping message INSERT — session ${msg.sessionId.slice(0, 12)} not in cache (never created or deleted)`, {
       sessionId: msg.sessionId,
@@ -209,6 +255,9 @@ export function insertPart(
   },
 ): void {
   // Session existence guard — prevent FK violations before they reach the DB.
+  if (!ctx.cache.sessions.has(sessionId)) {
+    ensureSessionRowForWrite(ctx, sessionId);
+  }
   if (!ctx.cache.sessions.has(sessionId)) {
     _logger.warn('PG_INSERT_PART_SKIP', `Skipping part INSERT — session ${sessionId.slice(0, 12)} not in cache (never created or deleted)`, {
       sessionId,

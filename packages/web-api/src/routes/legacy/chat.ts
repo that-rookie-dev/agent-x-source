@@ -14,6 +14,7 @@ import {
   getForceWebSearchError,
   isCrewPrivateSessionRecord,
   buildTurnInstruction,
+  ensureSessionHydratedForTurn,
 } from '../../chat-helpers.js';
 import { validate, chatMessageSchema, chatSteerSchema } from '../../validation.js';
 import { ensureSubscribed, persistMessageDirect } from '../../ws.js';
@@ -103,12 +104,10 @@ export function createChatRouter(): Router {
       const sid = agent.sessionId;
 
       // Ensure the session cache is hydrated before any message/tool persistence happens.
-      try {
+      if (sid) {
         const store = eng.sessionManager.getStorageAdapter?.();
-        if (sid && store && typeof (store as { ensureSessionHydrated?: (sessionId: string) => Promise<void> }).ensureSessionHydrated === 'function') {
-          await (store as { ensureSessionHydrated: (sessionId: string) => Promise<void> }).ensureSessionHydrated(sid);
-        }
-      } catch { /* best-effort — Agent.sendMessage also hydrates */ }
+        await ensureSessionHydratedForTurn(store, sid);
+      }
 
       if (sid) {
         const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });
@@ -272,12 +271,10 @@ export function createChatRouter(): Router {
       const sid = agent.sessionId;
 
       // Ensure the session cache is hydrated before any message/tool persistence happens.
-      try {
+      if (sid) {
         const store = eng.sessionManager.getStorageAdapter?.();
-        if (sid && store && typeof (store as { ensureSessionHydrated?: (sessionId: string) => Promise<void> }).ensureSessionHydrated === 'function') {
-          await (store as { ensureSessionHydrated: (sessionId: string) => Promise<void> }).ensureSessionHydrated(sid);
-        }
-      } catch { /* best-effort — Agent.sendMessage also hydrates */ }
+        await ensureSessionHydratedForTurn(store, sid);
+      }
 
       if (sid) {
         const handoff = await handleChannelHandoffRequest({ eng, sessionId: sid, text: fullText });

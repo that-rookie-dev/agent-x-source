@@ -15,10 +15,30 @@ import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCre
 import type { VoiceEngineSession, VoiceEngineState } from './types.js';
 import { getEngine } from '../../engine.js';
 import { persistMessageDirect } from '../../ws.js';
-import { loadSessionMessagesPage, buildAgentInstruction, isCrewPrivateSessionRecord } from '../../chat-helpers.js';
+import { buildAgentInstruction, isCrewPrivateSessionRecord } from '../../chat-helpers.js';
 import { resolveCrewPrivateHostForAgent } from '../../host-crew-session.js';
-import { buildCrewCallRealtimeOpenerInstruction } from '../../voice-speakable.js';
-import { syncIntegrationToolsIntoToolkit } from '../sync-integration-tools.js';
+import {
+  buildCrewCallRealtimeOpenerInstruction,
+} from '../../voice-speakable.js';
+import { restorePrimaryToolkitBridge, syncIntegrationToolsIntoToolkit } from '../sync-integration-tools.js';
+import {
+  idleMsSince,
+  resolveVoiceIdleBand,
+  XAI_RESUME_IDLE_MS,
+  type VoiceIdleBand,
+} from '../voice-realtime-policy.js';
+import {
+  loadVoiceRealtimeState,
+  persistXaiConversationId,
+  touchVoiceRealtimeActive,
+} from '../voice-realtime-store.js';
+import {
+  buildColdSummaryText,
+  buildWarmReminderText,
+  ensureVoiceSessionSummary,
+  loadRecentVoiceDelta,
+  loadVoiceSessionMessages,
+} from '../VoiceSessionSummaryService.js';
 
 const XAI_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
 const VOICE_SAMPLE_RATE = 16_000;
@@ -69,9 +89,21 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   /** Greeting kickoff queued before xAI session.updated, or requested by client. */
   private pendingKickoff: 'open' | 'resume' | null = null;
   private kickoffIssued = false;
+  /** Open greeting response in flight — UI should show purple speaking, not orange thinking. */
+  private greetingInFlight = false;
+  /** True when prior voice context exists (resume / remind / summary) — skip open greeting. */
+  private hasSeededSpokenHistory = false;
   private closed = false;
   private ready = false;
   private xaiUrl: string;
+  /** Stable xAI conversation id for this Agent-X voice session (never rotated). */
+  private persistedConversationId: string | null = null;
+  private lastVoiceActiveAt: string | null = null;
+  private idleBand: VoiceIdleBand = 'fresh';
+  /** One-shot fallback if xAI rejects a resumed conversation_id query param. */
+  private resumeIdOmitRetryUsed = false;
+  /** Ignore teardown events from a socket we intentionally replaced. */
+  private suppressXaiSocketTeardown = false;
   private apiKey: string;
   private model: string;
   private voice: string;
@@ -111,7 +143,29 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   async start(): Promise<void> {
-    await this.ensureChatSession();
+    getLogger().info('XAI_VOICE', 'Starting xAI realtime session…');
+    // Session row must exist in the PG cache BEFORE any transcript persist.
+    // Hydration / identity load can hang — never block connect on those — but
+    // skipping session creation entirely caused PG_INSERT_MESSAGE_SKIP and lost
+    // voice turns.
+    this.ensureChatSessionRecord();
+    const prep = Promise.all([
+      this.hydrateChatSessionMessages().catch((err) => {
+        getLogger().warn(
+          'XAI_VOICE',
+          `hydrateChatSessionMessages failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }),
+      this.loadRealtimeIdentity(),
+    ]);
+    const prepTimedOut = await Promise.race([
+      prep.then(() => false),
+      new Promise<true>((resolve) => setTimeout(() => resolve(true), 3_000)),
+    ]);
+    if (prepTimedOut) {
+      getLogger().warn('XAI_VOICE', 'Session prep timed out — connecting to xAI without full identity');
+      void prep.catch(() => undefined);
+    }
     this.connect();
     // Wait until the xAI session is configured before returning.
     await new Promise<void>((resolve, reject) => {
@@ -129,6 +183,66 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       };
       check();
     });
+  }
+
+  private voiceSessionKey(): string {
+    return this.chatSessionId ?? '__channel__:voice';
+  }
+
+  /** Load durable conversation id + idle band before opening the xAI socket. */
+  private async loadRealtimeIdentity(): Promise<void> {
+    const key = this.voiceSessionKey();
+    try {
+      const state = await Promise.race([
+        loadVoiceRealtimeState(key),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_500)),
+      ]);
+      this.persistedConversationId = state?.xaiConversationId?.trim() || null;
+      this.lastVoiceActiveAt = state?.lastVoiceActiveAt ?? null;
+      const idle = idleMsSince(this.lastVoiceActiveAt);
+      this.idleBand = resolveVoiceIdleBand(idle);
+      getLogger().info(
+        'XAI_VOICE',
+        `Realtime identity for ${key}: conversation=${this.persistedConversationId ?? 'none'} idleBand=${this.idleBand}`
+          + (idle != null ? ` idleMs=${idle}` : ''),
+      );
+    } catch (err) {
+      getLogger().warn(
+        'XAI_VOICE',
+        `Failed to load voice realtime state: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.idleBand = 'fresh';
+    }
+  }
+
+  private markVoiceActive(): void {
+    const key = this.voiceSessionKey();
+    const at = new Date().toISOString();
+    this.lastVoiceActiveAt = at;
+    void touchVoiceRealtimeActive(key, at).catch(() => { /* best-effort */ });
+  }
+
+  private isConversationResumeError(message: string): boolean {
+    // Do NOT match our own synthetic close reason — only real xAI/API errors.
+    return /conversation not found|unknown conversation|invalid conversation|no such conversation|conversation_id (?:is )?(?:invalid|unknown|not found)|resumption (?:failed|rejected|invalid)/i.test(
+      message,
+    );
+  }
+
+  /** Keep durable id; retry once without ?conversation_id= if xAI rejects the resume param. */
+  private maybeRetryConnectWithoutConversationId(reason: string): boolean {
+    if (this.resumeIdOmitRetryUsed || !this.persistedConversationId || this.closed) return false;
+    if (!this.isConversationResumeError(reason)) return false;
+    this.resumeIdOmitRetryUsed = true;
+    this.suppressXaiSocketTeardown = true;
+    getLogger().warn(
+      'XAI_VOICE',
+      `Retrying xAI connect without conversation_id query (keeping durable id ${this.persistedConversationId}): ${reason}`,
+    );
+    this.ready = false;
+    this.disconnectXai();
+    this.connect({ omitConversationId: true });
+    return true;
   }
 
   onBinaryAudio(pcm: Buffer): void {
@@ -188,18 +302,28 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     this.state = state;
   }
 
-  private connect(): void {
+  private connect(options?: { omitConversationId?: boolean }): void {
     try {
-      getLogger().info('XAI_VOICE', `Connecting to xAI realtime: ${this.xaiUrl}`);
-      const ws = new WebSocket(this.xaiUrl, {
+      let url = this.xaiUrl;
+      if (this.persistedConversationId && !options?.omitConversationId) {
+        const sep = url.includes('?') ? '&' : '?';
+        url = `${url}${sep}conversation_id=${encodeURIComponent(this.persistedConversationId)}`;
+      }
+      getLogger().info(
+        'XAI_VOICE',
+        `Connecting to xAI realtime: ${url.replace(/conversation_id=[^&]+/, 'conversation_id=…')}`,
+      );
+      const ws = new WebSocket(url, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
       });
       this.xaiWs = ws;
 
       ws.on('open', () => {
+        this.suppressXaiSocketTeardown = false;
         getLogger().info('XAI_VOICE', 'xAI realtime WebSocket open');
         void this.refreshToolsAndSessionUpdate().catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
+          if (this.maybeRetryConnectWithoutConversationId(message)) return;
           getLogger().error('XAI_VOICE', `session.update failed: ${message}`);
           this.sendError(`xAI session update failed: ${message}`);
           this.setState('error');
@@ -227,6 +351,8 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       });
 
       ws.on('error', (err: Error) => {
+        if (this.suppressXaiSocketTeardown || this.xaiWs !== ws) return;
+        if (this.maybeRetryConnectWithoutConversationId(err.message)) return;
         getLogger().error('XAI_VOICE', `xAI connection error: ${err.message}`);
         this.sendError(`xAI connection error: ${err.message}`);
         this.setState('error');
@@ -234,12 +360,17 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       });
 
       ws.on('close', () => {
-        if (!this.closed) {
+        if (this.suppressXaiSocketTeardown || this.xaiWs !== ws) return;
+        if (!this.closed && !this.ready) {
+          getLogger().warn('XAI_VOICE', 'xAI realtime WebSocket closed during handshake');
+          this.sendError('xAI connection closed');
+          this.setState('error');
+        } else if (!this.closed) {
           getLogger().warn('XAI_VOICE', 'xAI realtime WebSocket closed unexpectedly');
           this.sendError('xAI connection closed');
           this.setState('error');
         }
-        this.disconnectXai();
+        if (this.xaiWs === ws) this.disconnectXai();
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -257,24 +388,62 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   /**
-   * Sync native + MCP tools into this voice toolkit, then push session.update.
-   * Permissions UI tabs are display-only — agents always receive the full set.
+   * Push session.update IMMEDIATELY so xAI can emit session.updated / we can
+   * send session_ready. MCP sync is slow (per-connection await) and must not
+   * gate the voice uplink — that left the UI stuck on "Connecting…".
    */
   private async refreshToolsAndSessionUpdate(): Promise<void> {
-    const sync = await syncIntegrationToolsIntoToolkit(
-      this.toolService.getRegistry(),
-      this.toolService.getToolExecutor(),
-    );
-    this.connectedIntegrationNames = sync.connectedNames;
-    getLogger().info(
-      'XAI_VOICE',
-      `Tool sync: ${sync.registeredCount} MCP tool(s)`
-        + (sync.connectedNames.length ? ` from ${sync.connectedNames.join(', ')}` : ' (no MCP connections)'),
-    );
-    this.sendSessionUpdate();
+    // 1) Minimal update first — get the realtime session live.
+    // Omit resumption on the first update: unknown/rejected session.update fields
+    // can fail silently (no session.updated → UI stuck on Connecting…).
+    this.sendSessionUpdate({ includeResumption: false });
+
+    // 2) Best-effort tool sync with a hard timeout, then refresh tools + resumption.
+    try {
+      const syncPromise = syncIntegrationToolsIntoToolkit(
+        this.toolService.getRegistry(),
+        this.toolService.getToolExecutor(),
+      );
+      const timedOut = await Promise.race([
+        syncPromise.then((sync) => ({ sync, timedOut: false as const })),
+        new Promise<{ sync: null; timedOut: true }>((resolve) => {
+          setTimeout(() => resolve({ sync: null, timedOut: true }), 4_000);
+        }),
+      ]);
+      if (timedOut.timedOut) {
+        getLogger().warn('XAI_VOICE', 'Integration tool sync timed out — continuing with base tools');
+        // prepareForAgentTurn may still hold the toolkit bridge — restore now so
+        // local voice / chat keep working while sync finishes in the background.
+        restorePrimaryToolkitBridge();
+        void syncPromise.catch(() => undefined);
+        if (!this.closed && this.xaiWs?.readyState === WebSocket.OPEN) {
+          this.sendSessionUpdate({ includeResumption: true });
+        }
+        return;
+      }
+      if (timedOut.sync) {
+        this.connectedIntegrationNames = timedOut.sync.connectedNames;
+        getLogger().info(
+          'XAI_VOICE',
+          `Tool sync: ${timedOut.sync.registeredCount} MCP tool(s)`
+            + (timedOut.sync.connectedNames.length ? ` from ${timedOut.sync.connectedNames.join(', ')}` : ' (no MCP connections)'),
+        );
+      }
+      if (!this.closed && this.xaiWs?.readyState === WebSocket.OPEN) {
+        this.sendSessionUpdate({ includeResumption: true });
+      }
+    } catch (err) {
+      getLogger().warn(
+        'XAI_VOICE',
+        `Integration tool sync failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      if (!this.closed && this.xaiWs?.readyState === WebSocket.OPEN) {
+        this.sendSessionUpdate({ includeResumption: true });
+      }
+    }
   }
 
-  private sendSessionUpdate(): void {
+  private sendSessionUpdate(options?: { includeResumption?: boolean }): void {
     const registry = this.toolService.getRegistry();
     // Include native + MCP (integrations). Only strip meta tools unused on voice.
     const toolList = registry.list().filter((t) => t.category !== 'ai_meta' && t.category !== 'agent_meta');
@@ -295,29 +464,35 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         }
       : { type: null };
 
+    const sessionBody: Record<string, unknown> = {
+      instructions: this.buildInstructions(),
+      voice: this.voice,
+      turn_detection: turnDetection,
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: VOICE_SAMPLE_RATE },
+          transport: 'binary',
+          // NOTE: xAI does NOT support transcription.model (only language_hint
+          // and keyterms). Sending an unsupported field can cause the entire
+          // session.update to fail silently, making xAI fall back to default
+          // VAD settings (threshold 0.85) which cuts off speech aggressively.
+          // xAI sends transcription events automatically — no config needed.
+        },
+        output: {
+          format: { type: 'audio/pcm', rate: OUTPUT_SAMPLE_RATE },
+          transport: 'binary',
+        },
+      },
+      tools,
+    };
+    // Opt into conversation resumption so the durable conversation_id keeps history.
+    if (options?.includeResumption !== false) {
+      sessionBody.resumption = { enabled: true };
+    }
+
     const payload = {
       type: 'session.update',
-      session: {
-        instructions: this.buildInstructions(),
-        voice: this.voice,
-        turn_detection: turnDetection,
-        audio: {
-          input: {
-            format: { type: 'audio/pcm', rate: VOICE_SAMPLE_RATE },
-            transport: 'binary',
-            // NOTE: xAI does NOT support transcription.model (only language_hint
-            // and keyterms). Sending an unsupported field can cause the entire
-            // session.update to fail silently, making xAI fall back to default
-            // VAD settings (threshold 0.85) which cuts off speech aggressively.
-            // xAI sends transcription events automatically — no config needed.
-          },
-          output: {
-            format: { type: 'audio/pcm', rate: OUTPUT_SAMPLE_RATE },
-            transport: 'binary',
-          },
-        },
-        tools,
-      },
+      session: sessionBody,
     };
     getLogger().info('XAI_VOICE', `session.update sending turn_detection: ${JSON.stringify(turnDetection)}`);
     this.sendXai(payload);
@@ -449,14 +624,30 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       return;
     }
 
+    // Hold/resume or mid-call reconnect: continue silently with seeded history.
+    if (kind === 'resume' || this.hasSeededSpokenHistory) {
+      this.kickoffIssued = true;
+      this.pendingKickoff = null;
+      getLogger().info('XAI_VOICE', `Silent call ${kind} — no greeting (continuing same call)`);
+      this.setState(this.mode === 'duplex' ? 'listening' : 'idle');
+      return;
+    }
+
     const host = this.resolveCrewCallHost();
     if (!host) {
       getLogger().warn('XAI_VOICE', 'Call kickoff: crew host unresolved — greeting anyway with session instructions');
     }
+    const openerIdentity = host
+      ? { name: host.name, title: host.title, expertise: host.expertise }
+      : null;
+    const who = host
+      ? `${host.name}${host.title ? ` (${host.title})` : ''}`
+      : 'your named persona';
 
     this.kickoffIssued = true;
     this.pendingKickoff = null;
-    getLogger().info('XAI_VOICE', `Issuing call greeting kickoff (${kind})`);
+    this.greetingInFlight = true;
+    getLogger().info('XAI_VOICE', `Issuing call greeting kickoff (${kind}) as ${who}`);
 
     // Inject opener guidance and ask the model to speak first (realtime audio — no ⟨voice⟩ tags).
     this.sendXai({
@@ -466,20 +657,26 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         role: 'user',
         content: [{
           type: 'input_text',
-          text: kind === 'resume'
-            ? '[Call resumed from hold. Speak first and continue naturally.]'
-            : '[Call connected. Speak first and open the conversation in character.]',
+          text: `[Call connected. Speak first as ${who} — introduce yourself by name/role and open with one persona-fit question. Never say "crew".]`,
         }],
       },
     });
     this.sendXai({
       type: 'response.create',
       response: {
-        instructions: buildCrewCallRealtimeOpenerInstruction(kind),
+        instructions: buildCrewCallRealtimeOpenerInstruction('open', openerIdentity),
       },
     });
-    this.setState('processing');
-    this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'running' });
+    // Stay in listening until audio/text arrives — UI maps greeting to purple speaking,
+    // not orange Thinking… (running/processing before first audio looked like a hang).
+    this.setState(this.mode === 'duplex' ? 'listening' : 'idle');
+    this.transport.sendControl({
+      type: 'agent_status',
+      sessionId: this.sessionId,
+      status: 'speaking',
+      text: undefined,
+      greeting: true,
+    });
   }
 
   private getPersona() {
@@ -533,7 +730,17 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       await this.handleSessionUpdated();
       return;
     }
+    // Same for conversation.created occasionally arriving without a type field.
+    if ((!type || type === 'conversation.created') && event.conversation) {
+      const conv = event.conversation as { id?: string };
+      const id = typeof conv?.id === 'string' ? conv.id.trim() : '';
+      if (id) this.handleConversationCreated(id);
+      if (!type) return;
+    }
     switch (type) {
+      case 'conversation.created':
+        // Handled above (shared with untyped payload).
+        break;
       case 'session.created':
         // No-op — wait for session.updated before considering the session ready.
         break;
@@ -593,14 +800,17 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       case 'response.done':
         await this.handleResponseDone(event);
         break;
-      case 'error':
-        this.setState('error');
-        this.sendError(String(
+      case 'error': {
+        const errMsg = String(
           (event.error as { message?: string } | undefined)?.message
           ?? event.message
           ?? 'xAI realtime error',
-        ));
+        );
+        if (!this.ready && this.maybeRetryConnectWithoutConversationId(errMsg)) break;
+        this.setState('error');
+        this.sendError(errMsg);
         break;
+      }
       default:
         break;
     }
@@ -620,45 +830,76 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     void this.transport.playAudio(data, OUTPUT_SAMPLE_RATE);
   }
 
+  private handleConversationCreated(conversationId: string): void {
+    const key = this.voiceSessionKey();
+    if (this.persistedConversationId) {
+      if (conversationId !== this.persistedConversationId) {
+        getLogger().warn(
+          'XAI_VOICE',
+          `xAI returned conversation ${conversationId} but keeping durable id ${this.persistedConversationId}`,
+        );
+      }
+      return;
+    }
+    this.persistedConversationId = conversationId;
+    void persistXaiConversationId(key, conversationId)
+      .then(() => getLogger().info('XAI_VOICE', `Persisted durable xAI conversation id for ${key}`))
+      .catch((err: unknown) => {
+        getLogger().warn(
+          'XAI_VOICE',
+          `Failed to persist conversation id: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+  }
+
   private async handleSessionUpdated(): Promise<void> {
     if (this.ready) return;
     this.ready = true;
-    await this.seedHistory();
+    // Tell the browser the uplink is live immediately — do not await context
+    // injection (summary LLM) before session_ready.
     await this.transport.start();
     this.setState(this.mode === 'duplex' ? 'listening' : 'idle');
-    // Crew calls: greet as soon as the realtime session is live.
-    // Wait briefly so a client resume kickoff can supersede the default open greeting.
-    if (this.isCrewCallSession()) {
-      setTimeout(() => {
-        if (this.closed || this.kickoffIssued) return;
-        if (!this.pendingKickoff) this.pendingKickoff = 'open';
+
+    // Context in the background. Kickoff is CLIENT-driven only (call_kickoff) so
+    // we never jump straight to orange "Thinking…" before blue connect / purple greeting.
+    void (async () => {
+      try {
+        await this.applyContextPolicy();
+      } catch (err) {
+        getLogger().warn(
+          'XAI_VOICE',
+          `applyContextPolicy failed after ready: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      // If the client already queued kickoff while we were injecting context, flush it.
+      if (this.isCrewCallSession() && this.pendingKickoff && !this.kickoffIssued && !this.closed) {
         this.flushPendingKickoff();
-      }, 500);
-    }
+      }
+    })();
   }
 
-  private async ensureChatSession(): Promise<void> {
+  /** Sync: put the durable chat/voice session into the store cache (required for persist). */
+  private ensureChatSessionRecord(): void {
     const id = this.chatSessionId ?? `__channel__:voice`;
     this.chatSessionId = id;
     const eng = getEngine();
     const store = eng.sessionManager.getStorageAdapter();
     if (!store) return;
-    if (store.ensureSessionHydrated) {
-      try { await store.ensureSessionHydrated(id); } catch { /* ignore */ }
-    }
-    const existing = store.getSession(id);
-    if (existing) return;
+    if (store.getSession(id)) return;
 
-    const providerId = this.config.voice?.provider?.activeProvider ?? this.config.provider.activeProvider;
-    const modelId = this.config.voice?.provider?.activeModel ?? this.config.provider.activeModel;
-    if (!providerId || !modelId) {
-      getLogger().warn('XAI_VOICE', 'No provider/model configured; voice messages may not persist');
-      return;
-    }
+    const providerId =
+      this.config.voice?.provider?.activeProvider
+      ?? this.config.provider.activeProvider
+      ?? 'xai';
+    const modelId =
+      this.config.voice?.provider?.activeModel
+      ?? this.config.provider.activeModel
+      ?? this.model
+      ?? 'grok-voice-latest';
     try {
       store.createSession({
         id,
-        title: 'Voice',
+        title: id === '__channel__:voice' ? 'Voice' : 'Chat',
         status: 'active',
         providerId,
         modelId,
@@ -671,44 +912,98 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     }
   }
 
-  private async seedHistory(): Promise<void> {
-    const id = this.chatSessionId;
-    if (!id) return;
-    // For voice-only sessions, seed from the most recent chat session so the
-    // voice agent has context from the user's latest conversation.
-    const historyId = id === `__channel__:voice` ? this.resolveRecentChatSessionId() : id;
-    if (!historyId) return;
+  /** Async: load recent messages — never required before connect / persist. */
+  private async hydrateChatSessionMessages(): Promise<void> {
+    const id = this.chatSessionId ?? `__channel__:voice`;
+    this.chatSessionId = id;
+    this.ensureChatSessionRecord();
+    const eng = getEngine();
+    const store = eng.sessionManager.getStorageAdapter();
+    if (!store?.ensureSessionHydrated) return;
     try {
-      const page = await loadSessionMessagesPage(historyId, { limit: 20 });
-      for (const raw of page.messages) {
-        const msg = raw as { role?: string; content?: string };
-        if (!msg.content || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
-        const contentType = msg.role === 'user' ? 'input_text' : 'text';
-        this.sendXai({
-          type: 'conversation.item.create',
-          item: {
-            type: 'message',
-            role: msg.role,
-            content: [{ type: contentType, text: msg.content }],
-          },
-        });
-      }
-    } catch (err) {
-      getLogger().warn('XAI_VOICE', `Failed to seed history: ${err instanceof Error ? err.message : String(err)}`);
-    }
+      await Promise.race([
+        Promise.resolve(store.ensureSessionHydrated(id)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('hydrate timeout')), 2_000)),
+      ]);
+    } catch { /* ignore — voice uplink must not wait on storage */ }
   }
 
-  private resolveRecentChatSessionId(): string | undefined {
-    try {
-      const eng = getEngine();
-      const active = eng.sessionManager.getActiveSession()?.id;
-      if (active && active !== '__channel__:voice') return active;
-      const core = eng.sessionManager.findAgentXCoreSession()?.id;
-      if (core && core !== '__channel__:voice') return core;
-      return undefined;
-    } catch {
-      return undefined;
+  /**
+   * Idle-based context policy (never rotates conversation_id):
+   * - hot  (<25m idle): rely on xAI resumption cache — inject nothing
+   * - warm (25–120m): summary + recent delta reminder
+   * - cold (>120m): summary only (rebuild at most once/day)
+   * - fresh: no prior activity — nothing to inject
+   */
+  private async applyContextPolicy(): Promise<void> {
+    const key = this.voiceSessionKey();
+    const priorMsgs = await loadVoiceSessionMessages(key);
+    const hadPrior = priorMsgs.length > 0 || Boolean(this.persistedConversationId);
+
+    if (this.idleBand === 'hot') {
+      this.hasSeededSpokenHistory = hadPrior;
+      getLogger().info('XAI_VOICE', `Context policy hot — resume cache, no inject (${key})`);
+      return;
     }
+
+    if (this.idleBand === 'fresh') {
+      this.hasSeededSpokenHistory = priorMsgs.length > 0;
+      getLogger().info('XAI_VOICE', `Context policy fresh — cold start (${key})`);
+      return;
+    }
+
+    if (this.idleBand === 'warm') {
+      let state = await loadVoiceRealtimeState(key);
+      // Prefer an existing summary; build one if missing and history exists (still ≤1/day).
+      let summary = state?.summary?.trim() || null;
+      if (!summary && priorMsgs.length > 0) {
+        summary = (await ensureVoiceSessionSummary(key))?.trim() || null;
+        state = await loadVoiceRealtimeState(key);
+      }
+      const recent = await loadRecentVoiceDelta(key, state?.summaryUpdatedAt);
+      if (!summary && recent.length === 0) {
+        this.hasSeededSpokenHistory = false;
+        getLogger().info('XAI_VOICE', `Context policy warm — nothing to remind (${key})`);
+        return;
+      }
+      const idle = idleMsSince(this.lastVoiceActiveAt) ?? XAI_RESUME_IDLE_MS;
+      const text = buildWarmReminderText(summary, recent, idle / 60_000);
+      this.injectContextItem(text);
+      this.hasSeededSpokenHistory = true;
+      getLogger().info(
+        'XAI_VOICE',
+        `Context policy warm — reminded with summary=${Boolean(summary)} recent=${recent.length} (${key})`,
+      );
+      return;
+    }
+
+    // cold — summary only
+    const summary = await ensureVoiceSessionSummary(key);
+    if (!summary?.trim()) {
+      this.hasSeededSpokenHistory = priorMsgs.length > 0;
+      getLogger().info('XAI_VOICE', `Context policy cold — no summary available (${key})`);
+      return;
+    }
+    this.injectContextItem(buildColdSummaryText(summary));
+    this.hasSeededSpokenHistory = true;
+    getLogger().info('XAI_VOICE', `Context policy cold — summary only (${key})`);
+  }
+
+  private injectContextItem(text: string): void {
+    if (!text.trim()) return;
+    // Context-only — use system role so duplex create_response does not treat this
+    // as a user turn and narrate the whole history into the call transcript.
+    this.sendXai({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'system',
+        content: [{
+          type: 'input_text',
+          text: `[INTERNAL CONTEXT — do not speak this aloud or quote it back]\n${text.trim()}`,
+        }],
+      },
+    });
   }
 
   private handleUserTranscriptCompleted(event: Record<string, unknown>): void {
@@ -723,13 +1018,15 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   private persistUserMessage(text: string): void {
-    const id = this.chatSessionId ?? this.sessionId;
+    this.ensureChatSessionRecord();
+    const id = this.chatSessionId ?? '__channel__:voice';
     const metadata: MessageMetadata = {
       engine: 'realtime_xai',
       provider: 'xai',
       model: this.model,
     };
     try { persistMessageDirect(id, 'user', text, { metadata }); } catch { /* best-effort */ }
+    this.markVoiceActive();
   }
 
   private handleResponseCreated(event: Record<string, unknown>): void {
@@ -744,6 +1041,17 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     this.playbackFinished = false;
     this.responseFinished = false;
     this.speakingStartedAt = 0;
+    if (this.greetingInFlight) {
+      // Greeting: stay on speaking (purple) — never flash orange Thinking…
+      this.setState('speaking');
+      this.transport.sendControl({
+        type: 'agent_status',
+        sessionId: this.sessionId,
+        status: 'speaking',
+        greeting: true,
+      });
+      return;
+    }
     this.setState('processing');
     this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'running' });
   }
@@ -887,6 +1195,8 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   private finishResponseTurn(): void {
     if (this.responseFinished) return;
     this.responseFinished = true;
+    const wasGreeting = this.greetingInFlight;
+    this.greetingInFlight = false;
     const text = this.assistantText.trim();
     if (text) {
       this.persistAssistantMessage(text);
@@ -895,9 +1205,15 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         sessionId: this.sessionId,
         status: 'complete',
         text,
+        ...(wasGreeting ? { greeting: true } : {}),
       });
     } else {
-      this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'complete' });
+      this.transport.sendControl({
+        type: 'agent_status',
+        sessionId: this.sessionId,
+        status: 'complete',
+        ...(wasGreeting ? { greeting: true } : {}),
+      });
     }
     void this.transport.endTurn();
     this.setState(this.mode === 'duplex' ? 'listening' : 'idle');
@@ -911,13 +1227,15 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   private persistAssistantMessage(text: string): void {
-    const id = this.chatSessionId ?? this.sessionId;
+    this.ensureChatSessionRecord();
+    const id = this.chatSessionId ?? '__channel__:voice';
     const metadata: MessageMetadata = {
       engine: 'realtime_xai',
       provider: 'xai',
       model: this.model,
     };
     try { persistMessageDirect(id, 'assistant', text, { metadata }); } catch { /* best-effort */ }
+    this.markVoiceActive();
   }
 
   private handleSpeechStarted(): void {

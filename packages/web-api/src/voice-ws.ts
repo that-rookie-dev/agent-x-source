@@ -13,6 +13,7 @@ import {
   buildVoiceChatReportPhaseInstruction,
   buildCrewCallTurnInstruction,
   buildCrewCallOpenerInstruction,
+  crewCallSessionHasSpokenHistory,
   extractVoiceSpeakable,
   isVoiceSummaryOnlyMessage,
   userWantsVoiceChatReport,
@@ -28,12 +29,13 @@ import { getEngine, createAgent, destroyAgent, setCurrentClientSituation, hydrat
 import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS, isCrewPrivateSessionRecord } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
-import { normalizeClientSituation, getAgentFilesDir, getLogger, isCrewVoiceSessionId } from '@agentx/shared';
+import { normalizeClientSituation, getAgentFilesDir, getLogger } from '@agentx/shared';
 import type { ProviderId, QuestionnairePayload } from '@agentx/shared';
 import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
 import { updateDuplexEndpointing } from './voice/duplex-endpointing.js';
+import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
 
 const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
@@ -345,13 +347,15 @@ export function setupVoiceWebSocket(_server: Server): void {
   registerWebSocketRoute('/ws/voice', voiceWss);
 
   voiceWss.on('connection', (ws) => {
-    ws.send(JSON.stringify({ type: 'connected' }));
+    // Register handlers BEFORE sending connected — a client that sends
+    // session_start on open can otherwise race and drop the first frame.
     ws.on('message', (data, isBinary) => {
       void handleVoiceMessage(ws, data, isBinary);
     });
     ws.on('close', () => {
       cleanupSession(ws);
     });
+    ws.send(JSON.stringify({ type: 'connected' }));
   });
 }
 
@@ -515,8 +519,10 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   if (!peek && chatSessionId === '__channel__:voice') {
     const cfg = eng.configManager.load();
     const voiceProvider = cfg.voice?.provider;
-    const providerId = (voiceProvider?.activeProvider as ProviderId) || cfg.provider.activeProvider;
-    const modelId = voiceProvider?.activeModel || cfg.provider.activeModel;
+    // Fallbacks required — missing provider/model used to abort creation and then
+    // every voice turn hit PG_INSERT_MESSAGE_SKIP (session never entered cache).
+    const providerId = ((voiceProvider?.activeProvider as ProviderId) || cfg.provider.activeProvider || 'openai') as ProviderId;
+    const modelId = voiceProvider?.activeModel || cfg.provider.activeModel || 'default';
     const scope = getAgentFilesDir();
     try {
       eng.sessionManager.createSession(
@@ -543,7 +549,14 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   if (!session) return false;
   createAgent(undefined, session);
   if (eng.agent) {
-    await hydrateAgentRecentHistory(eng.agent, chatSessionId, 24);
+    // Storage hydration can hang on a busy write queue / PG lock — never block
+    // a voice turn forever waiting for history (left clients stuck after STT).
+    try {
+      await Promise.race([
+        hydrateAgentRecentHistory(eng.agent, chatSessionId, 24),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
+      ]);
+    } catch { /* best-effort */ }
   }
   ensureSubscribed();
   return true;
@@ -577,7 +590,9 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
     return;
   }
 
-  const mode = msg.mode === 'duplex' ? 'duplex' : 'push-to-talk';
+  // Engine owns the mode: xAI is always duplex; Local is always PTT.
+  // Ignore stale client/config duplex leftovers after switching engines.
+  const mode = voiceConfig.engine === 'realtime_xai' ? 'duplex' : 'push-to-talk';
   const voiceOnly = Boolean(msg.voiceOnly);
   const chatSessionId = voiceOnly
     ? '__channel__:voice'
@@ -588,15 +603,23 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   if (voiceConfig.engine === 'realtime_xai') {
     const transport = new WebSocketVoiceTransport({ ws, sessionId: voiceWsSessionId, mode, engine: 'realtime_xai' });
     const engine = new XaiRealtimeEngine();
-    const session = await engine.createSession({
-      ws,
-      transport,
-      sessionId: voiceWsSessionId,
-      mode,
-      chatSessionId,
-      clientSituation,
-    });
-    activeEngineSessions.set(ws, session);
+    try {
+      const session = await engine.createSession({
+        ws,
+        transport,
+        sessionId: voiceWsSessionId,
+        mode,
+        chatSessionId,
+        clientSituation,
+      });
+      activeEngineSessions.set(ws, session);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      getLogger().error('VOICE', `xAI realtime session failed: ${message}`);
+      sendError(ws, message.includes('API key')
+        ? message
+        : `xAI voice failed to connect: ${message}`);
+    }
     // Greeting is triggered inside XaiRealtimeSession once session.updated fires.
     return;
   }
@@ -645,20 +668,9 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   voiceSession.setState(mode === 'duplex' ? 'listening' : 'idle');
   ws.send(JSON.stringify({ type: 'session_ready', sessionId: voiceSession.sessionId, mode }));
 
-  // Crew calls: server-side greeting so the agent always speaks first even if
-  // the client kickoff frame is delayed (mic permission, UI phase, etc.).
-  if (chatSessionId && isCrewVoiceSessionId(chatSessionId)) {
-    const kickoffSession = activeSessions.get(ws);
-    if (kickoffSession) {
-      setTimeout(() => {
-        if (activeSessions.get(ws) !== kickoffSession) return;
-        if (kickoffSession.callKickoffIssued) return;
-        void runCallKickoff(ws, kickoffSession, 'open').catch((err) => {
-          sendError(ws, err instanceof Error ? err.message : String(err));
-        });
-      }, 500);
-    }
-  }
+  // Crew-call greetings are client-driven via `call_kickoff` only.
+  // Auto-starting a second opener here raced the client and caused
+  // "Session voice:… already has an active run" + stuck orange thinking.
 }
 
 async function requestTranscriptPreview(
@@ -841,8 +853,53 @@ async function handlePlaybackFinished(_ws: WebSocket, session: VoiceWsSession): 
   await resetDuplexListening(session);
 }
 
+function isVoiceAgentBusy(session: VoiceWsSession): boolean {
+  if (session.duplexTurnInFlight || session.speaking) return true;
+  try {
+    const agent = getEngine().agent;
+    if (!agent) return false;
+    const sid = session.chatSessionId;
+    if (sid && agent.sessionId && agent.sessionId !== sid) return false;
+    return Boolean(agent.processing) || agent.runStateMgr.isRunning(agent.sessionId);
+  } catch {
+    return false;
+  }
+}
+
 async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void> {
   if (session.turnFinishing) return;
+  // Kickoff / prior reply still owns the agent — try to clear a stuck lock for PTT
+  // so the operator's utterance is not silently discarded after a bad kickoff.
+  if (isVoiceAgentBusy(session)) {
+    const eng = getEngine();
+    const agent = eng.agent;
+    const canClearStuck = session.mode === 'push-to-talk'
+      && agent
+      && !session.duplexTurnInFlight
+      && !session.speaking
+      && !agent.isAwaitingClarification();
+    if (canClearStuck && (agent.processing || agent.runStateMgr.isRunning(agent.sessionId))) {
+      getLogger().warn('VOICE', 'Clearing stuck agent before PTT finishTurn');
+      try {
+        agent.cancel();
+        agent.runStateMgr.release(agent.sessionId);
+      } catch { /* best-effort */ }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (isVoiceAgentBusy(session)) {
+      getLogger().info('VOICE', 'Ignoring audio_end — agent turn already in flight');
+      session.audioChunks = [];
+      if (session.mode === 'duplex') {
+        // Keep kickoff's duplexTurnInFlight intact; only clear a stray recorder.
+        session.recording = false;
+        sendWarning(ws, 'Still finishing the last reply — one moment');
+      } else {
+        sendWarning(ws, 'Still finishing the last reply — try again in a moment');
+        ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
+      }
+      return;
+    }
+  }
   if (session.mode === 'duplex') {
     session.duplexTurnInFlight = true;
   }
@@ -936,12 +993,14 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 
     const chatSessionId = await resolveVoiceChatSessionId(session.chatSessionId);
     if (!chatSessionId) {
+      session.duplexTurnInFlight = false;
       sendError(ws, 'No chat session available for voice');
       voiceSession?.setState('idle');
       return;
     }
     const sessionReady = await ensureChatSessionActive(chatSessionId);
     if (!sessionReady) {
+      session.duplexTurnInFlight = false;
       sendError(ws, 'Chat session not found');
       voiceSession?.setState('idle');
       return;
@@ -950,10 +1009,45 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
     const eng = getEngine();
     const agent = eng.agent;
     if (!agent) {
+      session.duplexTurnInFlight = false;
       sendError(ws, 'Agent is not ready');
       voiceSession?.setState('idle');
       return;
     }
+
+    // Re-check after session restore — kickoff / a stuck prior turn may own the agent.
+    // Prefer clearing a stuck lock and continuing (we already showed the transcript)
+    // over abandoning the turn with no reply.
+    if (agent.processing || agent.runStateMgr.isRunning(agent.sessionId)) {
+      if (agent.isAwaitingClarification()) {
+        // Fall through to clarification handling below.
+      } else {
+        getLogger().warn('VOICE', 'Agent busy after transcript — cancelling stuck run and continuing');
+        try {
+          agent.cancel();
+          agent.runStateMgr.release(agent.sessionId);
+        } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 150));
+        if (agent.processing || agent.runStateMgr.isRunning(agent.sessionId)) {
+          session.duplexTurnInFlight = false;
+          sendWarning(ws, 'Still finishing the last reply — try again in a moment');
+          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
+          if (session.mode === 'duplex') {
+            await resetDuplexListening(session);
+            notifyDuplexListening(ws);
+          } else {
+            voiceSession?.setState('idle');
+          }
+          return;
+        }
+      }
+    }
+
+    // Ensure IntegrationHub is not left pointing at an xAI voice toolkit from a
+    // prior realtime connect (MCP sync timeout) — local turns need eng.toolkit.
+    try {
+      eng.integrationHub.setToolkitBridge(eng.toolkit.registry, eng.toolkit.executor);
+    } catch { /* best-effort */ }
 
     // If the agent is waiting for a clarification answer (e.g. automation notify
     // channels), feed this utterance directly to the in-flight turn instead of
@@ -1084,18 +1178,25 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       session.unsub?.();
       session.unsub = undefined;
       session.speaking = false;
+      session.duplexTurnInFlight = false;
       const errMsg = error instanceof Error ? error.message : String(error);
-      if (session.mode === 'duplex') {
-        // Duplex recovers server-side — surface a transient warning, stay listening,
-        // and DON'T fatal-fail the session (which would strand the client on SIGNAL LOST).
+      const softConflict = /already has an active run|already processing/i.test(errMsg);
+      if (session.mode === 'duplex' || softConflict) {
+        // Duplex / run-overlap: recover without tearing down the call UI.
         void resetDuplexListening(session);
         const now = Date.now();
         if (now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
           session.duplexLastErrorAt = now;
-          sendWarning(ws, errMsg);
+          sendWarning(ws, softConflict
+            ? 'Still finishing the last reply — try again in a moment'
+            : errMsg);
         }
-        voiceSession?.setState('listening');
-        notifyDuplexListening(ws);
+        voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+        if (session.mode === 'duplex') {
+          notifyDuplexListening(ws);
+        } else {
+          ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
+        }
         return;
       }
       sendError(ws, errMsg);
@@ -1256,47 +1357,76 @@ async function runCallKickoff(
   session: VoiceWsSession,
   kind: 'open' | 'resume',
 ): Promise<void> {
+  // Claim locks synchronously before any await — concurrent client+server kickoffs
+  // and user audio_end must not start a second Agent run on the same voice session.
   if (session.callKickoffIssued || session.speaking || session.duplexTurnInFlight) return;
-  const chatSessionId = await resolveVoiceChatSessionId(session.chatSessionId);
-  if (!chatSessionId) {
-    sendError(ws, 'No chat session available for call');
-    return;
-  }
-  const sessionReady = await ensureChatSessionActive(chatSessionId);
-  if (!sessionReady) {
-    sendError(ws, 'Chat session not found');
-    return;
-  }
-  const eng = getEngine();
-  const agent = eng.agent;
-  if (!agent) {
-    sendError(ws, 'Agent is not ready');
-    return;
-  }
-  const chatSession = eng.sessionManager.getSessionById(chatSessionId);
-  if (!isCrewPrivateSessionRecord(chatSession)) {
-    // Still attempt opener if host crew is present (some restores omit contextKind briefly).
-    if (!chatSession?.hostCrewId) {
-      sendError(ws, 'Not a crew call session');
-      return;
-    }
-  }
-
   session.callKickoffIssued = true;
   session.duplexTurnInFlight = true;
-  const voiceSession = getVoiceService().getSession(session.sessionId);
-  voiceSession?.setState('agent_running');
-  ws.send(JSON.stringify({ type: 'agent_status', status: 'running' }));
-  refreshAgentPersona(agent);
-  if (session.clientSituation) agent.setClientSituation(session.clientSituation);
-  ensureSubscribed();
 
-  const eventText = kind === 'resume' ? '[call_event:resume]' : '[call_event:open]';
+  const voiceSession = getVoiceService().getSession(session.sessionId);
   try {
+    const chatSessionId = await resolveVoiceChatSessionId(session.chatSessionId);
+    if (!chatSessionId) {
+      sendError(ws, 'No chat session available for call');
+      return;
+    }
+    const sessionReady = await ensureChatSessionActive(chatSessionId);
+    if (!sessionReady) {
+      sendError(ws, 'Chat session not found');
+      return;
+    }
+    const eng = getEngine();
+    const agent = eng.agent;
+    if (!agent) {
+      sendError(ws, 'Agent is not ready');
+      return;
+    }
+    const chatSession = eng.sessionManager.getSessionById(chatSessionId);
+    if (!isCrewPrivateSessionRecord(chatSession)) {
+      // Still attempt opener if host crew is present (some restores omit contextKind briefly).
+      if (!chatSession?.hostCrewId) {
+        sendError(ws, 'Not a crew call session');
+        return;
+      }
+    }
+
+    // Resume / reconnect: stay silent and continue the same call (history remains).
+    if (kind === 'resume') {
+      getLogger().info('VOICE_WS', `Silent call resume — no greeting (${chatSessionId})`);
+      return;
+    }
+
+    try {
+      const store = eng.sessionManager.getStorageAdapter();
+      const msgs = store?.getMessages?.(chatSessionId) ?? [];
+      if (crewCallSessionHasSpokenHistory(msgs)) {
+        getLogger().info('VOICE_WS', `Skipping open greeting — history present (${chatSessionId})`);
+        return;
+      }
+    } catch { /* continue with open greeting */ }
+
+    voiceSession?.setState('agent_running');
+    ws.send(JSON.stringify({ type: 'agent_status', status: 'running' }));
+    refreshAgentPersona(agent);
+    if (session.clientSituation) agent.setClientSituation(session.clientSituation);
+    ensureSubscribed();
+
+    const hostCrew = chatSession
+      ? resolveCrewPrivateHostForAgent(
+        eng.crewManager,
+        chatSession,
+        eng.sessionManager.getStorageAdapter(),
+      )
+      : undefined;
+    const openerIdentity = hostCrew
+      ? { name: hostCrew.name, title: hostCrew.title, expertise: hostCrew.expertise }
+      : null;
+
+    const eventText = '[call_event:open]';
     const turnMessage = await runVoiceAgentPhase(
       agent,
       eventText,
-      buildCrewCallOpenerInstruction(kind),
+      buildCrewCallOpenerInstruction('open', openerIdentity),
       randomUUID(),
       chatSessionId,
       {
@@ -1325,7 +1455,13 @@ async function runCallKickoff(
     ws.send(JSON.stringify({ type: 'audio_end' }));
     voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
   } catch (err) {
-    sendError(ws, err instanceof Error ? err.message : String(err));
+    const errMsg = err instanceof Error ? err.message : String(err);
+    // Overlap / stuck-run races are recoverable — don't kill the call UI.
+    if (/already has an active run|already processing/i.test(errMsg)) {
+      sendWarning(ws, 'Welcome delayed — you can start speaking');
+    } else {
+      sendError(ws, errMsg);
+    }
     voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
   } finally {
     session.speaking = false;
@@ -1333,6 +1469,8 @@ async function runCallKickoff(
     if (session.mode === 'duplex') {
       await resetDuplexListening(session);
       notifyDuplexListening(ws);
+    } else {
+      ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
     }
   }
 }
@@ -1351,16 +1489,29 @@ function runVoiceAgentPhase(
     forceWebSearch?: boolean;
   } = {},
 ): Promise<unknown> {
-  return new Promise((resolve, reject) => {
+  const start = (retried: boolean) => new Promise<unknown>((resolve, reject) => {
     runAgentTurnAsync(
       agent,
       userText,
       instruction,
       false,
-      turnId,
+      retried ? randomUUID() : turnId,
       sid,
       (message) => resolve(message),
-      (error) => reject(new Error(error)),
+      (error) => {
+        if (!retried && /already has an active run|already processing/i.test(error)) {
+          getLogger().warn('VOICE', `Clearing stuck agent run and retrying once: ${error}`);
+          try {
+            agent.cancel();
+            agent.runStateMgr.release(agent.sessionId);
+          } catch { /* best-effort */ }
+          setTimeout(() => {
+            void start(true).then(resolve, reject);
+          }, 150);
+          return;
+        }
+        reject(new Error(error));
+      },
       undefined,
       undefined,
       undefined,
@@ -1377,6 +1528,7 @@ function runVoiceAgentPhase(
       },
     );
   });
+  return start(false);
 }
 
 function extractAssistantText(message: unknown): string {

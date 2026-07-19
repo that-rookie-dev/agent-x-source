@@ -74,7 +74,7 @@ export function createCrewsRouter(): Router {
     }
   });
 
-  r.post('/api/crews', (req, res) => {
+  r.post('/api/crews', async (req, res) => {
     try {
       const body = req.body as {
         id: string; name: string; title?: string; callsign?: string; systemPrompt: string; description?: string;
@@ -101,6 +101,7 @@ export function createCrewsRouter(): Router {
         source: (source as 'custom' | 'hub' | undefined) ?? (catalogId ? 'hub' : 'custom'),
         catalogId,
       });
+      await eng.crewManager.flushPersist();
       if (eng.agent && crew.enabled) {
         eng.agent.addCrewMember(crew);
         eng.agent.setCrewEnabled(crew.id, true);
@@ -111,7 +112,7 @@ export function createCrewsRouter(): Router {
     }
   });
 
-  r.put('/api/crews/:id', (req, res) => {
+  r.put('/api/crews/:id', async (req, res) => {
     try {
       const eng = getEngine();
       const body = req.body as Record<string, unknown>;
@@ -122,6 +123,7 @@ export function createCrewsRouter(): Router {
       delete (updates as Record<string, unknown>)['tone'];
       const crew = eng.crewManager.update(req.params['id']!, updates as Parameters<typeof eng.crewManager.update>[1]);
       if (!crew) { res.status(404).json({ error: 'crew-not-found' }); return; }
+      await eng.crewManager.flushPersist();
       if (eng.agent) {
         eng.agent.removeCrewMember(crew.id);
         if (crew.enabled) {
@@ -137,11 +139,12 @@ export function createCrewsRouter(): Router {
     }
   });
 
-  r.delete('/api/crews/:id', (req, res) => {
+  r.delete('/api/crews/:id', async (req, res) => {
     try {
       const eng = getEngine();
       const ok = eng.crewManager.delete(req.params['id']!);
       if (!ok) { res.status(400).json({ error: 'cannot-delete' }); return; }
+      await eng.crewManager.flushPersist();
       if (eng.agent) {
         eng.agent.removeCrewMember(req.params['id']!);
         eng.agent.setCrewEnabled(req.params['id']!, false);

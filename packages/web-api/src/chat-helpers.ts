@@ -7,15 +7,39 @@ import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
 
+const SESSION_HYDRATE_TIMEOUT_MS = 3_000;
+
+/** Best-effort session hydrate — must never block chat/voice turns indefinitely. */
+export async function ensureSessionHydratedForTurn(
+  store: StorageAdapter | null | undefined,
+  sessionId: string,
+): Promise<void> {
+  if (!sessionId || !store || typeof store.ensureSessionHydrated !== 'function') return;
+  try {
+    await Promise.race([
+      Promise.resolve(store.ensureSessionHydrated(sessionId)),
+      new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('session hydrate timeout')), SESSION_HYDRATE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    getLogger().warn(
+      'SESSION_HYDRATE',
+      `${sessionId}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
 export const TURN_TIMEOUT_MS = 600_000;
 /**
  * Idle cap for voice comms turns: if the agent produces NO activity
  * (tool/step/heartbeat/stream) for this long, the turn is aborted. Activity
  * resets the clock so tool-heavy hands-free turns aren't killed mid-work.
  */
-export const VOICE_TURN_TIMEOUT_MS = 90_000;
+/** Idle timeout for voice — if the provider never streams, fail the turn (was 90s of stuck Thinking…). */
+export const VOICE_TURN_TIMEOUT_MS = 45_000;
 /** Hard ceiling for a single voice turn regardless of ongoing activity. */
-export const VOICE_TURN_MAX_MS = 300_000;
+export const VOICE_TURN_MAX_MS = 120_000;
 
 export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
   if (!forceWebSearch) return null;

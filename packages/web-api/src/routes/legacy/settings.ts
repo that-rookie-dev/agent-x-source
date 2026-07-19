@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { getLogger, getDataDir, getConfigDir, getCacheDir } from '@agentx/shared';
 import type { AgentXConfig, PermissionRule } from '@agentx/shared';
-import { getEngine, clearEngine, setStorageProgressCallback, applyRuntimeSettings } from '../../engine.js';
+import { getEngine, clearEngineDurable, setStorageProgressCallback, applyRuntimeSettings } from '../../engine.js';
 import {
   validateWebSearchProvider,
   isWebSearchAvailableForChat,
@@ -156,7 +156,9 @@ async function persistPostgresBackend(
     poolSize: 5,
   });
 
-  clearEngine();
+  // Must drain the write queue before discarding the engine — otherwise
+  // pending crew INSERTs are lost while sessions may already be committed.
+  await clearEngineDurable();
 }
 
 export function createSettingsRouter(): Router {

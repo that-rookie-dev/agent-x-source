@@ -273,7 +273,20 @@ export function getEngine(): EngineState {
       getSubAgentServiceInstance().setStore(backgroundTaskStore);
       await getSubAgentServiceInstance().loadFromStore();
       reportStorageProgress('Starting durable job queue…');
-      await jobQueue.start();
+      try {
+        await Promise.race([
+          jobQueue.start(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('job queue start timed out after 15s')), 15_000);
+          }),
+        ]);
+      } catch (e) {
+        getLogger().warn(
+          'JOB_QUEUE_START',
+          e instanceof Error ? e.message : String(e),
+        );
+        reportStorageProgress('[WARN] Durable job queue did not start — background jobs disabled.');
+      }
       registerNoOpJobWorkers(jobQueue);
       reportStorageProgress('Engine storage ready.');
     } catch (e) {
@@ -355,7 +368,29 @@ export function getEngine(): EngineState {
       if (state?.pgPool) {
         setMarkdownDocumentStoreInstance(new MarkdownDocumentStore(state.pgPool));
       }
-      if (state) state.crewManager.refresh();
+      // Ensure CrewManager is bound to the live adapter (covers deferred→ready swaps).
+      if (state) state.crewManager.setStore(store);
+      if (state) {
+        // Rebuild roster rows lost when the async PG write queue never drained.
+        const hosts = store.listSessions(500)
+          .filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private' && s.hostCrewId)
+          .map((s) => ({
+            id: s.hostCrewId!,
+            name: s.hostCrewName || s.title || s.hostCrewCallsign || s.hostCrewId!,
+            callsign: s.hostCrewCallsign || s.hostCrewId!,
+            title: s.hostCrewTitle,
+            color: s.hostCrewColor,
+            catalogId: s.hostCrewCatalogId,
+            source: (s.hostCrewCatalogId ? 'hub' : 'custom') as 'hub' | 'custom',
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+          }));
+        const restored = state.crewManager.recoverFromSessionHosts(hosts);
+        if (restored > 0) {
+          getLogger().info('CREW_MGR', `Recovered ${restored} missing crew(s) from session host snapshots`);
+        }
+        await state.crewManager.flushPersist();
+      }
       await healDatabaseStore(store);
       startPeriodicDatabaseHeal(store);
       if (state) {
@@ -381,10 +416,28 @@ export function isStorageDeferred(): boolean {
   }
 }
 
+const STORAGE_API_WAIT_MS = 8_000;
+
+/**
+ * Wait for storage without blocking API routes on pg-boss bootstrap forever.
+ * After PG connect/migrate, chat/markdown can use the pool even if jobQueue.start()
+ * is still running inside storageReady.
+ */
+export async function awaitStorageForApi(): Promise<void> {
+  const eng = getEngine();
+  if (eng.storageDeferred || !eng.pgPool) {
+    await eng.storageReady;
+    return;
+  }
+  await Promise.race([
+    eng.storageReady,
+    new Promise<void>((resolve) => setTimeout(resolve, STORAGE_API_WAIT_MS)),
+  ]);
+}
+
 /** Wait until the active storage backend has finished schema migration. */
 export async function awaitEngineStorageReady(): Promise<void> {
-  const eng = getEngine();
-  await eng.storageReady;
+  await awaitStorageForApi();
 }
 
 /** Store the latest client situation from the app UI (location + timezone). */
@@ -448,6 +501,10 @@ export function setEngineDEK(dek: Buffer | null): void {
   }
 }
 
+/**
+ * Tear down the engine. Callers that mutate durable state must
+ * `await storageAdapter.flushWrites()` / `crewManager.flushPersist()` first.
+ */
 export function clearEngine(): void {
   if (state?.agent) {
     state.agent?.sessionLogger?.close();
@@ -474,4 +531,26 @@ export function clearEngine(): void {
   }
   state = null;
   resetCatalogSeedInflight();
+}
+
+/** Flush durable writes then clear — use when swapping storage backends. */
+export async function clearEngineDurable(): Promise<void> {
+  const prev = state;
+  if (!prev) return;
+  try {
+    await prev.crewManager.flushPersist();
+  } catch (e) {
+    getLogger().warn('CLEAR_ENGINE', `crew flushPersist failed: ${e instanceof Error ? e.message : e}`);
+  }
+  try {
+    if (prev.storageAdapter.flushWrites) {
+      await prev.storageAdapter.flushWrites();
+    }
+  } catch (e) {
+    getLogger().warn('CLEAR_ENGINE', `flushWrites failed: ${e instanceof Error ? e.message : e}`);
+  }
+  clearEngine();
+  try {
+    prev.storageAdapter.close?.();
+  } catch { /* best-effort */ }
 }

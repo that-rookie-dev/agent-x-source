@@ -211,11 +211,20 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
     log.info('SHUTDOWN', `Received ${signal}. Starting graceful shutdown...`);
 
     server.close(() => {
-      shutdownWebSocket();
-      void shutdownAutomation();
-      void shutdownAgentXOverviewBridge();
-      try { void getEngine().serviceContext?.channelService?.stop(); } catch { /* ignore */ }
-      log.info('SHUTDOWN', 'Server closed.');
+      void (async () => {
+        try {
+          const eng = getEngine();
+          await eng.crewManager.flushPersist();
+          await eng.storageAdapter.flushWrites?.();
+        } catch (e) {
+          log.warn('SHUTDOWN', `Durable flush failed: ${e instanceof Error ? e.message : e}`);
+        }
+        shutdownWebSocket();
+        void shutdownAutomation();
+        void shutdownAgentXOverviewBridge();
+        try { void getEngine().serviceContext?.channelService?.stop(); } catch { /* ignore */ }
+        log.info('SHUTDOWN', 'Server closed.');
+      })();
     });
   };
 

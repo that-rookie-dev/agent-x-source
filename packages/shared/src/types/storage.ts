@@ -108,6 +108,30 @@ export const EMPTY_SESSION_KPIS: SessionListKpis = {
   tokenUsagePct: 0,
 };
 
+/** Durable xAI realtime identity + rolling voice summary for one Agent-X voice session. */
+export interface VoiceRealtimeState {
+  sessionId: string;
+  xaiConversationId: string | null;
+  xaiConversationUpdatedAt: string | null;
+  lastVoiceActiveAt: string | null;
+  summary: string | null;
+  summaryUpdatedAt: string | null;
+  summarySourceMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VoiceRealtimeStatePatch {
+  xaiConversationId?: string | null;
+  xaiConversationUpdatedAt?: string | null;
+  lastVoiceActiveAt?: string | null;
+  summary?: string | null;
+  summaryUpdatedAt?: string | null;
+  summarySourceMessageId?: string | null;
+  /** When true (default), never overwrite an existing non-null conversation id. */
+  preserveExistingConversationId?: boolean;
+}
+
 export interface StorageAdapter {
   connect(): Promise<void> | void;
   disconnect(): Promise<void> | void;
@@ -174,6 +198,11 @@ export interface StorageAdapter {
   createCrew(input: CrewCreateInput): Crew;
   updateCrew(id: string, updates: Partial<Crew>): Crew | null;
   deleteCrew(id: string): void;
+  /**
+   * Flush pending durable writes (e.g. Postgres write queue).
+   * Call after crew create/update/delete and before shutdown / engine reset.
+   */
+  flushWrites?(): Promise<void>;
   getPersona(): AgentPersonaConfig | null;
   setPersona(persona: AgentPersonaConfig): void;
 
@@ -242,6 +271,11 @@ export interface StorageAdapter {
     createdAt?: string;
   }): void;
   clearSessionResumeState?(sessionId: string): void;
+
+  /** xAI realtime conversation id + rolling voice summary (optional — Postgres-backed). */
+  getVoiceRealtimeState?(sessionId: string): Promise<VoiceRealtimeState | null>;
+  upsertVoiceRealtimeState?(sessionId: string, patch: VoiceRealtimeStatePatch): Promise<VoiceRealtimeState>;
+  touchVoiceRealtimeActive?(sessionId: string, at?: string): Promise<void> | void;
 
   /** Crew catalog store accessor (optional — primarily Postgres-backed). */
   getCrewCatalogStore?(): { getCatalogEntry: (id: string) => Promise<{ categoryId?: string } | null> };

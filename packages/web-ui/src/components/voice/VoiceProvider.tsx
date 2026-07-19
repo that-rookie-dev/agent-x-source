@@ -91,7 +91,7 @@ interface VoiceProviderProps {
 
 export function VoiceProvider({ children }: VoiceProviderProps) {
   const location = useLocation();
-  // PTT (Space key) only works on the dashboard page. Duplex works everywhere.
+  // PTT (Space key) only works on the dashboard page. xAI duplex works everywhere.
   const isDashboard = location.pathname === '/' || location.pathname === '/console' || location.pathname === '/console/dashboard';
   const [coreSessionId, setCoreSessionId] = useState<string | null>(null);
   const [voiceConfig, setVoiceConfig] = useState<VoiceConfig | null>(null);
@@ -118,7 +118,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
 
   // Dashboard voice-only comms session — lives at VoiceProvider level so the
   // WebSocket stays alive across page navigation. PTT keyboard is gated to the
-  // dashboard page only; duplex mode works on any page.
+  // dashboard page only; xAI duplex works on any page.
   const dashboardComms = useVoiceCommsSession({
     active: voiceActive && voiceReady,
     voiceOnly: true,

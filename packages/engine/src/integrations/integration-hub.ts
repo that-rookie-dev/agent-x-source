@@ -187,19 +187,42 @@ export class IntegrationHub {
     registry: ToolRegistry,
     executor: ToolExecutor,
     userText = '',
+    options?: { skipConnectionSync?: boolean },
   ): Promise<{ snapshot: IntegrationTurnSnapshot; promptHint?: string; accessPolicy?: ThirdPartyTurnPolicy }> {
     this.setToolkitBridge(registry, executor);
 
-    for (const connection of this.store.listConnections()) {
-      if (!connection.enabled) continue;
-      if (this.sessions.has(connection.id) && connection.status === 'connected') continue;
-      try {
-        await this.syncConnection(connection.id);
-      } catch (error) {
-        getLogger().warn(
-          'INTEGRATION_PRETURN_SYNC',
-          `${connection.providerId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+    // Voice turns must not await MCP/OAuth sync — that left STT done + UI stuck on
+    // "Thinking…" with no LLM reply. Chat still refreshes connections (budgeted).
+    if (!options?.skipConnectionSync) {
+      const PRETURN_SYNC_BUDGET_MS = 3_000;
+      const syncDeadline = Date.now() + PRETURN_SYNC_BUDGET_MS;
+      for (const connection of this.store.listConnections()) {
+        if (!connection.enabled) continue;
+        if (this.sessions.has(connection.id) && connection.status === 'connected') continue;
+        const remaining = syncDeadline - Date.now();
+        if (remaining <= 0) {
+          getLogger().warn(
+            'INTEGRATION_PRETURN_SYNC',
+            `Skipping remaining syncs after ${PRETURN_SYNC_BUDGET_MS}ms budget (${connection.providerId}+)`,
+          );
+          break;
+        }
+        try {
+          await Promise.race([
+            this.syncConnection(connection.id),
+            new Promise<never>((_, reject) => {
+              setTimeout(
+                () => reject(new Error(`sync timed out after ${remaining}ms`)),
+                remaining,
+              );
+            }),
+          ]);
+        } catch (error) {
+          getLogger().warn(
+            'INTEGRATION_PRETURN_SYNC',
+            `${connection.providerId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
 

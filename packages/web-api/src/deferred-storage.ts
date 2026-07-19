@@ -70,6 +70,7 @@ export class DeferredStorageAdapter implements StorageAdapter {
     return null;
   }
   deleteCrew(): void {}
+  async flushWrites(): Promise<void> {}
   getPersona() {
     return null;
   }

@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { IntegrationConnectionSecrets, IntegrationMcpStdioAuth, IntegrationProvider } from '@agentx/shared';
-import { getDataDir, getLogger } from '@agentx/shared';
+import { buildStdioEnv, getDataDir, getLogger, resolveStdioCommand } from '@agentx/shared';
 import { expandStdioArgs } from './stdio-args.js';
-import { resolveStdioCommand } from '@agentx/shared';
 
 export interface McpStdioAuthPaths {
   oauthKeysPath: string;
@@ -170,7 +169,7 @@ export async function runMcpStdioAuthCommand(
     let stdout = '';
     let stderr = '';
     const child = spawn(command, args, {
-      env: { ...process.env, ...env },
+      env: buildStdioEnv(env),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 

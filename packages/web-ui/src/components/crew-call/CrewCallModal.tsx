@@ -13,9 +13,8 @@ import MicIcon from '@mui/icons-material/Mic';
 import { alphaColor } from '../../theme';
 import { friendlyVoiceError } from '../voice/voice-comms-theme';
 import { getCrewAccent } from '../../styles/crew-theme';
-import { type ParticlePhase } from '../voice/VoiceParticleField';
+import { VoiceParticleField, type ParticlePhase } from '../voice/VoiceParticleField';
 import type { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
-import { CallJarvisGlobe } from './CallJarvisGlobe';
 import { callTheme, formatCallDuration } from './crew-call-theme';
 import type { CrewCallPhase, CrewCallTarget, CrewCallTranscriptLine } from './types';
 
@@ -59,38 +58,75 @@ const CTRL_BTN = {
 function resolveParticlePhase(
   phase: CrewCallPhase,
   comms: Comms,
+  elapsedMs: number,
 ): { particlePhase: ParticlePhase; level: number; label: string } {
-  if (phase === 'on_hold' || phase === 'failed' || phase === 'ending' || phase === 'idle') {
-    return { particlePhase: 'disabled', level: 0, label: phase === 'on_hold' ? 'On hold' : 'Offline' };
+  if (phase === 'on_hold') {
+    return { particlePhase: 'paused', level: 0, label: 'On hold' };
   }
-  if (phase !== 'linked') {
-    return { particlePhase: 'thinking', level: 0.2, label: 'Connecting…' };
+  if (phase === 'failed' || phase === 'ending' || phase === 'idle') {
+    return { particlePhase: 'disabled', level: 0, label: phase === 'failed' ? 'Offline' : 'Ending…' };
   }
-  if (comms.operatorActive) {
+  // Dialing / reconnecting — blue until the channel is live.
+  if (phase === 'resolving' || phase === 'connecting' || phase === 'encoding') {
     return {
-      particlePhase: 'recording',
-      level: Math.max(0.15, comms.session.audioLevel),
-      label: 'Listening',
+      particlePhase: 'connecting',
+      level: 0.25,
+      label: elapsedMs > 0 ? 'Reconnecting…' : 'Connecting…',
     };
   }
-  if (comms.agentActive || comms.commsPhase === 'agent_tx') {
+
+  // Linked but still bringing uplink up — keep connecting (blue).
+  const uplinkLive =
+    comms.commsReady
+    && (comms.session.state === 'ready'
+      || comms.session.state === 'listening'
+      || comms.session.state === 'speaking'
+      || comms.session.state === 'processing'
+      || (!comms.isDuplex && comms.session.pttReady)
+      || comms.agentActive || comms.operatorActive);
+  if (!uplinkLive || comms.session.state === 'connecting' || comms.commsPhase === 'boot' || comms.commsPhase === 'link') {
+    return { particlePhase: 'connecting', level: 0.2, label: 'Connecting…' };
+  }
+
+  // Greeting / agent audio — purple speaking (never treat open greeting as Thinking…).
+  if (comms.agentActive || comms.commsPhase === 'agent_tx' || comms.session.state === 'speaking') {
     return {
       particlePhase: 'speaking',
       level: Math.max(0.2, comms.session.playbackLevel),
-      label: 'Speaking',
+      label: 'Speaking…',
     };
   }
+
+  // Thinking only after the operator has spoken this call — not on bare connect.
+  const operatorHasSpoken = Boolean((comms.session.finalTranscript || '').trim())
+    || Boolean((comms.session.partialTranscript || '').trim());
   if (
-    comms.relayBusy
-    || comms.commsPhase === 'relay_process'
-    || comms.commsPhase === 'operator_stt'
-    || comms.commsPhase === 'agent_prep'
-    || comms.session.state === 'processing'
-    || comms.session.state === 'connecting'
+    operatorHasSpoken
+    && (
+      comms.session.state === 'processing'
+      || comms.commsPhase === 'relay_process'
+      || comms.commsPhase === 'operator_stt'
+      || comms.commsPhase === 'agent_prep'
+      || (comms.relayBusy && comms.session.state !== 'listening' && comms.session.state !== 'ready')
+    )
   ) {
-    return { particlePhase: 'thinking', level: 0.35, label: 'Thinking…' };
+    return { particlePhase: 'thinking', level: 0.4, label: 'Thinking…' };
   }
-  return { particlePhase: 'idle', level: 0.1, label: comms.isDuplex ? 'Listening' : 'Ready' };
+
+  if (comms.operatorActive) {
+    return {
+      particlePhase: 'listening',
+      level: Math.max(0.15, comms.session.audioLevel),
+      label: 'Listening…',
+    };
+  }
+
+  // Live channel waiting for speech — green listening state.
+  return {
+    particlePhase: 'listening',
+    level: 0.12,
+    label: comms.isDuplex ? 'Listening…' : 'Ready',
+  };
 }
 
 export function CrewCallModal({
@@ -120,22 +156,33 @@ export function CrewCallModal({
   // Keyboard + mouse PTT both surface through session.holding.
   const pttHeld = mousePttHeld || Boolean(comms.session.holding);
   const { particlePhase, level, label: particleLabel } = useMemo(
-    () => resolveParticlePhase(phase, comms),
-    [phase, comms],
+    () => resolveParticlePhase(phase, comms, elapsedMs),
+    [phase, comms, elapsedMs],
   );
 
   const statusLine = useMemo(() => {
     if (phase === 'failed') return error || 'Call unavailable';
-    if (phase === 'on_hold') return 'On hold — resume when ready';
+    if (phase === 'on_hold') return 'On hold';
     if (phase === 'resolving' || phase === 'connecting' || phase === 'encoding') {
-      return 'Connecting…';
+      return elapsedMs > 0 ? 'Reconnecting…' : 'Connecting…';
     }
     if (phase === 'ending') return 'Ending call…';
     if (comms.session.error) return friendlyVoiceError(comms.session.error);
     if (comms.session.warning) return comms.session.warning;
-    if (isPtt && linked) return pttHeld ? 'Speaking…' : 'Hold to talk';
+    if (isPtt && linked && !pttHeld && particlePhase === 'listening') return 'Hold to talk';
     return particleLabel;
-  }, [phase, error, comms.session.error, comms.session.warning, isPtt, linked, pttHeld, particleLabel]);
+  }, [
+    phase,
+    error,
+    elapsedMs,
+    comms.session.error,
+    comms.session.warning,
+    isPtt,
+    linked,
+    pttHeld,
+    particlePhase,
+    particleLabel,
+  ]);
 
   const ignoreSpaceActivation = useCallback((e: ReactKeyboardEvent) => {
     if (e.key === ' ' || e.code === 'Space') {
@@ -350,11 +397,10 @@ export function CrewCallModal({
             overflow: 'hidden',
           }}
         >
-          <CallJarvisGlobe
+          <VoiceParticleField
             phase={particlePhase}
-            active={phase === 'linked' || phase === 'connecting' || phase === 'encoding' || phase === 'resolving'}
+            active={phase !== 'idle' && phase !== 'failed' && phase !== 'ending'}
             level={level}
-            accent={accent}
           />
           <Box
             sx={{
@@ -373,12 +419,12 @@ export function CrewCallModal({
                 fontFamily: callTheme.mono,
                 fontSize: '0.58rem',
                 letterSpacing: '0.1em',
-                color: accent,
+                color: callTheme.text.primary,
                 px: 0.75,
                 py: 0.35,
                 borderRadius: '4px',
                 bgcolor: alphaColor(callTheme.bg.void, 0.55),
-                border: `1px solid ${alphaColor(accent, 0.35)}`,
+                border: `1px solid ${callTheme.border.line}`,
               }}
             >
               {statusLine}

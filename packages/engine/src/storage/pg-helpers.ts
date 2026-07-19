@@ -41,6 +41,7 @@ export interface CacheState {
   resumeState: Map<string, Record<string, unknown>>;
   permissionRules: Map<string, Array<Record<string, unknown>>>;
   taskSnapshots: Map<string, Record<string, unknown>>;
+  voiceRealtime: Map<string, import('./pg-voice-realtime.js').VoiceRealtimeStateRecord>;
 }
 
 export interface PostgresConfig extends PoolConfig {

@@ -31,6 +31,7 @@ export * from './crew-roster-intent.js';
 export * from './integration-oauth.js';
 export * from './integration-tool-id.js';
 export * from './host-path.js';
+export * from './open-browser.js';
 export * from './embedded-pg-env.js';
 export * from './system-capabilities.js';
 export * from './client-situation.js';

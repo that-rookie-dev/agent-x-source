@@ -64,6 +64,9 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
   const kickoffTimerRef = useRef<number | null>(null);
   const requestKickoffRef = useRef<(kind: 'open' | 'resume') => boolean>(() => false);
   const oldestMsgIdRef = useRef<string | null>(null);
+  /** After hold/resume, ignore live agent text until the operator speaks again. */
+  const suppressAgentTranscriptRef = useRef(false);
+  const historySeededForSessionRef = useRef<string | null>(null);
 
   const callLive = phase === 'connecting' || phase === 'encoding' || phase === 'linked';
   const callModalOpen = phase !== 'idle';
@@ -84,6 +87,9 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadHistoryPage = useCallback(async (sid: string, before?: string) => {
+    // Only seed history once per voice session — hold/resume must not re-dump
+    // the full transcript into the live panel.
+    if (!before && historySeededForSessionRef.current === sid) return;
     setHistoryLoading(true);
     try {
       const page = await sessions.getMessagesPage(sid, { limit: HISTORY_PAGE, before });
@@ -94,9 +100,12 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       setHistoryHasMore(Boolean(page.hasMore));
       setTranscript((prev) => {
         if (!before) {
+          historySeededForSessionRef.current = sid;
           // Seed with history, keep any live system lines that arrived first
           const live = prev.filter((l) => l.role === 'system');
-          return [...mapped, ...live].slice(-60);
+          const seen = new Set(mapped.map((l) => `${l.role}:${l.text}`));
+          const liveUnique = live.filter((l) => !seen.has(`${l.role}:${l.text}`));
+          return [...mapped, ...liveUnique].slice(-60);
         }
         const existing = new Set(prev.map((l) => l.id));
         const older = mapped.filter((l) => !existing.has(l.id));
@@ -126,6 +135,8 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     spaceGuard: callModalOpen,
     onTranscriptFinal: (text, empty) => {
       if (empty) return;
+      // Operator speech ends hold/resume transcript suppression.
+      suppressAgentTranscriptRef.current = false;
       pushLine('operator', text);
     },
   });
@@ -135,8 +146,13 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       lastAgentTextRef.current = '';
       return;
     }
+    if (suppressAgentTranscriptRef.current) return;
     const agent = (comms.session.agentText || '').trim();
     if (!agent || agent === lastAgentTextRef.current) return;
+    // Drop internal context dumps that leak into spoken/transcript text.
+    if (/^\[INTERNAL CONTEXT/i.test(agent) || /INTERNAL CONTEXT — do not speak/i.test(agent)) {
+      return;
+    }
     lastAgentTextRef.current = agent;
     pushLine('crew', agent);
   }, [callLive, comms.session.agentText, pushLine]);
@@ -156,12 +172,18 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     if (!callLive || !sessionId) return;
     if (phase !== 'connecting' && phase !== 'encoding') return;
 
-    // Mark linked as soon as the voice session is up — do not wait for mic.
-    // Greeting is outbound; mic permission must not gate "channel live".
+    // Linked only after session_ready (ready/listening/…). Duplex alone is not enough —
+    // that was marking the call live while the WebSocket was still connecting.
+    const sessionLive =
+      comms.session.state === 'ready'
+      || comms.session.state === 'listening'
+      || comms.session.state === 'speaking'
+      || comms.session.state === 'processing';
+    // PTT still needs mic prep; duplex is live once the socket reports ready.
     const uplinkReady =
       comms.commsReady
-      && (comms.isDuplex || comms.session.pttReady
-        || comms.session.state === 'ready' || comms.session.state === 'listening');
+      && sessionLive
+      && (comms.isDuplex || comms.session.pttReady);
     if (uplinkReady) {
       setPhase('linked');
       // Start / resume active call time only once the uplink is actually live.
@@ -189,20 +211,31 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
 
   requestKickoffRef.current = comms.requestCallKickoff;
 
-  // Proactive welcome as soon as the voice WS is up — do not wait for mic.
-  // Greeting is outbound-only; mic readiness must not block the agent's first words.
+  // Proactive welcome ONLY on first connect — never after hold/resume.
+  // Resume must continue the same call silently (history already on the session).
   useEffect(() => {
     if (phase !== 'linked' && phase !== 'connecting' && phase !== 'encoding') return;
     if (kickoffSentRef.current) return;
     if (!comms.commsReady) return;
-    // Need a live duplex/ready/listening uplink (session_ready received).
-    if (!(comms.isDuplex || comms.session.pttReady || comms.session.state === 'ready' || comms.session.state === 'listening')) {
-      return;
-    }
+    // Need session_ready (not merely duplex mode configured).
+    const sessionLive =
+      comms.session.state === 'ready'
+      || comms.session.state === 'listening'
+      || comms.session.state === 'speaking'
+      || comms.session.state === 'processing';
+    if (!sessionLive) return;
+    if (!comms.isDuplex && !comms.session.pttReady) return;
     if (kickoffTimerRef.current != null) return;
 
     const kind = kickoffKindRef.current;
-    pushLine('system', kind === 'resume' ? 'Resuming…' : 'Connecting…');
+    // Hold → resume: reconnect uplink only. Do not ask the model to greet again.
+    if (kind === 'resume') {
+      kickoffSentRef.current = true;
+      pushLine('system', 'Back on the line');
+      return;
+    }
+
+    pushLine('system', 'Connecting…');
 
     let attempts = 0;
     const tryKickoff = () => {
@@ -211,11 +244,11 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
         return;
       }
       attempts += 1;
-      const ok = requestKickoffRef.current(kind);
+      const ok = requestKickoffRef.current('open');
       if (ok) {
         kickoffSentRef.current = true;
         kickoffTimerRef.current = null;
-        pushLine('system', kind === 'resume' ? 'Back on the line' : 'On the line');
+        pushLine('system', 'On the line');
         return;
       }
       if (attempts >= 30) {
@@ -225,7 +258,6 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       }
       kickoffTimerRef.current = window.setTimeout(tryKickoff, 250);
     };
-    // Fire ASAP so resume can beat the server's default open greeting.
     kickoffTimerRef.current = window.setTimeout(tryKickoff, 80);
   }, [
     phase,
@@ -272,6 +304,8 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       accruedMsRef.current = 0;
       kickoffSentRef.current = false;
       oldestMsgIdRef.current = null;
+      historySeededForSessionRef.current = null;
+      suppressAgentTranscriptRef.current = false;
       voice?.releaseVoiceEngine();
       pausedDashboardVoiceRef.current = false;
       startGuardRef.current = false;
@@ -285,16 +319,23 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       accruedMsRef.current += Date.now() - runningSinceRef.current;
       runningSinceRef.current = null;
     }
-    kickoffSentRef.current = false;
+    // Keep call continuity: never re-issue a first-connect greeting after hold.
+    kickoffSentRef.current = true;
     kickoffKindRef.current = 'resume';
+    lastAgentTextRef.current = '';
+    suppressAgentTranscriptRef.current = true;
     setPhase('on_hold');
     pushLine('system', 'On hold — channel disconnected');
   }, [phase, pushLine]);
 
   const resumeCall = useCallback(() => {
     if (phase !== 'on_hold' || !sessionId) return;
-    kickoffSentRef.current = false;
+    kickoffSentRef.current = true;
     kickoffKindRef.current = 'resume';
+    lastAgentTextRef.current = '';
+    // Keep suppressing until the operator speaks — prevents replay of prior
+    // turns into the live transcript when the uplink reconnects.
+    suppressAgentTranscriptRef.current = true;
     // Do not start the timer until the channel is linked again.
     runningSinceRef.current = null;
     setPhase('connecting');
@@ -314,6 +355,8 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     kickoffSentRef.current = false;
     kickoffKindRef.current = 'open';
     oldestMsgIdRef.current = null;
+    historySeededForSessionRef.current = null;
+    suppressAgentTranscriptRef.current = false;
     setTarget(next);
     setPhase('resolving');
     pushLine('system', `Calling @${next.callsign}…`);

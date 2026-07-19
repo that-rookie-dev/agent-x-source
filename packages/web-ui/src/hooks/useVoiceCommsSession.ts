@@ -67,12 +67,10 @@ export function useVoiceCommsSession({
   const voiceCtx = voiceContext !== undefined ? voiceContext : fallbackCtx;
   const envBlocked = voiceDisabledReason();
 
-  // Mode is driven by the voice config: xAI defaults to duplex, local engine
-  // can be either push-to-talk or duplex depending on user preference.
-  const engine = voiceCtx?.voiceConfig?.engine ?? 'stt_llm_tts';
-  const configMode = voiceCtx?.voiceConfig?.mode?.web ?? 'off';
-  // xAI is always duplex (server-side VAD). Local engine respects the config.
-  const isDuplex = engine === 'realtime_xai' || configMode === 'duplex';
+  // xAI is always duplex (server-side VAD). Local is always push-to-talk —
+  // never inherit a stale duplex mode left in config from a prior xAI session.
+  const engine = (voiceCtx?.voiceConfig?.engine ?? 'stt_llm_tts') as 'stt_llm_tts' | 'realtime_xai';
+  const isDuplex = engine === 'realtime_xai';
   const effectiveInputMode: VoiceInputMode = isDuplex ? 'duplex' : 'push-to-talk';
 
   const bootPhase = voiceCtx?.warmupPhase ?? 'idle';
@@ -80,14 +78,18 @@ export function useVoiceCommsSession({
   const voiceReady = Boolean(voiceCtx?.voiceReady);
   const prerequisitesOk = active && voiceReady && !envBlocked;
   const micReady = mic.state === 'granted';
-  const pttEnabled = prerequisitesOk && commsReady && micReady;
+  // Open the voice WebSocket as soon as the engine is warm — do not wait for
+  // mic permission. Capture still requires mic (PTT / duplex listen).
+  const linkEnabled = prerequisitesOk && commsReady;
+  const pttEnabled = linkEnabled && micReady;
 
   const session = useVoiceSession(
-    pttEnabled,
+    linkEnabled,
     effectiveInputMode,
     chatSessionId ?? undefined,
     { onVoiceUserPending, onVoiceUserDiscarded, onAgentRunning, onTranscriptFinal, onVoiceTiming },
     voiceOnly,
+    engine,
   );
 
   useEffect(() => {
@@ -103,14 +105,17 @@ export function useVoiceCommsSession({
 
   useEffect(() => {
     if (!pttEnabled || isDuplex) return;
+    // `engine` is intentional: after a voice-engine swap the socket is torn down
+    // and must be re-warmed when the panel/call was already linked.
     void session.ensurePttReady();
-  }, [pttEnabled, isDuplex, session.ensurePttReady]);
+  }, [pttEnabled, isDuplex, engine, session.ensurePttReady]);
 
   useEffect(() => {
-    if (!pttEnabled) return;
-    if (!isDuplex) return;
-    void session.startSession();
-  }, [pttEnabled, isDuplex, session.startSession]);
+    if (!linkEnabled || !isDuplex) return;
+    // Link the socket immediately; open the mic when permission is granted.
+    // Re-run on `engine` so a Local ↔ xAI swap reconnects when still active.
+    void session.startSession(micReady);
+  }, [linkEnabled, isDuplex, micReady, engine, session.startSession]);
 
   useEffect(() => {
     if (active) return;
@@ -193,6 +198,9 @@ export function useVoiceCommsSession({
     if (bootPhase === 'idle') return 'Starting voice engine…';
     if (bootPhase === 'failed') return voiceCtx?.warmupError ?? 'Voice offline';
     if (!commsReady) return 'Linking comms…';
+    if (session.state === 'connecting' || session.state === 'error') {
+      return session.error || (session.state === 'connecting' ? 'Connecting…' : 'Voice offline');
+    }
     if (mic.state !== 'granted') return mic.blocked ? 'Mic blocked' : 'Allow microphone';
     if (session.pttReady && !session.pttTurnLocked && !session.holding) return isDuplex ? 'Listening…' : 'Hold Space to speak';
     if (pipelineLabel) return pipelineLabel;
@@ -206,7 +214,8 @@ export function useVoiceCommsSession({
     return 'Standby';
   }, [
     envBlocked, voiceReady, bootPhase, voiceCtx?.warmupError, commsReady, mic.state, mic.blocked,
-    session.agentStatus, session.pttTurnLocked, session.turnPipeline, session.partialTranscript, session.pttReady, commsPhase, pipelineLabel,
+    session.agentStatus, session.pttTurnLocked, session.turnPipeline, session.partialTranscript, session.pttReady,
+    session.state, session.error, commsPhase, pipelineLabel, isDuplex,
   ]);
 
   return {

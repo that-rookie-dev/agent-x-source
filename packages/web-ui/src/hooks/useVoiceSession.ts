@@ -17,12 +17,16 @@ export interface VoiceSessionCallbacks {
   onVoiceTiming?: (timings: VoiceTurnTimings) => void;
 }
 
+export type VoiceEngineKind = 'stt_llm_tts' | 'realtime_xai';
+
 export function useVoiceSession(
   enabled: boolean,
   mode: 'push-to-talk' | 'duplex' = 'push-to-talk',
   chatSessionIdOrCallbacks?: string | VoiceSessionCallbacks,
   callbacks?: VoiceSessionCallbacks,
   voiceOnly?: boolean,
+  /** When the voice engine changes, drop the socket and allow a clean reconnect. */
+  engine: VoiceEngineKind = 'stt_llm_tts',
 ) {
   const chatSessionId = typeof chatSessionIdOrCallbacks === 'string'
     ? chatSessionIdOrCallbacks
@@ -76,10 +80,33 @@ export function useVoiceSession(
     if (warningTimerRef.current) window.clearTimeout(warningTimerRef.current);
   }, []);
 
+  // Tear down when mode / chat session / engine changes (not on first mount).
+  // Callers that keep `enabled` true will reconnect via startSession / ensurePttReady.
+  const sessionIdentityRef = useRef({ chatSessionId, mode, engine });
   useEffect(() => {
+    const prev = sessionIdentityRef.current;
+    const changed =
+      prev.chatSessionId !== chatSessionId
+      || prev.mode !== mode
+      || prev.engine !== engine;
+    sessionIdentityRef.current = { chatSessionId, mode, engine };
+    if (!changed) return;
+
     clientRef.current?.disconnect();
     clientRef.current = null;
-  }, [chatSessionId, mode]);
+    setState('idle');
+    setHolding(false);
+    setAgentStatus('');
+    setAgentTurnComplete(false);
+    pttTurnLockedRef.current = false;
+    setPttTurnLocked(false);
+    setPlaybackActive(false);
+    setTurnPipeline('idle');
+    setPttReady(false);
+    setPartialTranscript('');
+    setError(null);
+    stopTimer();
+  }, [chatSessionId, mode, engine, stopTimer]);
 
   useEffect(() => {
     if (!enabled) {
@@ -137,11 +164,22 @@ export function useVoiceSession(
             ));
           }
           if (nextState === 'processing') {
-            setTurnPipeline((prev) => (
-              prev === 'sending_audio' || prev === 'transcribing' || pttTurnLockedRef.current
-                ? 'transcribing'
-                : prev
-            ));
+            // transcript_final sets agent_thinking then client state→processing.
+            // Never downgrade past transcription or the UI sticks on "Transcribing…".
+            setTurnPipeline((prev) => {
+              if (
+                prev === 'agent_thinking'
+                || prev === 'llm_processing'
+                || prev === 'synthesizing'
+                || prev === 'speaking'
+              ) {
+                return prev;
+              }
+              if (prev === 'sending_audio' || prev === 'transcribing' || pttTurnLockedRef.current) {
+                return 'transcribing';
+              }
+              return prev;
+            });
           }
         },
         onTranscriptPartial: (text) => {
@@ -196,6 +234,11 @@ export function useVoiceSession(
           }
           if (status === 'complete') {
             setAgentTurnComplete(true);
+            // Always clear the thinking/transcribing pipeline — do not wait on
+            // playback; onPlaybackIdle unlocks if audio is still draining.
+            setTurnPipeline((prev) => (
+              prev === 'speaking' && clientRef.current?.isPlaybackActive() ? prev : 'idle'
+            ));
             window.setTimeout(() => {
               if (!clientRef.current?.isPlaybackActive()) {
                 unlockPttTurn();
@@ -210,6 +253,8 @@ export function useVoiceSession(
         },
         onWarning: (message) => {
           setError(null);
+          unlockPttTurn();
+          setTurnPipeline('idle');
           setWarning(friendlyVoiceError(message));
           if (warningTimerRef.current) window.clearTimeout(warningTimerRef.current);
           warningTimerRef.current = window.setTimeout(() => setWarning(null), 6000);
@@ -264,21 +309,34 @@ export function useVoiceSession(
       });
     }
     return clientRef.current;
-  }, [enabled, mode, chatSessionId, unlockPttTurn]);
+  }, [enabled, mode, engine, chatSessionId, voiceOnly, unlockPttTurn]);
 
   const ensureVoiceAuthToken = useCallback(async () => {
     await syncAuthTokenFromSession();
   }, []);
 
-  const startSession = useCallback(async () => {
+  const startSession = useCallback(async (openMic = true) => {
     const client = ensureClient();
     if (!client) return;
     setError(null);
     setTextOnlyPlayback(false);
     markVoiceOutputUnlocked();
-    await ensureVoiceAuthToken();
-    await client.connect();
-    if (mode === 'duplex') await client.startListening();
+    try {
+      await ensureVoiceAuthToken();
+      await client.connect();
+      if (mode === 'duplex' && openMic) {
+        // Mic may still be pending — caller retries with openMic once granted.
+        try {
+          await client.startListening();
+        } catch (micErr) {
+          setError(friendlyVoiceError(
+            micErr instanceof Error ? micErr.message : 'Microphone unavailable',
+          ));
+        }
+      }
+    } catch (err) {
+      setError(friendlyVoiceError(err instanceof Error ? err.message : 'Voice connection failed'));
+    }
   }, [ensureClient, ensureVoiceAuthToken, mode]);
 
   /** Warm WebSocket + mic so Space starts recording immediately. */

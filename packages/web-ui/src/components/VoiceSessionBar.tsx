@@ -28,7 +28,7 @@ export interface VoiceSessionBarProps {
 function labelForState(state: VoiceClientState): string {
   switch (state) {
     case 'listening': return 'Listening…';
-    case 'processing': return 'Transcribing…';
+    case 'processing': return 'Agent thinking…';
     case 'speaking': return 'Agent speaking…';
     case 'connecting': return 'Connecting voice…';
     case 'error': return 'Voice error';

@@ -66,7 +66,9 @@ export function createCrew(ctx: CrewContext, input: CrewCreateInput): Crew {
     createdAt: now,
     updatedAt: now,
   };
-  ctx.cache.crews.push(crew);
+  const existingIdx = ctx.cache.crews.findIndex((c) => c.id === crew.id);
+  if (existingIdx >= 0) ctx.cache.crews[existingIdx] = crew;
+  else ctx.cache.crews.push(crew);
   ctx.write(
     `INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, source, catalog_id, search_text, suggestable, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)

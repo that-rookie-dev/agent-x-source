@@ -2,6 +2,8 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { getDataDir } from '../platform.js';
+import { applyMcpBrowserLaunchEnv } from './open-browser.js';
 
 let shellPathLoaded = false;
 
@@ -203,9 +205,8 @@ export function buildStdioEnv(extra?: Record<string, string>): Record<string, st
     if (value !== undefined) merged[key] = value;
   }
   if (extra) Object.assign(merged, extra);
-  if (platform() === 'win32' && merged.PATH) {
-    merged.Path = merged.PATH;
-  }
+  // All MCP stdio children: PATH shim + BROWSER → existing Chrome tab (not a new app).
+  applyMcpBrowserLaunchEnv(merged, getDataDir());
   return merged;
 }
 

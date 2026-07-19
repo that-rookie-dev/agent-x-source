@@ -2,6 +2,20 @@ import type { ToolExecutor, ToolRegistry } from '@agentx/engine';
 import { getLogger } from '@agentx/shared';
 import { getEngine } from '../engine.js';
 
+/** Point IntegrationHub back at the primary chat/local-voice toolkit. */
+export function restorePrimaryToolkitBridge(): void {
+  try {
+    const eng = getEngine();
+    eng.integrationHub.setToolkitBridge(eng.toolkit.registry, eng.toolkit.executor);
+    eng.integrationHub.syncToToolkit(eng.toolkit.registry, eng.toolkit.executor);
+  } catch (err) {
+    getLogger().warn(
+      'VOICE_INTEGRATION_BRIDGE_RESTORE',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
 /**
  * Sync connected MCP + native integration tools into a toolkit registry/executor
  * (e.g. xAI realtime voice) without leaving IntegrationHub bridged away from the
@@ -14,7 +28,12 @@ export async function syncIntegrationToolsIntoToolkit(
 ): Promise<{ registeredCount: number; connectedNames: string[] }> {
   const eng = getEngine();
   try {
-    const { snapshot } = await eng.integrationHub.prepareForAgentTurn(registry, executor, userText);
+    const { snapshot } = await eng.integrationHub.prepareForAgentTurn(
+      registry,
+      executor,
+      userText,
+      { skipConnectionSync: true },
+    );
     return {
       registeredCount: snapshot.registeredCount,
       connectedNames: snapshot.connected.map((c) => c.name),
@@ -28,14 +47,6 @@ export async function syncIntegrationToolsIntoToolkit(
   } finally {
     // Always restore the primary bridge so chat/local-agent turns keep syncing
     // into eng.toolkit — prepareForAgentTurn temporarily retargets it.
-    try {
-      eng.integrationHub.setToolkitBridge(eng.toolkit.registry, eng.toolkit.executor);
-      eng.integrationHub.syncToToolkit(eng.toolkit.registry, eng.toolkit.executor);
-    } catch (err) {
-      getLogger().warn(
-        'VOICE_INTEGRATION_BRIDGE_RESTORE',
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    restorePrimaryToolkitBridge();
   }
 }

@@ -53,50 +53,107 @@ CRITICAL:
 - THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] and questionnaire/clarification forms — ask follow-ups as spoken sentences inside the voice block.`;
 }
 
+/** Identity hints so the opener names the person and fits their role. */
+export interface CrewCallOpenerIdentity {
+  name: string;
+  title?: string;
+  expertise?: string[];
+}
+
+function formatOpenerIdentity(identity?: CrewCallOpenerIdentity | null): {
+  who: string;
+  roleHint: string;
+  nameLine: string;
+} {
+  const name = identity?.name?.trim();
+  const title = identity?.title?.trim();
+  const niche = title || identity?.expertise?.find(Boolean)?.trim() || '';
+  const who = name
+    ? (title ? `${name}, ${title}` : name)
+    : 'yourself (the named person in CREW_IDENTITY — never a generic "crew")';
+  const roleHint = niche
+    ? `Ask ONE short question that fits your work as ${niche}.`
+    : 'Ask ONE short question that fits your specific role and expertise.';
+  const nameLine = name
+    ? `Your name is ${name}${title ? ` and you are a ${title}` : ''}. Introduce yourself as ${name} (or a natural first-name variant) — never say "crew", "your crew", "the crew", or "Agent-X".`
+    : 'Use your real persona name from identity — never say "crew", "your crew", "the crew", or "Agent-X".';
+  return { who, roleHint, nameLine };
+}
+
 /** First move when a crew call connects (or reconnects after hold) — local STT→LLM→TTS. */
-export function buildCrewCallOpenerInstruction(kind: 'open' | 'resume' = 'open'): string {
+export function buildCrewCallOpenerInstruction(
+  kind: 'open' | 'resume' = 'open',
+  identity?: CrewCallOpenerIdentity | null,
+): string {
+  const { who, roleHint, nameLine } = formatOpenerIdentity(identity);
   const beat = kind === 'resume'
-    ? 'The call was on hold and just resumed. You speak first: briefly acknowledge you are back, then ask one natural follow-up from prior context (or invite them to continue).'
-    : 'The call just connected. YOU MUST SPEAK FIRST with a warm in-character welcome (as this crew person, not Agent-X), then ask ONE short question to open the conversation. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.';
+    ? `The call was on hold and just resumed. You speak first as ${who}: briefly acknowledge you are back, then ask one natural follow-up from prior context (or invite them to continue).`
+    : `The call just connected. YOU MUST SPEAK FIRST as ${who} with a warm welcome, then ask ONE short question that fits your persona. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.`;
   return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} turn.
 
 ${beat}
 
-Stay fully in character (name, tone, expertise). Sound like a real person on a phone — not a generic AI assistant.
+${nameLine}
+${roleHint}
+
+Stay fully in character. Sound like a real person on a phone — not a generic AI assistant.
 
 Output ONLY:
 
 ${VOICE_BLOCK_OPEN}
-Welcome / greeting in character, then one short question. 2–3 spoken sentences max.
+Medium, simple welcome in character (about 2 sentences), ending with one short persona-fit question.
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL:
 - Start with ${VOICE_BLOCK_OPEN}. Nothing after ${VOICE_BLOCK_CLOSE}.
-- You MUST include a welcome note AND a question.
-- Under 55 words. No markdown. No capability lists. No tools on this turn.`;
+- You MUST include a welcome AND a question.
+- Under 45 words. No markdown. No capability lists. No tools on this turn.
+- Never refer to yourself as "crew" or "your crew on the line".`;
 }
 
 /**
  * xAI / realtime opener — spoken audio is produced natively.
  * Must NOT use ⟨voice⟩ wrappers (those are for the local TTS pipeline only).
  */
-export function buildCrewCallRealtimeOpenerInstruction(kind: 'open' | 'resume' = 'open'): string {
+export function buildCrewCallRealtimeOpenerInstruction(
+  kind: 'open' | 'resume' = 'open',
+  identity?: CrewCallOpenerIdentity | null,
+): string {
+  const { who, roleHint, nameLine } = formatOpenerIdentity(identity);
   const beat = kind === 'resume'
-    ? 'The call was on hold and just resumed. Speak first now: briefly acknowledge you are back, then ask one natural follow-up (or invite them to continue).'
-    : 'The call just connected. Speak first immediately with a warm in-character welcome, then ask ONE short question. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.';
+    ? `The call was on hold and just resumed. Speak first as ${who}: briefly acknowledge you are back, then ask one natural follow-up (or invite them to continue).`
+    : `The call just connected. Speak first immediately as ${who} with a warm welcome, then ask ONE short question that fits your persona. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.`;
   return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} greeting.
 
 ${beat}
 
+${nameLine}
+${roleHint}
+
 You are on a live phone call as yourself — not Agent-X. Speak naturally out loud:
-- 2–3 short spoken sentences max.
+- About 2 short spoken sentences (medium, simple — not a long monologue).
 - Plain speech only — no markdown, tags, wrappers, tool lists, or stage directions.
-- Include a welcome AND one question.
+- Include a welcome AND one persona-fit question.
+- Never say "crew", "your crew", or "your crew on the line".
 - No tools on this turn.`;
 }
 
 export function isCrewCallEventText(text: string): boolean {
   return /^\[call_event:(open|resume)\]$/i.test(text.trim());
+}
+
+/** True when a voice/text session already has real turns (not just call_event markers). */
+export function crewCallSessionHasSpokenHistory(
+  messages: Array<{ role?: string; content?: unknown }>,
+): boolean {
+  for (const msg of messages) {
+    if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+    const text = typeof msg.content === 'string' ? msg.content.trim() : '';
+    if (!text) continue;
+    if (isCrewCallEventText(text)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Phase 1: tools + spoken summary + ask what the user wants next. */

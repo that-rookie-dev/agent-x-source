@@ -218,7 +218,9 @@ export class VoiceSessionClient {
         if (msg.type === 'session_ready') {
           this.engineType = (msg.engine as 'stt_llm_tts' | 'realtime_xai' | undefined) ?? 'stt_llm_tts';
           this.handleControl(msg);
-          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+          // Stay on ready until startListening opens the mic — avoids green
+          // “listening” UI while permission is still pending.
+          this.setState('ready');
           finish(() => {
             this.connectPromise = null;
             resolve();
@@ -560,6 +562,8 @@ export class VoiceSessionClient {
         if (empty || !text.trim()) {
           this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         } else if (!empty && text.trim()) {
+          // Agent phase — keep state as processing for bars that still key off it,
+          // but hooks must not map this back to "Transcribing…".
           this.setState('processing');
         }
         break;
@@ -647,18 +651,29 @@ export class VoiceSessionClient {
         this.events.onRecordingDiscarded?.(reason);
         break;
       }
-      case 'voice_warning':
+      case 'voice_warning': {
         // Recoverable hiccup (duplex STT/turn) — the server is still listening.
         // Surface a transient hint but keep the session alive.
-        this.events.onWarning?.(String(msg.message ?? 'Voice hiccup'));
-        if (this.mode === 'duplex' && this.state === 'error') {
-          this.setState('listening');
+        const warn = String(msg.message ?? 'Voice hiccup');
+        this.events.onWarning?.(warn);
+        // Clear orange "thinking" if a soft conflict (kickoff/overlap) aborted the turn.
+        if (this.state === 'processing' || this.state === 'error') {
+          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         }
         break;
-      case 'error':
+      }
+      case 'error': {
+        const errMsg = String(msg.message ?? 'Voice error');
+        // Overlapping voice/agent runs are recoverable — don't strand the mic UI.
+        if (/already has an active run|already processing/i.test(errMsg)) {
+          this.events.onWarning?.(errMsg);
+          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+          break;
+        }
         this.setState('error');
-        this.events.onError?.(String(msg.message ?? 'Voice error'));
+        this.events.onError?.(errMsg);
         break;
+      }
       default:
         break;
     }

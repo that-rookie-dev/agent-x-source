@@ -15,6 +15,7 @@ export function mapCallHistoryMessages(
     if (!text || CALL_EVENT_RE.test(text)) continue;
     const role = m.role === 'user' ? 'operator' : m.role === 'assistant' ? 'crew' : null;
     if (!role) continue;
+    if (/^\[INTERNAL CONTEXT/i.test(text) || /Call connected\. Speak first/i.test(text)) continue;
     const cleaned = sanitizeVoiceDisplayText(text);
     if (!cleaned) continue;
     lines.push({

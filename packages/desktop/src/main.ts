@@ -2,9 +2,12 @@ import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, 
 import { writeFileSync } from 'node:fs';
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import { tmpdir, totalmem } from 'os';
 import { AgentRuntime, createDesktopRuntimeOptions, DEFAULT_PORT } from '@agentx/runtime';
+
+const execFileAsync = promisify(execFile);
 
 const REPO = 'that-rookie-dev/agent-x';
 
@@ -302,14 +305,53 @@ function isExternalHttpUrl(url: string): boolean {
   }
 }
 
+/** Open URL as a new tab in existing Google Chrome (macOS Privacy → Automation). */
+async function openInExistingChromeTab(url: string): Promise<void> {
+  if (process.platform === 'darwin') {
+    const escaped = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = [
+      'tell application "Google Chrome"',
+      '  if it is running then',
+      '    activate',
+      '    if (count of windows) = 0 then make new window',
+      `    tell window 1 to make new tab with properties {URL:"${escaped}"}`,
+      '  else',
+      `    open location "${escaped}"`,
+      '    activate',
+      '  end if',
+      'end tell',
+    ].join('\n');
+    try {
+      await execFileAsync('osascript', ['-e', script]);
+      return;
+    } catch {
+      await execFileAsync('open', ['-a', 'Google Chrome', url]);
+      return;
+    }
+  }
+  if (process.platform === 'win32') {
+    await execFileAsync('cmd', ['/c', 'start', '', url]);
+    return;
+  }
+  await shell.openExternal(url);
+}
+
 async function openExternalLink(url: string): Promise<boolean> {
   if (!isExternalHttpUrl(url)) return false;
   try {
-    await shell.openExternal(url);
+    // Prefer a new tab in the already-running Google Chrome.
+    // Avoids MCP/OAuth flows spawning a separate Chrome app instance.
+    await openInExistingChromeTab(url);
     return true;
   } catch (err) {
-    console.error('openExternal failed', err);
-    return false;
+    console.error('openExternal (Chrome tab) failed, falling back', err);
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch (fallbackErr) {
+      console.error('openExternal failed', fallbackErr);
+      return false;
+    }
   }
 }
 

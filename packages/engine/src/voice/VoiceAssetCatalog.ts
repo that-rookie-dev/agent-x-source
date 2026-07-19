@@ -93,11 +93,13 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
   const isXai = engine === 'realtime_xai';
   const enabled = input?.enabled ?? (hasXaiCredentials || isXai);
   // When voice is enabled, web mode must not be 'off' — otherwise voice UI stays hidden.
-  // xAI realtime defaults to duplex; local defaults to push-to-talk.
+  // xAI is always duplex; Local is always push-to-talk (coerce away stale duplex).
   const inputWebMode = input?.mode?.web;
-  const webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
+  let webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
     ? (isXai ? 'duplex' : 'push-to-talk')
     : (inputWebMode ?? 'off');
+  if (!isXai && webMode === 'duplex') webMode = 'push-to-talk';
+  if (isXai && enabled && webMode !== 'off' && webMode !== 'duplex') webMode = 'duplex';
   return {
     ...DEFAULT_VOICE_CONFIG,
     ...input,

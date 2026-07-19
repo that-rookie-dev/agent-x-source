@@ -12,6 +12,22 @@ import { getKnowledgeBaseManager } from '../knowledge/global-manager.js';
 
 const logger = getLogger();
 
+const TURN_JOURNEY_PREFETCH_TIMEOUT_MS = 5_000;
+
+async function withPrefetchTimeout<T>(label: string, work: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        setTimeout(() => reject(new Error(`${label} timed out`)), TURN_JOURNEY_PREFETCH_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    logger.warn('TURN_JOURNEY_TIMEOUT', e instanceof Error ? e.message : String(e));
+    return fallback;
+  }
+}
+
 export type TurnJourneyStageId =
   | 'local_knowledge'
   | 'deeper_retrieval'
@@ -86,7 +102,11 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
   const kb = getKnowledgeBaseManager();
   if (kb) {
     try {
-      const kbResults = await kb.search(userText, 8);
+      const kbResults = await withPrefetchTimeout(
+        'Knowledge Base search',
+        kb.search(userText, 8),
+        [],
+      );
       for (const r of kbResults) {
         hits.push({
           content: r.content,
@@ -127,7 +147,7 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
   const rag = getRAGEngineInstance();
   if (rag?.isEnabled) {
     try {
-      const docs = await rag.search(userText, 3);
+      const docs = await withPrefetchTimeout('Codebase RAG search', rag.search(userText, 3), []);
       for (const d of docs) {
         hits.push({
           content: d.content,

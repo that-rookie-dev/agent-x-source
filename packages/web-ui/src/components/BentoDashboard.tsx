@@ -450,7 +450,7 @@ export function BentoDashboard() {
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' },
-          gridTemplateRows: { lg: '220px 220px 180px' },
+          gridTemplateRows: { lg: '220px 220px 220px' },
           gap: 2,
           alignItems: 'stretch',
           position: 'relative',

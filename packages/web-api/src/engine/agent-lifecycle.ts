@@ -12,7 +12,14 @@ import {
   type TelegramChannelPlugin,
 } from '@agentx/engine';
 import type { AgentXConfig, Session, TelemetryEvent } from '@agentx/shared';
-import { getDataDir, getLogger, hydrateMessageHistoryEntries, isChannelSessionId, parseChannelBindingFromSessionId } from '@agentx/shared';
+import {
+  getDataDir,
+  getLogger,
+  hydrateMessageHistoryEntries,
+  isChannelSessionId,
+  isCrewVoiceSessionId,
+  parseChannelBindingFromSessionId,
+} from '@agentx/shared';
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { getEngine } from './state.js';
@@ -33,10 +40,22 @@ export async function hydrateAgentRecentHistory(
   try {
     const eng = getEngine();
     const store = eng.sessionManager.getStorageAdapter();
-    await store?.ensureSessionHydrated?.(sessionId);
+    if (store?.ensureSessionHydrated) {
+      try {
+        await Promise.race([
+          Promise.resolve(store.ensureSessionHydrated(sessionId)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('hydrate timeout')), 2_000)),
+        ]);
+      } catch {
+        // Continue with whatever is already in the cache — voice/chat must not hang.
+      }
+    }
     let recent: Array<Record<string, unknown>> = [];
     if (store?.getMessagesPage) {
-      const page = await store.getMessagesPage(sessionId, { limit });
+      const page = await Promise.race([
+        store.getMessagesPage(sessionId, { limit }),
+        new Promise<{ messages: never[] }>((resolve) => setTimeout(() => resolve({ messages: [] }), 2_000)),
+      ]);
       recent = (page.messages ?? []).filter((m) => {
         const role = (m as { role?: string }).role;
         return role === 'user' || role === 'assistant';
@@ -143,13 +162,30 @@ export function createAgent(
     toolExecutor: eng.toolkit.executor,
     toolRegistry: eng.toolkit.registry,
     prepareIntegrationTools: async (userText) => {
-      const { promptHint, accessPolicy } = await eng.integrationHub.prepareForAgentTurn(
-        eng.toolkit.registry,
-        eng.toolkit.executor,
-        userText,
-      );
-      if (!promptHint && !accessPolicy) return undefined;
-      return { hint: promptHint, policy: accessPolicy };
+      // Voice / channel turns: never block the LLM on MCP sync (dashboard + crew call
+      // were stuck on Thinking… after STT with no reply).
+      const voiceLike = isChannelSessionId(session.id)
+        || parseChannelBindingFromSessionId(session.id) === 'voice'
+        || isCrewVoiceSessionId(session.id);
+      try {
+        const prepPromise = eng.integrationHub.prepareForAgentTurn(
+          eng.toolkit.registry,
+          eng.toolkit.executor,
+          userText,
+          { skipConnectionSync: voiceLike },
+        );
+        const prepBudgetMs = voiceLike ? 1_500 : 4_000;
+        const { promptHint, accessPolicy } = await Promise.race([
+          prepPromise,
+          new Promise<{ promptHint?: undefined; accessPolicy?: undefined }>((resolve) => {
+            setTimeout(() => resolve({}), prepBudgetMs);
+          }),
+        ]);
+        if (!promptHint && !accessPolicy) return undefined;
+        return { hint: promptHint, policy: accessPolicy };
+      } catch {
+        return undefined;
+      }
     },
     onPart,
     persona: crewPrivateHost ? null : persona,

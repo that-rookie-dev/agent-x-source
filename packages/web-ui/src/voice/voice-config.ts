@@ -15,8 +15,8 @@ export const VOICE_DEPLOY_STEPS = [
   'Open Chat, switch to Voice, and hold Space to speak.',
 ] as const;
 
-/** Hands-free (duplex) UI — enabled for both local and xAI engines. */
-export const VOICE_HANDS_FREE_ENABLED = true;
+/** Local hands-free (duplex) UI — off; Local is PTT-only. xAI remains duplex. */
+export const VOICE_HANDS_FREE_ENABLED = false;
 
 export interface KokoroVoiceProfile {
   id: string;
@@ -107,11 +107,13 @@ export function mergeVoiceConfig(input?: VoiceConfig | null): VoiceConfig {
   const isXai = engine === 'realtime_xai';
   const enabled = input?.enabled ?? (hasXaiCredentials || isXai);
   // When voice is enabled, web mode must not be 'off' — otherwise voice UI stays hidden.
-  // xAI realtime defaults to duplex; local defaults to push-to-talk.
+  // xAI is always duplex; Local is always push-to-talk (no stale duplex leftovers).
   const inputWebMode = input?.mode?.web;
-  const webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
+  let webMode = enabled && (!inputWebMode || inputWebMode === 'off' || (isXai && inputWebMode !== 'duplex'))
     ? (isXai ? 'duplex' : 'push-to-talk')
     : (inputWebMode ?? 'off');
+  if (!isXai && webMode === 'duplex') webMode = 'push-to-talk';
+  if (isXai && enabled && webMode !== 'off' && webMode !== 'duplex') webMode = 'duplex';
   return {
     enabled,
     mode: { web: webMode, channels: input?.mode?.channels ?? 'off' },
@@ -147,8 +149,8 @@ export function applyVoicePreset(config: VoiceConfig): VoiceConfig {
   return mergeVoiceConfig({
     ...config,
     enabled: true,
-    // Preserve the user's chosen mode if set; default xAI to duplex, local to push-to-talk.
-    mode: { ...config.mode, web: config.mode?.web && config.mode.web !== 'off' ? config.mode.web : (isXai ? 'duplex' : 'push-to-talk') },
+    // xAI → duplex; Local → push-to-talk (never preserve a stale duplex setting).
+    mode: { ...config.mode, web: isXai ? 'duplex' : 'push-to-talk' },
     stt: { modelId: 'faster-distil-whisper-small.en', computeType: 'int8', device: 'auto' },
     tts: {
       engine: 'kokoro',
