@@ -1,5 +1,6 @@
 import { syncAuthTokenFromSession } from '../api';
 import { collectClientSituation } from '../client-situation.js';
+import { XAI_BARGE_IN_MIC_LEVEL } from './constants.js';
 import { VOICE_SAMPLE_RATE, mergeInt16Chunks } from './pcm.js';
 import { StreamingPlayback } from './playback.js';
 import { VOICE_CAPTURE_PROCESSOR_NAME, VOICE_CAPTURE_PROCESSOR_URL } from './audioWorkletProcessor.js';
@@ -292,17 +293,22 @@ export class VoiceSessionClient {
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (this.mode === 'duplex') {
-      // For xAI server VAD we keep the mic streaming so barge-in can work
-      // (browser echo cancellation is enabled). Local engine suppresses while
-      // the assistant is speaking to avoid echo/response loops.
-      if (this.state === 'speaking' && this.engineType !== 'realtime_xai') {
-        return;
+      // Local engine: mute mic while speaking (echo/response loops).
+      // xAI: keep streaming for barge-in, but drop soft frames so speaker bleed /
+      // ambient noise does not trip server VAD mid-playback.
+      if (this.state === 'speaking') {
+        if (this.engineType !== 'realtime_xai') return;
+        let sum = 0;
+        for (let i = 0; i < pcm.length; i += 1) sum += Math.abs(pcm[i]!);
+        const level = Math.min(1, sum / Math.max(1, pcm.length) / 8000);
+        if (level < XAI_BARGE_IN_MIC_LEVEL) return;
       }
       this.queueDuplexAudio(pcm);
       return;
     }
     if (!this.captureArmed) return;
-    this.ws.send(pcm.buffer);
+    // Send only the Int16 view bytes — pcm.buffer may be a larger underlying allocation.
+    this.ws.send(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength));
   }
 
   /** PTT: open mic hardware without starting a server recording. */
@@ -511,6 +517,15 @@ export class VoiceSessionClient {
     }
   }
 
+  /** Ask the crew persona to speak first (call connect / resume after hold). */
+  requestCallKickoff(reason: 'open' | 'resume' = 'open'): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'call_kickoff', reason }));
+      return true;
+    }
+    return false;
+  }
+
   async replayPlayback(): Promise<void> {
     markVoiceOutputUnlocked();
     await this.playback.replayLast();
@@ -596,7 +611,7 @@ export class VoiceSessionClient {
       case 'duplex_silence':
         this.events.onDuplexSilence?.(
           Number(msg.elapsedMs ?? 0),
-          Number(msg.thresholdMs ?? 5000),
+          Number(msg.thresholdMs ?? 2000),
         );
         break;
       case 'voice_timing': {

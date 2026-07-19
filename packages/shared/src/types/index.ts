@@ -28,6 +28,7 @@ export * from './voice.js';
 export * from './client-situation.js';
 export * from './markdown-document.js';
 export * from './channel-render.js';
+export * from './knowledge.js';
 export * from './attachments.js';
 export type { TurnAttachment, NormalizedAttachment } from './communication.js';
 export type { StoredAttachment, AttachmentPreview, AttachmentReference } from './attachments.js';

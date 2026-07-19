@@ -161,19 +161,5 @@ export function createNodesRouter(): Router {
     }
   });
 
-  r.post('/memory/consolidate', async (req: Request, res: Response) => {
-    const { MemoryConsolidator } = await import('@agentx/engine');
-    const fabric = getFabric();
-    if (!fabric) return handleFabricUnavailable(res);
-    try {
-      const consolidator = new MemoryConsolidator(fabric);
-      const result = await consolidator.consolidate(req.body);
-      res.json(result);
-    } catch (e) {
-      logger.error('MEMORY_API', e instanceof Error ? e.message : e);
-      res.status(500).json({ error: 'Failed to consolidate memory' });
-    }
-  });
-
   return r;
 }

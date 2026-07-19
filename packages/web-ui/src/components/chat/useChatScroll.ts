@@ -16,7 +16,6 @@ export interface UseChatScrollInputs {
   sessionRestoringRef: React.MutableRefObject<boolean>;
   currentSessionIdRef: React.MutableRefObject<string | null>;
   view: ChatView;
-  scrollAfterVoiceUserRef: React.MutableRefObject<() => void>;
 }
 
 export function useChatScroll({
@@ -28,7 +27,6 @@ export function useChatScroll({
   sessionRestoringRef,
   currentSessionIdRef,
   view,
-  scrollAfterVoiceUserRef,
 }: UseChatScrollInputs) {
   // ─── Scroll container + sentinel refs ───
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -75,9 +73,6 @@ export function useChatScroll({
       el.scrollTop = el.scrollHeight;
     }
   }, []);
-
-  // Wire voice scroll-after-user-turn to scroll to bottom smoothly (matches original inline assignment)
-  scrollAfterVoiceUserRef.current = () => scrollMessagesToBottom('smooth');
 
   // ─── loadOlderMessages ───
   const loadOlderMessages = useCallback(async () => {

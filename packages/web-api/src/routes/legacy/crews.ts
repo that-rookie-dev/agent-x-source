@@ -16,6 +16,7 @@ import {
   crewRosterPickerOfferSchema,
   crewRosterPickerUpdateSchema,
   crewChatSessionSchema,
+  crewChatVoiceSessionSchema,
 } from '../../validation.js';
 import {
   postCrewSuggestionEvaluate,
@@ -28,7 +29,12 @@ import {
   searchCatalogEntries,
 } from '../../crew-suggestions.js';
 import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from '../../crew-roster-picker-api.js';
-import { postCrewChatSession } from '../../crew-chat.js';
+import {
+  postCrewChatSession,
+  postCrewChatVoiceSession,
+  listCrewChatVoiceSessions,
+  deleteCrewChatVoiceSession,
+} from '../../crew-chat.js';
 import { postAgentXCoreSession } from '../../agent-x-core.js';
 
 export function createCrewsRouter(): Router {
@@ -202,6 +208,9 @@ export function createCrewsRouter(): Router {
   });
 
   r.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
+  r.get('/api/crew-chat/voice-sessions', listCrewChatVoiceSessions);
+  r.post('/api/crew-chat/voice-sessions', validate(crewChatVoiceSessionSchema), postCrewChatVoiceSession);
+  r.delete('/api/crew-chat/voice-sessions/:id', deleteCrewChatVoiceSession);
 
   r.post('/api/agent-x-core/session', postAgentXCoreSession);
 

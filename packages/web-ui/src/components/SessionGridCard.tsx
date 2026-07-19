@@ -6,11 +6,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GroupsIcon from '@mui/icons-material/Groups';
 import ForumIcon from '@mui/icons-material/Forum';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import type { SessionInfo } from '../api';
 import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './crew/MedicalDisclaimerBanner';
 import { sessionHostCrewDisplay } from '../utils/crew-display';
+import { useCrewCallOptional, crewCallTargetFromSession } from './crew-call';
 
 interface SessionGridCardProps {
   session: SessionInfo;
@@ -61,6 +63,7 @@ function KpiCell({ label, value, accent }: { label: string; value: string | numb
 }
 
 export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardProps) {
+  const crewCall = useCrewCallOptional();
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
   const isActive = session.status === 'active';
   const bypass = session.bypassPermissions ?? false;
@@ -166,6 +169,21 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             </Typography>
           )}
         </Box>
+        {isCrewPrivate && crewCall && (
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              const target = crewCallTargetFromSession(session);
+              if (target) void crewCall.startCall(target);
+            }}
+            disabled={crewCall.isActive}
+            sx={{ p: 0.25, color: crewAccent, '&:hover': { color: colors.text.primary } }}
+            title="Secure call"
+          >
+            <PhoneInTalkIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        )}
         <IconButton
           size="small"
           onClick={(e) => { e.stopPropagation(); onDelete(session.id); }}
@@ -208,11 +226,11 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         {isCrewPrivate ? (
           <>
             <KpiCell label="Current Mode" value={bypass ? 'BYPASS' : 'GUARDED'} accent={crewAccent} />
-            <KpiCell label="Type" value="1:1" />
+            <KpiCell label="Type" value="Private" />
           </>
         ) : (
           <>
-            <KpiCell label="Compact" value={session.compactionCount ?? 0} accent={session.compactionCount ? colors.accent.orange : undefined} />
+            <KpiCell label="Type" value="Group" />
             <KpiCell label="Workers" value={session.childSessionCount ?? 0} />
           </>
         )}

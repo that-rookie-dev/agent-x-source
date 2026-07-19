@@ -287,6 +287,16 @@ export class VoiceService {
     });
   }
 
+  /** Incremental VAD on a mic chunk — used for duplex end-of-utterance. */
+  async detectVad(
+    pcm: Buffer,
+    sampleRate = 16_000,
+    options: { threshold?: number; reset?: boolean } = {},
+  ) {
+    const client = await this.sidecar.start();
+    return client.detectVad(pcm, sampleRate, options);
+  }
+
   async synthesizeStreamText(text: string, options: VoiceSynthesizeOptions = {}): Promise<VoiceStreamSynthesizeResult> {
     const normalized = normalizeTextForSpeech(text);
     if (!normalized) throw new Error('Nothing to synthesize after speech normalization');

@@ -2,16 +2,14 @@ import React from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
-import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import AddIcon from '@mui/icons-material/Add';
 import SearchIcon from '@mui/icons-material/Search';
 import HistoryIcon from '@mui/icons-material/History';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
-import BoltIcon from '@mui/icons-material/Bolt';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import { colors, alphaColor } from '../../theme';
 import { ConnectionHealthDot } from '../ChatEnhancements';
 import { sessions } from '../../api';
@@ -22,7 +20,10 @@ import {
   useChatBypassPermissionsContext,
   useChatSessionSettersContext,
   useChatNavigationHandlersContext,
+  useChatSessionPrivacyContext,
 } from './ChatSessionProvider';
+import { useCrewCallOptional, crewCallTargetFromPrivateHost } from '../crew-call';
+import { getCrewAccent } from '../../styles/crew-theme';
 
 export interface ChatHeaderProps {
   panelHeaderRowSx: SxProps;
@@ -35,14 +36,28 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
   const {
     currentSessionTitle, currentSessionId, coreSession, parentSessionId,
   } = useChatSessionIdentityContext();
+  const {
+    isCrewPrivateSession, crewPrivateHost, privateHostCrewId,
+  } = useChatSessionPrivacyContext();
+  const crewCall = useCrewCallOptional();
   // Bypass permissions.
   const { bypassPermissions } = useChatBypassPermissionsContext();
   // Stable dispatch values.
   const {
-    navigate, setSearchOpen, setCheckpointsOpen, setClearSessionModalOpen, setPaletteOpen,
+    navigate, setSearchOpen, setCheckpointsOpen, setClearSessionModalOpen,
   } = useChatSessionSettersContext();
   // Navigation handlers.
-  const { handleShowSessions, handleNewSession } = useChatNavigationHandlersContext();
+  const { handleShowSessions } = useChatNavigationHandlersContext();
+
+  const handleCrewCall = () => {
+    if (!crewCall || !currentSessionId || !crewPrivateHost) return;
+    void crewCall.startCall(crewCallTargetFromPrivateHost({
+      sessionId: currentSessionId,
+      crewId: privateHostCrewId,
+      host: crewPrivateHost,
+      accent: getCrewAccent(undefined, crewPrivateHost.callsign),
+    }));
+  };
 
   return (
     <Box sx={{
@@ -77,6 +92,18 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
         {currentSessionTitle ?? 'New Session'}
       </Typography>
       <ConnectionHealthDot state={connState} lastEventAt={lastEventAt} />
+      {isCrewPrivateSession && crewPrivateHost && crewCall && (
+        <Tooltip title="Secure call" arrow>
+          <IconButton
+            size="small"
+            onClick={handleCrewCall}
+            disabled={crewCall.isActive}
+            sx={{ color: colors.accent.green, p: 0.5, '&:hover': { color: colors.text.primary } }}
+          >
+            <PhoneInTalkIcon sx={{ fontSize: 15 }} />
+          </IconButton>
+        </Tooltip>
+      )}
       <Tooltip title="Search all sessions (⌘F)" arrow>
         <IconButton size="small" onClick={() => setSearchOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.blue } }}>
           <SearchIcon sx={{ fontSize: 14 }} />
@@ -111,19 +138,6 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
             <DeleteSweepIcon sx={{ fontSize: 15 }} />
           </IconButton>
         </Tooltip>
-      )}
-      {!coreSession && (
-        <Tooltip title="Command palette (⌘K)" arrow>
-          <IconButton size="small" onClick={() => setPaletteOpen(true)} sx={{ color: colors.text.dim, p: 0.5, '&:hover': { color: colors.accent.purple } }}>
-            <BoltIcon sx={{ fontSize: 14 }} />
-          </IconButton>
-        </Tooltip>
-      )}
-      {!coreSession && (
-        <Button size="small" startIcon={<AddIcon sx={{ fontSize: 12 }} />} onClick={handleNewSession}
-          sx={{ color: colors.accent.green, fontSize: '0.55rem', textTransform: 'none', minWidth: 'auto' }}>
-          New
-        </Button>
       )}
     </Box>
   );

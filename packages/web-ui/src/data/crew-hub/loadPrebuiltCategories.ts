@@ -1,4 +1,4 @@
-import type { PrebuiltCategory, PrebuiltCrew } from '../../components/crew/CrewHubDialog';
+import type { PrebuiltCategory, PrebuiltCrew } from '../../components/crew/hub-types';
 import { PREBUILT_CATEGORY_INDEX, type PrebuiltCrewData } from './prebuilt-crews-index';
 import type { CrewSearchIndexEntry } from './search-index';
 

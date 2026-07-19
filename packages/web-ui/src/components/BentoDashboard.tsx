@@ -23,7 +23,7 @@ import ContrastIcon from '@mui/icons-material/Contrast';
 import SensorsIcon from '@mui/icons-material/Sensors';
 import CloudIcon from '@mui/icons-material/Cloud';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
-import { useApp } from '../store/AppContext';
+import { useAppCore, useAppLive } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { PanelHeader } from './PanelHeader';
@@ -98,14 +98,15 @@ function BentoCard({ title, icon, action, children, colSpan, sx, voiceAgentCard 
       overflow: 'hidden',
       display: 'flex',
       flexDirection: 'column',
-      minHeight: 140,
+      // Mobile keeps a readable floor; lg rows are fixed so cards must be allowed to shrink.
+      minHeight: { xs: 140, lg: 0 },
       ...sx,
     }}
       data-bento-card
       {...(voiceAgentCard ? { 'data-voice-agent-card': true } : {})}
     >
       <PanelHeader title={title} icon={icon} action={action} compact />
-      <Box sx={{ flex: 1, p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden' }}>
+      <Box sx={{ flex: 1, minHeight: 0, p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden' }}>
         {children}
       </Box>
     </Box>
@@ -204,7 +205,8 @@ function formatClientDateTime(timezone: string): { time: string; date: string } 
 
 export function BentoDashboard() {
   const navigate = useNavigate();
-  const { healthData, serverOnline, refreshHealth, username } = useApp();
+  const { username } = useAppCore();
+  const { healthData, serverOnline, refreshHealth } = useAppLive();
   const visible = usePageVisible();
   const { mode, setMode } = useColorScheme();
   const mounted = useRef(true);
@@ -343,26 +345,31 @@ export function BentoDashboard() {
     };
   }, [visible]);
 
+  // Single visibility-gated poll loop (was health 15s + loadAll 10s competing).
   useEffect(() => {
     if (!visible) return;
-    void refreshHealth();
-    const id = setInterval(() => { void refreshHealth(); }, 15000);
-    return () => clearInterval(id);
-  }, [visible, refreshHealth]);
-
-  useEffect(() => {
-    if (!visible || !serverOnline) return;
-    const loadAll = () => {
-      void loadSessions();
-      void loadChannels();
-      void loadTasks();
-      void loadSubagents();
-      void loadMetrics();
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void refreshHealth();
+      if (serverOnline) {
+        void loadSessions();
+        void loadChannels();
+        void loadTasks();
+        void loadSubagents();
+        void loadMetrics();
+      }
     };
-    loadAll();
-    const id = setInterval(loadAll, 10000);
-    return () => clearInterval(id);
-  }, [visible, serverOnline, loadSessions, loadChannels, loadTasks, loadSubagents, loadMetrics]);
+    tick();
+    const id = setInterval(tick, 20000);
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [visible, serverOnline, refreshHealth, loadSessions, loadChannels, loadTasks, loadSubagents, loadMetrics]);
 
   const openSession = useCallback((id: string) => {
     navigate(`/console/chat/${id}`);
@@ -428,20 +435,22 @@ export function BentoDashboard() {
       </Box>
 
       <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative' }}>
-        {/* SVG connection pulses from Voice Agent to surrounding cards */}
-        <VoiceConnectionPulses active={voiceActiveForPulses} />
-
-        {/* Dashboard-wide particle field — centered on the Voice Agent card */}
-        <VoiceParticleField
-          phase={voiceParticlePhase}
-          active={voiceActiveForPulses}
-          centerRef={voiceCardRef}
-        />
+        {/* Mount visuals only while voice is active — avoids idle animation cost. */}
+        {voiceActiveForPulses && (
+          <>
+            <VoiceConnectionPulses active />
+            <VoiceParticleField
+              phase={voiceParticlePhase}
+              active
+              centerRef={voiceCardRef}
+            />
+          </>
+        )}
 
         <Box sx={{
           display: 'grid',
           gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' },
-          gridTemplateRows: { lg: 'auto auto auto' },
+          gridTemplateRows: { lg: '220px 220px 180px' },
           gap: 2,
           alignItems: 'stretch',
           position: 'relative',
@@ -451,14 +460,22 @@ export function BentoDashboard() {
           <BentoCard
             title="Recent conversations"
             icon={<ChatIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}
-            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '1' } }}
+            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '1' }, height: { lg: 220 }, maxHeight: { xs: 220, lg: 220 } }}
           >
             {sessions.length === 0 ? (
               <Typography sx={{ fontSize: '0.72rem', color: colors.text.tertiary, mt: 1 }}>
                 No recent conversations.
               </Typography>
             ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+              <Box sx={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.75,
+              }}>
                 {sessions.map((s) => {
                   const isCrew = (s.contextKind ?? 'agent_x') === 'crew_private';
                   const title = s.title || `Session ${s.id.slice(0, 8)}`;
@@ -534,7 +551,8 @@ export function BentoDashboard() {
             sx={{
               gridColumn: { lg: '2 / 4' },
               gridRow: { lg: '1 / 3' },
-              minHeight: { lg: 320 },
+              height: { lg: '100%' },
+              maxHeight: { xs: 460, lg: 'none' },
               border: `1px solid ${alphaColor(colors.accent.blue, '22')}`,
               boxShadow: `0 0 24px ${alphaColor(colors.accent.blue, '08')}`,
               bgcolor: alphaColor(colors.bg.secondary, 'cc'),
@@ -551,9 +569,9 @@ export function BentoDashboard() {
           <BentoCard
             title="Channels"
             icon={<StorageIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}
-            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '1' } }}
+            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '1' }, height: { lg: 220 }, maxHeight: { xs: 220, lg: 220 } }}
           >
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.25 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.25, flex: 1, minHeight: 0, overflowY: 'auto' }}>
               {channels.map((ch) => {
                 const { label, color } = channelStatusLabel(ch.status, ch.loading);
                 return (

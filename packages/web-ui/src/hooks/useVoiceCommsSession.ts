@@ -41,6 +41,11 @@ export interface UseVoiceCommsSessionOptions {
   /** When false, PTT keyboard (Space) is disabled even if mode is push-to-talk.
    *  Used to restrict PTT to the dashboard page only. */
   pttKeyboardEnabled?: boolean;
+  /**
+   * Keep Space captured (no scroll / button activation) even when the voice
+   * session is inactive — e.g. crew call modal open while on hold or connecting.
+   */
+  spaceGuard?: boolean;
 }
 
 export function useVoiceCommsSession({
@@ -55,6 +60,7 @@ export function useVoiceCommsSession({
   voiceOnly = false,
   voiceContext,
   pttKeyboardEnabled = true,
+  spaceGuard = false,
 }: UseVoiceCommsSessionOptions) {
   const mic = useMicrophonePermission();
   const fallbackCtx = useVoiceOptional();
@@ -139,9 +145,12 @@ export function useVoiceCommsSession({
     void beginVoice();
   }, [session, beginVoice]);
 
+  const keyboardLive = active || spaceGuard;
   useVoiceKeyboard({
-    enabled: active,
-    globalSpace: active && (isDuplex || pttKeyboardEnabled),
+    enabled: keyboardLive,
+    // Capture Space whenever the session is live or a UI space-guard is on
+    // (call modal) so scroll / focused controls never steal the key.
+    globalSpace: keyboardLive && (spaceGuard || isDuplex || pttKeyboardEnabled),
     composerFocused: false,
     composerEmpty: true,
     pushToTalk: !isDuplex && pttEnabled && pttKeyboardEnabled,
@@ -223,5 +232,6 @@ export function useVoiceCommsSession({
     statusLabel,
     beginVoice,
     endVoice,
+    requestCallKickoff: session.requestCallKickoff,
   };
 }

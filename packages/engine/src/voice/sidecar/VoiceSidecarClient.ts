@@ -69,11 +69,16 @@ export class VoiceSidecarClient {
     await this.request<{ ok: boolean }>('POST', '/cancel', request, 5_000);
   }
 
-  detectVad(pcm: Buffer, sampleRate = 16_000, threshold?: number): Promise<VoiceSidecarVadDetectResponse> {
+  detectVad(
+    pcm: Buffer,
+    sampleRate = 16_000,
+    options: { threshold?: number; reset?: boolean } = {},
+  ): Promise<VoiceSidecarVadDetectResponse> {
     return this.request<VoiceSidecarVadDetectResponse>('POST', '/vad/detect', {
       pcm: pcm.toString('base64'),
       sampleRate,
-      threshold,
+      threshold: options.threshold,
+      reset: options.reset,
     }, 5_000);
   }
 

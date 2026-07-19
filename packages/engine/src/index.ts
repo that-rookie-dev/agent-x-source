@@ -465,3 +465,8 @@ export { SystemMetricsService, getSystemMetricsService, resetSystemMetricsServic
 export type { SystemMetricsSnapshot } from './system/SystemMetricsService.js';
 export { WeatherService, getWeatherService, resetWeatherService } from './system/WeatherService.js';
 export type { WeatherResponse, WeatherConditions } from './system/WeatherService.js';
+export { KnowledgeBaseManager } from './knowledge/index.js';
+export {
+  getKnowledgeBaseManager,
+  setKnowledgeBaseManager,
+} from './knowledge/index.js';

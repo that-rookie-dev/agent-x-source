@@ -38,7 +38,7 @@ export interface ProviderDetailModalProps {
   onSync?: (connection: IntegrationConnection) => void;
   onConnectSubmit: (request: ConnectIntegrationRequest) => Promise<IntegrationConnection>;
   onOAuthStart?: (remoteUrl?: string) => Promise<{ state: string } | void>;
-  onOAuthComplete?: () => void;
+  onOAuthComplete?: () => void | Promise<void>;
   onCancelConnect: () => void;
   showConnectWizard: boolean;
   autoStartSignIn?: boolean;
@@ -64,13 +64,26 @@ export function ProviderDetailModal({
 }: ProviderDetailModalProps) {
   const [view, setView] = useState<'detail' | 'connect'>('detail');
   const [mcpToolsOpen, setMcpToolsOpen] = useState(false);
-  const [mcpTools, setMcpTools] = useState<Array<{ mcpName: string; name: string; description: string; riskLevel: string; defaultDecision: 'allow' | 'deny' | 'ask' }>>([]);
+  const [mcpTools, setMcpTools] = useState<Array<{
+    mcpName: string;
+    name: string;
+    description: string;
+    riskLevel: string;
+    defaultDecision: 'allow' | 'deny' | 'ask';
+    benchmarkStatus?: 'ok' | 'error' | 'skipped' | 'pending';
+    benchmarkError?: string;
+    benchmarkSkipReason?: string;
+    lastTestedAt?: string;
+    readonly?: boolean;
+  }>>([]);
   const [mcpToolsLoading, setMcpToolsLoading] = useState(false);
+  const [benchmarkSummary, setBenchmarkSummary] = useState<{ ok: number; error: number; skipped: number } | null>(null);
 
   useEffect(() => {
     setView(showConnectWizard ? 'connect' : 'detail');
     setMcpToolsOpen(false);
     setMcpTools([]);
+    setBenchmarkSummary(null);
   }, [showConnectWizard, provider?.id]);
 
   if (!provider) return null;
@@ -97,6 +110,7 @@ export function ProviderDetailModal({
     try {
       const result = await integrations.tools(connection.id);
       setMcpTools(result.tools);
+      setBenchmarkSummary(result.benchmarkSummary ?? null);
     } finally {
       setMcpToolsLoading(false);
     }
@@ -213,6 +227,7 @@ export function ProviderDetailModal({
                 busy={busy}
                 autoStartSignIn={autoStartSignIn}
                 onAutoStartConsumed={onAutoStartSignInConsumed}
+                onSignedIn={() => onOAuthComplete?.()}
               />
             )}
 
@@ -224,6 +239,7 @@ export function ProviderDetailModal({
                   busy={busy}
                   autoStart={autoStartSignIn}
                   onAutoStartConsumed={onAutoStartSignInConsumed}
+                  onSignedIn={() => onOAuthComplete?.()}
                 />
               </Section>
             )}
@@ -274,9 +290,18 @@ export function ProviderDetailModal({
 
             {connection && (
               <Section title="Status">
-                <Typography sx={{ fontSize: '0.75rem', color: errored ? settingsTheme.accent.alert : settingsTheme.text.secondary, ...settingsMonoSx }}>
-                  {errored ? `Error — ${connection.error ?? connection.status}` : installed ? `${connected ? 'Connected' : connection.status} · ${connection.toolCount ?? 0} tools` : connection.status}
-                </Typography>
+                {busy || connection.status === 'syncing' ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CircularProgress size={12} sx={{ color: settingsTheme.accent.hud }} />
+                    <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.secondary, ...settingsMonoSx }}>
+                      Syncing tools…
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Typography sx={{ fontSize: '0.75rem', color: errored ? settingsTheme.accent.alert : settingsTheme.text.secondary, ...settingsMonoSx }}>
+                    {errored ? `Error — ${connection.error ?? connection.status}` : installed ? `${connected ? 'Connected' : connection.status} · ${connection.toolCount ?? 0} tools` : connection.status}
+                  </Typography>
+                )}
               </Section>
             )}
 
@@ -290,24 +315,58 @@ export function ProviderDetailModal({
                   </Typography>
                 ) : (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-                    {mcpTools.map((tool) => (
-                      <Box key={tool.mcpName} sx={{ bgcolor: settingsTheme.bg.inset, border: `1px solid ${settingsTheme.border.subtle}`, borderRadius: '4px', p: 1 }}>
-                        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: settingsTheme.text.primary, ...settingsMonoSx }}>
-                          {tool.name} <Box component="span" sx={{ color: settingsTheme.text.dim, fontWeight: 400 }}>({tool.mcpName})</Box>
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.secondary, ...settingsMonoSx, mt: 0.25 }}>
-                          {tool.description || 'No description'}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
-                          <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
-                            Risk: {tool.riskLevel}
+                    {benchmarkSummary && (
+                      <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.dim, mb: 0.5, ...settingsMonoSx }}>
+                        Probe: {benchmarkSummary.ok} ok · {benchmarkSummary.error} failed · {benchmarkSummary.skipped} skipped
+                      </Typography>
+                    )}
+                    {mcpTools.map((tool) => {
+                      const failed = tool.benchmarkStatus === 'error';
+                      const ok = tool.benchmarkStatus === 'ok';
+                      const skipped = tool.benchmarkStatus === 'skipped';
+                      return (
+                        <Box
+                          key={tool.mcpName}
+                          sx={{
+                            bgcolor: settingsTheme.bg.inset,
+                            border: `1px solid ${failed ? settingsTheme.accent.alert : settingsTheme.border.subtle}`,
+                            borderRadius: '4px',
+                            p: 1,
+                          }}
+                        >
+                          <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: settingsTheme.text.primary, ...settingsMonoSx }}>
+                            {tool.name}{' '}
+                            <Box component="span" sx={{ color: settingsTheme.text.dim, fontWeight: 400 }}>({tool.mcpName})</Box>
                           </Typography>
-                          <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
-                            Default: {tool.defaultDecision}
+                          <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.secondary, ...settingsMonoSx, mt: 0.25 }}>
+                            {tool.description || 'No description'}
                           </Typography>
+                          <Box sx={{ display: 'flex', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                            <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+                              Risk: {tool.riskLevel}
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+                              Default: {tool.defaultDecision}
+                            </Typography>
+                            {ok && (
+                              <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>
+                                Probe OK
+                              </Typography>
+                            )}
+                            {skipped && (
+                              <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+                                {tool.benchmarkSkipReason ?? 'Not probed'}
+                              </Typography>
+                            )}
+                          </Box>
+                          {failed && tool.benchmarkError && (
+                            <Typography sx={{ fontSize: '0.68rem', color: settingsTheme.accent.alert, mt: 0.75, lineHeight: 1.4, ...settingsMonoSx }}>
+                              {tool.benchmarkError}
+                            </Typography>
+                          )}
                         </Box>
-                      </Box>
-                    ))}
+                      );
+                    })}
                   </Box>
                 )}
               </Section>

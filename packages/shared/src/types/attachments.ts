@@ -17,6 +17,8 @@ export interface StoredAttachment {
 export interface AttachmentPreview {
   kind: 'text' | 'html' | 'table' | 'error';
   content?: string;
+  /** Per-page (or per-slide) text when the source is paginated. */
+  pages?: string[];
   headers?: string[];
   rows?: string[][];
 }

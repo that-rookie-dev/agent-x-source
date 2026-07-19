@@ -530,7 +530,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   listRootSessions(limit = 20): StorableSession[] {
     return [...this.cache.sessions.values()]
-      .filter((s) => !s.parentId && (s.contextKind ?? 'agent_x') !== 'automation' && (s.contextKind ?? 'agent_x') !== 'agent_x_core' && !s.id.startsWith('automation:'))
+      .filter((s) => !s.parentId && (s.contextKind ?? 'agent_x') !== 'automation' && (s.contextKind ?? 'agent_x') !== 'agent_x_core' && !s.id.startsWith('automation:') && !s.id.startsWith('voice:'))
       .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
       .slice(0, limit);
   }

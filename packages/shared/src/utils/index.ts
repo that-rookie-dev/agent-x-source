@@ -1,6 +1,7 @@
 export * from './id.js';
 export * from './ax-id.js';
 export * from './automation-session.js';
+export * from './crew-voice-session.js';
 export * from './channel-session.js';
 export * from './channel-session-binding.js';
 export * from './channel-context-link.js';

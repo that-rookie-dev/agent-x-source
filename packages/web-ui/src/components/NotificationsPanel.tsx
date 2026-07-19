@@ -14,7 +14,7 @@ import { PanelHeader } from './PanelHeader';
 import { CrewAwareMarkdown } from '../chat/ChatMarkdown';
 import { notifications, type NotificationRecord } from '../api';
 import { notify } from './NotificationToast';
-import { useApp } from '../store/AppContext';
+import { useAppLive } from '../store/AppContext';
 import { colors } from '../theme';
 
 type Filter = 'all' | 'unread';
@@ -148,7 +148,7 @@ function NotificationCard({
 }
 
 export function NotificationsPanel() {
-  const { events, unreadNotificationCount, refreshUnreadNotificationCount } = useApp();
+  const { events, unreadNotificationCount, refreshUnreadNotificationCount } = useAppLive();
   const [filter, setFilter] = useState<Filter>('all');
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);

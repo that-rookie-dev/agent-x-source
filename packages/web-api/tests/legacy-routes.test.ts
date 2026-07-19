@@ -116,6 +116,7 @@ vi.mock('../src/validation.js', () => ({
   crewSuggestionEvaluateSchema: {},
   crewSuggestionResolveSchema: {},
   crewChatSessionSchema: {},
+  crewChatVoiceSessionSchema: {},
   turnFeedbackSchema: {},
   clarificationRespondSchema: {},
   crewRosterPickerOfferSchema: {},
@@ -151,6 +152,8 @@ vi.mock('../src/session-resume-state.js', () => ({
 
 vi.mock('../src/crew-chat.js', () => ({
   postCrewChatSession: vi.fn(),
+  postCrewChatVoiceSession: vi.fn(),
+  listCrewChatVoiceSessions: vi.fn(),
 }));
 
 vi.mock('../src/agent-x-core.js', () => ({

@@ -38,7 +38,7 @@ export function buildFullText(text: string, attachments?: { name: string; conten
 }
 
 function buildCrewPrivateInstruction(): string {
-  return `CREW PRIVATE CHAT — conversational specialist mode.
+  return `PRIVATE CHAT — conversational specialist mode.
 
 - Deliver complete plans, itineraries, analysis, and expertise as rich markdown IN THIS CHAT.
 - Planning is internal reasoning between you and the system — NEVER ask the user to approve a plan in a modal.

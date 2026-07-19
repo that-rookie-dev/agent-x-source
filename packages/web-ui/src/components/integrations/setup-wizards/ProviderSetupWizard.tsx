@@ -26,7 +26,7 @@ export interface ProviderSetupWizardProps {
   provider: IntegrationProvider;
   onConnect: (request: ConnectIntegrationRequest) => Promise<IntegrationConnection>;
   onOAuthStart?: (remoteUrl?: string) => Promise<{ state: string } | void>;
-  onOAuthComplete?: () => void;
+  onOAuthComplete?: () => void | Promise<void>;
   onCancel: () => void;
 }
 
@@ -540,7 +540,18 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
               connection={savedConnection}
               busy={busy}
               autoStart
-              onSignedIn={() => setSignInComplete(true)}
+              onSignedIn={() => {
+                setSignInComplete(true);
+                setBusy(true);
+                setError('');
+                // Hub handleAuthSuccess (via onOAuthComplete) runs the tool sync + loader.
+                void Promise.resolve(onOAuthComplete?.())
+                  .then(() => setStep('done'))
+                  .catch((e) => {
+                    setError(e instanceof Error ? e.message : 'Tool sync failed — use Sync in the store');
+                  })
+                  .finally(() => setBusy(false));
+              }}
             />
           ) : (
             <PackageSignInPanel
@@ -548,7 +559,17 @@ export function ProviderSetupWizard({ provider, onConnect, onOAuthStart, onOAuth
               connection={savedConnection}
               busy={busy}
               autoStartSignIn
-              onSignedIn={() => setSignInComplete(true)}
+              onSignedIn={() => {
+                setSignInComplete(true);
+                setBusy(true);
+                setError('');
+                void Promise.resolve(onOAuthComplete?.())
+                  .then(() => setStep('done'))
+                  .catch((e) => {
+                    setError(e instanceof Error ? e.message : 'Tool sync failed — use Sync in the store');
+                  })
+                  .finally(() => setBusy(false));
+              }}
             />
           )}
         </Box>

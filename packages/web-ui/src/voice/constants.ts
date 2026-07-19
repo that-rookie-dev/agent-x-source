@@ -9,3 +9,8 @@ export const VOICE_ACCIDENTAL_TAP_MS = 140;
 export const VOICE_MIN_RECORDING_MS = 220;
 /** Peak mic level (0–1) that counts as speech for short clips. */
 export const VOICE_MIN_SPEECH_LEVEL = 0.055;
+/**
+ * While xAI duplex TTS is playing, only forward mic frames at/above this level.
+ * Blocks soft speaker bleed from tripping server VAD barge-in; real talk is louder.
+ */
+export const XAI_BARGE_IN_MIC_LEVEL = 0.12;

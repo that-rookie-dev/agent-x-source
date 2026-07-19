@@ -10,7 +10,7 @@ import { IngestionQueue, type ClaimedJob, type JobKind } from './IngestionQueue.
 import type { MemoryFabric } from './MemoryFabric.js';
 import { MemoryPipeline } from './MemoryPipeline.js';
 import { MemoryConsolidator } from './MemoryConsolidator.js';
-import { DocumentIngester, type DocumentIngestInput } from './DocumentIngester.js';
+import { DocumentIngester } from './DocumentIngester.js';
 import { OnnxEmbeddingProvider } from './OnnxEmbeddingProvider.js';
 import { LocalLLMJudge } from './LocalLLMJudge.js';
 import { CommunitySummarizer } from './CommunitySummarizer.js';
@@ -130,7 +130,7 @@ export class IngestionWorker {
   private async tick(): Promise<void> {
     if (!this.running || this.paused) return;
     const concurrency = this.options.concurrency ?? 1;
-    const kinds = this.options.kinds ?? ['web_distill', 'document_ingest', 're_extract', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
+    const kinds = this.options.kinds ?? ['web_distill', 're_extract', 'memory_consolidate', 'louvain_layout', 'community_summarize'];
     const limit = Math.max(1, concurrency - this.active);
 
     try {
@@ -178,60 +178,6 @@ export class IngestionWorker {
         });
         await pipeline.run();
         return;
-      }
-      case 'document_ingest': {
-        const payload = job.payload as { name?: string; kind?: string; content?: string; chunkSize?: number; chunkOverlap?: number; filePath?: string; fileSize?: number; fileMime?: string };
-        if (!payload.content || !payload.name) throw new Error('Invalid document_ingest payload');
-        const ingester = new DocumentIngester(this.fabric, this.generate ?? undefined);
-        const jobId = job.id;
-        const result = await ingester.ingest({
-          name: payload.name,
-          kind: (payload.kind as DocumentIngestInput['kind']) ?? 'text',
-          content: payload.content,
-          chunkSize: payload.chunkSize,
-          chunkOverlap: payload.chunkOverlap,
-          embed: this.embed,
-          shouldCancel: () => this.cancelledJobIds.has(jobId),
-          onProgress: (event) => {
-            // Forward the full atomic event (stage + detail + chunk counters +
-            // token usage) so the RAG Studio UI can render a live stage pipeline
-            // tracker, log stream, telemetry, and token spend.
-            void claimed.setProgressEvent(event.progress, {
-              stage: event.stage,
-              detail: event.detail,
-              chunkIndex: event.chunkIndex,
-              chunkCount: event.chunkCount,
-              batchIndex: event.batchIndex,
-              batchCount: event.batchCount,
-              inputTokens: event.inputTokens,
-              outputTokens: event.outputTokens,
-            });
-          },
-        });
-        // Clean up the cancellation flag.
-        this.cancelledJobIds.delete(jobId);
-        // If the job was cancelled during processing, don't mark it as complete.
-        if (result.cancelled) {
-          return { ok: false, cancelled: true };
-        }
-        // Store the sourceId in the job result so the UI can trace job → source → nodes.
-        // Also persist the file_path on the source if one was provided.
-        if (payload.filePath && result.sourceId) {
-          try { await this.fabric.setSourceFilePath(result.sourceId, payload.filePath, payload.fileSize, payload.fileMime); } catch { /* best-effort */ }
-        }
-        // Auto-enqueue post-ingestion jobs: recompute layout + community summaries
-        // so the graph is immediately searchable via GraphRAG retrieval.
-        try {
-          if (!await this.queue.hasActiveJob('louvain_layout')) {
-            await this.queue.enqueue({ kind: 'louvain_layout', priority: 0 });
-          }
-          if (this.generate && !await this.queue.hasActiveJob('community_summarize')) {
-            await this.queue.enqueue({ kind: 'community_summarize', priority: 0 });
-          }
-        } catch { /* best-effort — periodic loop will also enqueue these */ }
-        // Return the result — runJob() will pass it to claimed.complete() which
-        // stores it in the ingestion_jobs.result JSONB column.
-        return { ok: true, sourceId: result.sourceId, nodeCount: result.nodes.length, edgeCount: result.edges.length };
       }
       case 're_extract': {
         // Re-run entity extraction on a source that was ingested without an LLM generator.

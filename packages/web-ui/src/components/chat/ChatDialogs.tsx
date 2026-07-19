@@ -28,11 +28,11 @@ export function ClearSessionDialog({
       PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 480, width: '90%' } }}
     >
       <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
-        CLEAR SUPER SESSION
+        CLEAR AGENT-X SESSION
       </DialogTitle>
       <DialogContent>
         <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
-          Choose how to reset this super session:
+          Choose how to reset this Agent-X session:
         </Typography>
         <Box sx={{ bgcolor: colors.bg.tertiary, border: `1px solid ${colors.border.subtle}`, borderRadius: 1, p: 1.5, mb: 1 }}>
           <Typography sx={{ color: colors.text.primary, fontSize: '0.7rem', fontWeight: 600, mb: 0.5 }}>
@@ -47,7 +47,7 @@ export function ClearSessionDialog({
             Delete session
           </Typography>
           <Typography sx={{ color: colors.text.dim, fontSize: '0.65rem', lineHeight: 1.6 }}>
-            Permanently removes all messages and clears saved agent memories (memory fabric) for this super session.
+            Permanently removes all messages and clears saved agent memories (memory fabric) for this Agent-X session.
             The agent may need to start fresh and relearn context from new conversations. This cannot be undone.
           </Typography>
         </Box>

@@ -8,7 +8,6 @@ import { createGatewayRouter } from './legacy/gateway.js';
 import { createOrchestratorRouter } from './legacy/orchestrator.js';
 import { createPermissionRouter } from './legacy/permission.js';
 import { createPluginsRouter } from './legacy/plugins.js';
-import { createRagRouter } from './legacy/rag.js';
 import { createSecretSauceRouter } from './legacy/secret-sauce.js';
 import { createStaticRouter } from './legacy/static.js';
 import { createSystemRouter } from './legacy/system.js';
@@ -39,7 +38,6 @@ export function router(ctx: ApiContext): Router {
   r.use(createOrchestratorRouter());
   r.use(createPermissionRouter());
   r.use(createPluginsRouter());
-  r.use(createRagRouter());
   r.use(createSecretSauceRouter());
   r.use(createSystemRouter());
   r.use(createTodosRouter());

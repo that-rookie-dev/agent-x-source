@@ -127,6 +127,13 @@ export type EngineEvent =
   | { type: 'intent_detected'; intent: string; confidence: number; reasons?: string[] }
   | { type: 'crew_suggestion'; evaluation: import('./crew-catalog.js').CrewSuggestionEvaluation; message?: string }
   | { type: 'rag_queried'; resultCount: number; elapsed: number }
+  | {
+      type: 'turn_journey';
+      stages: Array<{ id: string; status: string; detail: string; elapsedMs?: number }>;
+      localHitCount: number;
+      elapsedMs: number;
+      voiceTurn?: boolean;
+    }
   | { type: 'subagent_event'; subagentId: string; parentEvent: EngineEvent }
   | { type: 'discord_connected'; code: string; message: string; recoverable: boolean }
   | { type: 'discord_message'; code: string; message: string; recoverable: boolean }

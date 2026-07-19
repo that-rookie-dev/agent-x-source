@@ -1,12 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import type { AttachmentPreview } from '@agentx/shared';
 
+export type ExtractProgress = (detail: string, ratio: number) => void | Promise<void>;
+
 export async function extractFromPath(
   path: string,
   mimeType: string,
+  onProgress?: ExtractProgress,
 ): Promise<AttachmentPreview> {
   if (mimeType === 'application/pdf') {
-    return extractPdfText(path);
+    return extractPdfText(path, onProgress);
   }
   if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     return extractDocx(path);
@@ -36,16 +39,21 @@ function isCodeFile(filename: string): boolean {
   return codeExts.has(ext);
 }
 
-async function extractPdfText(path: string): Promise<AttachmentPreview> {
+async function extractPdfText(path: string, onProgress?: ExtractProgress): Promise<AttachmentPreview> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const pdfData = await pdfjs.getDocument({ url: path } as unknown as any).promise;
+  const total = pdfData.numPages;
   const pages: string[] = [];
-  for (let i = 1; i <= Math.min(pdfData.numPages, 10); i++) {
+  for (let i = 1; i <= total; i++) {
     const page = await pdfData.getPage(i);
     const text = await page.getTextContent();
-    pages.push(text.items.map((item: any) => item.str).join(' '));
+    const pageText = text.items.map((item: any) => item.str).join(' ').replace(/\s+/g, ' ').trim();
+    pages.push(pageText.length > 0 ? pageText : `(no extractable text on page ${i})`);
+    if (onProgress && (i === 1 || i === total || i % 10 === 0)) {
+      await onProgress(`Extracting page ${i}/${total}`, i / Math.max(total, 1));
+    }
   }
-  return { kind: 'text', content: pages.join('\n\n') };
+  return { kind: 'text', content: pages.join('\n\n'), pages };
 }
 
 async function extractDocx(path: string): Promise<AttachmentPreview> {
@@ -82,20 +90,24 @@ async function extractPptx(path: string): Promise<AttachmentPreview> {
   const buffer = await readFile(path);
   const zip = await JSZip.loadAsync(buffer);
   const entries: string[] = [];
+  const pages: string[] = [];
   const slideFiles = Object.keys(zip.files)
     .filter((n) => n.startsWith('ppt/slides/slide') && n.endsWith('.xml'))
     .sort();
   for (const name of slideFiles) {
     const xml = await zip.files[name]!.async('text');
+    let slideText = '';
     try {
       const obj = await parseStringPromise(xml);
-      const text = collectText(obj);
-      entries.push(`--- Slide ${name.replace(/[^0-9]/g, '')} ---\n${text}`);
+      slideText = collectText(obj).trim();
     } catch {
-      entries.push(`--- ${name} ---\n${xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`);
+      slideText = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     }
+    const slideNum = name.replace(/[^0-9]/g, '');
+    pages.push(slideText || `(no extractable text on slide ${slideNum})`);
+    entries.push(`--- Slide ${slideNum} ---\n${slideText}`);
   }
-  return { kind: 'text', content: entries.join('\n\n') };
+  return { kind: 'text', content: entries.join('\n\n'), pages };
 }
 
 function collectText(obj: unknown): string {

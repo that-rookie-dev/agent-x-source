@@ -9,6 +9,9 @@ import {
   userWantsVoiceChatReport,
   voiceOfferedChatReport,
   sanitizeSpeakableText,
+  sanitizeVoiceDisplayText,
+  buildCrewCallTurnInstruction,
+  buildCrewCallOpenerInstruction,
 } from '../src/voice-speakable.js';
 
 describe('holdBackVoiceCloseSuffix', () => {
@@ -97,6 +100,14 @@ describe('sanitizeSpeakableText', () => {
     expect(sanitizeSpeakableText('Hello ]<]minimax[>[ world')).toBe('Hello world');
   });
 
+  it('strips trailing minimax bleed glued to a sentence', () => {
+    const raw = "or something offbeat like the Alps or the Greek islands?]<]minimax[>[";
+    expect(sanitizeSpeakableText(raw)).toBe('or something offbeat like the Alps or the Greek islands?');
+    expect(sanitizeVoiceDisplayText(`${VOICE_BLOCK_OPEN}${raw}${VOICE_BLOCK_CLOSE}`)).toBe(
+      'or something offbeat like the Alps or the Greek islands?',
+    );
+  });
+
   it('strips XML-like tags (tool_call, invoke, url)', () => {
     expect(sanitizeSpeakableText('<tool_call>something')).toBe('something');
     expect(sanitizeSpeakableText('<invoke name="web_fetch"><url>https://x</url></invoke>')).toBe('https://x');
@@ -134,5 +145,21 @@ describe('VoiceBlockStreamExtractor sanitization', () => {
     const spoken = extractor.pullSpeakDelta(delta);
     expect(spoken).toBe('Fetching data now.');
     expect(extractor.closed).toBe(true);
+  });
+});
+
+describe('crew call voice instructions', () => {
+  it('keeps crew call turns in phone-call character', () => {
+    const instr = buildCrewCallTurnInstruction();
+    expect(instr).toContain('CREW PHONE CALL');
+    expect(instr).toContain('not Agent-X');
+    expect(instr).toContain(VOICE_BLOCK_OPEN);
+    expect(instr).not.toContain('put the full report');
+  });
+
+  it('asks the persona to speak first on open and resume', () => {
+    expect(buildCrewCallOpenerInstruction('open')).toMatch(/speak first/i);
+    expect(buildCrewCallOpenerInstruction('open')).toMatch(/welcome/i);
+    expect(buildCrewCallOpenerInstruction('resume')).toMatch(/on hold/i);
   });
 });

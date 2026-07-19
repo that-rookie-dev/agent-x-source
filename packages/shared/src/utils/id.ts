@@ -15,6 +15,7 @@ export const PSEUDO_ID_PREFIXES = [
   'crew-worker-', // crew worker telemetry (not session PK)
   '__channel__',  // channel bridge session
   'automation:',  // internal automation run log (one per task)
+  'voice:',       // crew private-call transcript (sibling of text chat)
 ] as const;
 
 /** True when id is a standard UUID (no prefix). */

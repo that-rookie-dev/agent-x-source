@@ -268,11 +268,19 @@ export function createAiSdkTools(
   let filteredTools = allTools;
 
   if (toolExecutor.shouldDisclose?.(filteredTools.length) ?? shouldDisclose(filteredTools.length)) {
-    // Progressive disclosure: expose core tools + bridge (search/describe/call)
+    // Progressive disclosure hides the large builtin catalog behind tool_search, but
+    // connected MCP integrations must stay directly callable — otherwise the model is
+    // told Maps/Gmail/etc. are "not in the active toolset" and falls back to web search.
     const core = (toolExecutor.getCoreTools?.(filteredTools) ?? getCoreTools(filteredTools));
     const bridges = (toolExecutor.createBridgeTools?.() ?? createBridgeTools());
-    const coreIds = new Set(core.map((t) => t.id));
-    filteredTools = [...core, ...bridges.filter((b) => !coreIds.has(b.id))];
+    const integrationTools = filteredTools.filter((t) => t.id.startsWith('integration__'));
+    const seen = new Set<string>();
+    filteredTools = [];
+    for (const toolDef of [...core, ...bridges, ...integrationTools]) {
+      if (seen.has(toolDef.id)) continue;
+      seen.add(toolDef.id);
+      filteredTools.push(toolDef);
+    }
   }
 
   // Full catalog for tool_search / tool_describe / tool_call resolution

@@ -5,16 +5,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import AddIcon from '@mui/icons-material/Add';
-import SearchIcon from '@mui/icons-material/Search';
-import HistoryIcon from '@mui/icons-material/History';
-
-import {
-  type PaletteAction,
-} from '../ChatEnhancements';
 import { chat, sessions, models, crews, crewSuggestions, providers, system, settings, permissions, sessionPermissions, markdownDocuments, type TodoItem, type SessionInfo, type Crew, type ModelInfo, type ConnectionState, type CrewSuggestionEvaluation, type CrewMatchCandidate, type IntegrationActionPreview } from '../../api';
-import type { PrebuiltCrew } from '../crew/CrewHubDialog';
+import type { PrebuiltCrew } from '../crew/hub-types';
 import type { ChatInputBarHandle } from '../ChatInputBar';
 import { readWebSearchForcePreference, writeWebSearchForcePreference } from '../WebSearchGlobeToggle';
 import { readCrewSuggestionRequestedPreference, writeCrewSuggestionRequestedPreference } from '../CrewSuggestionToggle';
@@ -30,7 +22,6 @@ import { replaceWarning } from './message-helpers';
 import { useChatScroll } from './useChatScroll';
 import { useChatTokens } from './useChatTokens';
 import { useChatCrew } from './useChatCrew';
-import { useChatVoice } from './useChatVoice';
 import { useChatSessionLifecycle } from './useChatSessionLifecycle';
 import { useChatSend } from './useChatSend';
 import { useChatTelemetry } from './useChatTelemetry';
@@ -245,10 +236,9 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   // Send action menu moved to ChatInputBar
 
   // New session dialog
-  // ─── Enhancements: connection health, palette, slash, search, checkpoints ───
+  // ─── Enhancements: connection health, slash, search, checkpoints ───
   const [connState, setConnState] = useState<ConnectionState>('connecting');
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -293,15 +283,6 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     setLoadingSteps(null);
     setPendingFeedbackMessageId(null);
   }, []);
-
-  // ─── Voice composer state, handlers, context registration (extracted to useChatVoice) ───
-  const {
-    voiceCtx,
-    composerMode, setComposerMode,
-    voiceAutoStart, setVoiceAutoStart,
-    scrollAfterVoiceUserRef,
-    handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
-  } = useChatVoice({ setMessages, beginTurnUi, currentSessionId });
 
   const [crewDossierOpen, setCrewDossierOpen] = useState(false);
   const [crewDossierCrew, setCrewDossierCrew] = useState<PrebuiltCrew | null>(null);
@@ -394,7 +375,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     scrollMessagesToBottom, loadOlderMessages, resetScrollState,
   } = useChatScroll({
     messages, setMessages, streaming, sessionRestoring, setSessionRestoring,
-    sessionRestoringRef, currentSessionIdRef, view, scrollAfterVoiceUserRef,
+    sessionRestoringRef, currentSessionIdRef, view,
   });
 
   // ─── ensureDefaultCwd / ensureSession (shared by useChatCrew and useChatSend) ───
@@ -449,7 +430,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const filteredSessionList = useMemo(() => {
     return sessionList.filter((s) => {
       const kind = s.contextKind ?? 'agent_x';
-      if (kind === 'automation' || s.id.startsWith('automation:')) return false;
+      if (kind === 'automation' || s.id.startsWith('automation:') || s.id.startsWith('voice:')) return false;
       return sessionListTab === 'crew_private' ? kind === 'crew_private' : kind !== 'crew_private';
     });
   }, [sessionList, sessionListTab]);
@@ -457,12 +438,14 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const agentSessionCount = useMemo(
     () => sessionList.filter((s) => {
       const kind = s.contextKind ?? 'agent_x';
-      return kind !== 'crew_private' && kind !== 'automation' && !s.id.startsWith('automation:');
+      return kind !== 'crew_private' && kind !== 'automation' && !s.id.startsWith('automation:') && !s.id.startsWith('voice:');
     }).length,
     [sessionList],
   );
   const crewPrivateSessionCount = useMemo(
-    () => sessionList.filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private').length,
+    () => sessionList.filter((s) =>
+      (s.contextKind ?? 'agent_x') === 'crew_private' && !s.id.startsWith('voice:'),
+    ).length,
     [sessionList],
   );
 
@@ -659,15 +642,6 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     try { await chat.cancel(); } catch { /* ignore */ }
   }, [endTurnUi]);
 
-  // ─── Command palette actions ───
-  const paletteActions: PaletteAction[] = useMemo(() => [
-    { id: 'new-session', label: 'New session', hint: 'N', icon: <AddIcon sx={{ fontSize: 14 }} />, run: () => handleNewSession() },
-    { id: 'sessions', label: 'Show all sessions', icon: <SmartToyIcon sx={{ fontSize: 14 }} />, run: () => handleShowSessions() },
-    { id: 'search', label: 'Search sessions', hint: '⌘F', icon: <SearchIcon sx={{ fontSize: 14 }} />, run: () => setSearchOpen(true) },
-    { id: 'checkpoints', label: 'Open checkpoints', icon: <HistoryIcon sx={{ fontSize: 14 }} />, run: () => setCheckpointsOpen(true) },
-  ], []);
-
-
   // handleSelectSession has been moved to useChatSessionLifecycle.
 
   return {
@@ -725,7 +699,7 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
 
     // Connection/enhancement state
     connState, setConnState, lastEventAt, setLastEventAt,
-    paletteOpen, setPaletteOpen, searchOpen, setSearchOpen, checkpointsOpen, setCheckpointsOpen,
+    searchOpen, setSearchOpen, checkpointsOpen, setCheckpointsOpen,
     folderPickerOpen, setFolderPickerOpen, folderPickerCallback, setFolderPickerCallback,
     folderConsentOpen, setFolderConsentOpen, folderPickerLoading, setFolderPickerLoading,
 
@@ -744,9 +718,6 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
 
     // Crew suggestion requested (one-shot toggle)
     crewSuggestionRequested, setCrewSuggestionRequested, handleCrewSuggestionToggle,
-
-    // Composer
-    composerMode, setComposerMode, voiceAutoStart, setVoiceAutoStart,
 
     // Sidebar
     todoItems, setTodoItems, contextData, setContextData, rebuildingContext, setRebuildingContext,
@@ -770,15 +741,11 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     handleCrewRosterPickerSubmit, handleCrewRosterPickerSkip,
     handleCrewAddSearch, handleCrewAddSelect, handleCrewRemove,
     handleTurnFeedback, handleSaveMarkdown, handleViewCrewDossier,
-    handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
     handleRebuildContext, openChildSession,
 
     // Derived values
     sendBlocked, sendBlockedReason, questionnairePending,
-    filteredSessionList, agentSessionCount, crewPrivateSessionCount, paletteActions,
-
-    // Voice
-    voiceCtx,
+    filteredSessionList, agentSessionCount, crewPrivateSessionCount,
 
     // Helper functions
     endTurnUi, beginTurnUi, ensureSession, ensureDefaultCwd,

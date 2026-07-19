@@ -11,25 +11,29 @@ import {
   buildVoiceSummaryPhaseInstruction,
   buildVoiceFollowUpPhaseInstruction,
   buildVoiceChatReportPhaseInstruction,
+  buildCrewCallTurnInstruction,
+  buildCrewCallOpenerInstruction,
   extractVoiceSpeakable,
   isVoiceSummaryOnlyMessage,
   userWantsVoiceChatReport,
   isAffirmativeReply,
   voiceOfferedChatReport,
   sanitizeSpeakableText,
+  sanitizeVoiceDisplayText,
 } from './voice-speakable.js';
 import { validateVoiceWebSocketConnection } from './auth.js';
 import { ensureSubscribed } from './ws.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
-import { getEngine, createAgent, destroyAgent, setCurrentClientSituation } from './engine.js';
-import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS } from './chat-helpers.js';
+import { getEngine, createAgent, destroyAgent, setCurrentClientSituation, hydrateAgentRecentHistory } from './engine.js';
+import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS, isCrewPrivateSessionRecord } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
-import { normalizeClientSituation, getAgentFilesDir } from '@agentx/shared';
+import { normalizeClientSituation, getAgentFilesDir, getLogger, isCrewVoiceSessionId } from '@agentx/shared';
 import type { ProviderId, QuestionnairePayload } from '@agentx/shared';
 import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
+import { updateDuplexEndpointing } from './voice/duplex-endpointing.js';
 
 const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
@@ -50,12 +54,6 @@ interface PendingVoicePermission {
   timeoutTimer: ReturnType<typeof setTimeout>;
 }
 
-function hasMeaningfulWords(text: string | null | undefined): boolean {
-  if (!text) return false;
-  const trimmed = text.trim();
-  if (trimmed.length < 2) return false;
-  return /[\p{L}\p{N}]/u.test(trimmed);
-}
 let voiceWss: WebSocketServer | undefined;
 
 interface VoiceWsSession {
@@ -96,10 +94,28 @@ interface VoiceWsSession {
   bypassChip: boolean;
   /** Duplex: pending timer waiting for client playback-finished signal before re-enabling mic. */
   duplexPlaybackResetTimer?: ReturnType<typeof setTimeout>;
+  /** Crew-call greeting already issued for this WS session (client or server). */
+  callKickoffIssued?: boolean;
+  /**
+   * Serialize sidecar STT calls for this session. Concurrent preview + finalize
+   * races corrupt the streaming decoder and return empty transcripts on PTT release.
+   */
+  sttQueue?: Promise<unknown>;
+  /** True while finishTurn owns the mic buffer — skip new STT previews. */
+  turnFinishing?: boolean;
 }
 
 const activeSessions = new Map<WebSocket, VoiceWsSession>();
 const activeEngineSessions = new Map<WebSocket, VoiceEngineSession>();
+
+/** Run STT work strictly one-at-a-time per voice WS session. */
+function enqueueSessionStt<T>(session: VoiceWsSession, task: () => Promise<T>): Promise<T> {
+  const run = (session.sttQueue ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(task);
+  session.sttQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
 
 async function sendSessionAudio(
   session: VoiceWsSession,
@@ -302,6 +318,7 @@ function isAccidentalPttRecording(session: VoiceWsSession): boolean {
 }
 
 async function discardAccidentalPttRecording(ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  session.turnFinishing = false;
   session.recording = false;
   session.audioChunks = [];
   session.recordingStartedAt = undefined;
@@ -366,6 +383,21 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
     return;
   }
 
+  if (msg.type === 'call_kickoff') {
+    if (engineSession) {
+      await engineSession.onClientMessage(msg);
+      return;
+    }
+    if (session) {
+      try {
+        await runCallKickoff(ws, session, msg.reason === 'resume' ? 'resume' : 'open');
+      } catch (err) {
+        sendError(ws, err instanceof Error ? err.message : String(err));
+      }
+    }
+    return;
+  }
+
   if (msg.type !== 'session_start' && engineSession) {
     await engineSession.onClientMessage(msg);
     return;
@@ -381,6 +413,7 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
       break;
     case 'audio_start':
       if (session) {
+        session.turnFinishing = false;
         session.recording = true;
         session.recordingStartedAt = Date.now();
         session.audioChunks = [];
@@ -393,7 +426,9 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
         session.pttLastSttAt = 0;
         session.pttLastPartial = '';
         session.textOnlyPlayback = false;
-        await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
+        await enqueueSessionStt(session, () =>
+          getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true }),
+        );
       }
       break;
     case 'audio_end':
@@ -507,6 +542,9 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   const session = eng.sessionManager.restoreSession(chatSessionId);
   if (!session) return false;
   createAgent(undefined, session);
+  if (eng.agent) {
+    await hydrateAgentRecentHistory(eng.agent, chatSessionId, 24);
+  }
   ensureSubscribed();
   return true;
 }
@@ -559,6 +597,7 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
       clientSituation,
     });
     activeEngineSessions.set(ws, session);
+    // Greeting is triggered inside XaiRealtimeSession once session.updated fires.
     return;
   }
 
@@ -605,6 +644,21 @@ async function startSession(ws: WebSocket, msg: Record<string, unknown>): Promis
   });
   voiceSession.setState(mode === 'duplex' ? 'listening' : 'idle');
   ws.send(JSON.stringify({ type: 'session_ready', sessionId: voiceSession.sessionId, mode }));
+
+  // Crew calls: server-side greeting so the agent always speaks first even if
+  // the client kickoff frame is delayed (mic permission, UI phase, etc.).
+  if (chatSessionId && isCrewVoiceSessionId(chatSessionId)) {
+    const kickoffSession = activeSessions.get(ws);
+    if (kickoffSession) {
+      setTimeout(() => {
+        if (activeSessions.get(ws) !== kickoffSession) return;
+        if (kickoffSession.callKickoffIssued) return;
+        void runCallKickoff(ws, kickoffSession, 'open').catch((err) => {
+          sendError(ws, err instanceof Error ? err.message : String(err));
+        });
+      }, 500);
+    }
+  }
 }
 
 async function requestTranscriptPreview(
@@ -612,6 +666,9 @@ async function requestTranscriptPreview(
   session: VoiceWsSession,
   options: { throttleKey: 'duplex' | 'ptt' },
 ): Promise<{ partial: string; wordsNow: string; isSpeech: boolean | null } | null> {
+  // Never compete with finalize — that race empties PTT transcripts on release.
+  if (!session.recording || session.turnFinishing || session.duplexTurnInFlight) return null;
+
   const now = Date.now();
   const lastAt = options.throttleKey === 'duplex' ? session.duplexLastSttAt : session.pttLastSttAt;
   if (now - lastAt < STT_PREVIEW_INTERVAL_MS) return null;
@@ -633,7 +690,13 @@ async function requestTranscriptPreview(
   const service = getVoiceService();
   let stream: Awaited<ReturnType<typeof service.streamTranscribeChunk>>;
   try {
-    stream = await service.streamTranscribeChunk(previewPcm, SAMPLE_RATE, { preview: true });
+    stream = await enqueueSessionStt(session, async () => {
+      // Bail if release/finalize started while we waited on the STT queue.
+      if (!session.recording || session.turnFinishing) {
+        return { text: '', partial: '', isSpeech: null };
+      }
+      return service.streamTranscribeChunk(previewPcm, SAMPLE_RATE, { preview: true });
+    });
   } catch (err) {
     if (options.throttleKey === 'duplex' && now - session.duplexLastErrorAt >= DUPLEX_ERROR_COOLDOWN_MS) {
       session.duplexLastErrorAt = now;
@@ -645,6 +708,8 @@ async function requestTranscriptPreview(
     }
     return null;
   }
+
+  if (!session.recording || session.turnFinishing) return null;
 
   const partial = stream.partial?.trim() ?? '';
   const wordsNow = partial || stream.text?.trim() || '';
@@ -662,7 +727,7 @@ async function handlePttChunk(ws: WebSocket, session: VoiceWsSession): Promise<v
   ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
 }
 
-async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk: Buffer): Promise<void> {
+async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, chunk: Buffer): Promise<void> {
   if (session.duplexTurnInFlight) return;
 
   if (session.speaking) {
@@ -670,22 +735,48 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
     return;
   }
 
-  const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
-  if (!preview) return;
-
   const now = Date.now();
-  const { partial, wordsNow } = preview;
-  session.duplexSilenceMs = now - session.duplexLastWordAt;
-
-  const meaningfulNow = hasMeaningfulWords(wordsNow);
-  // Only reset the word-silence clock when the transcript actually changed.
-  // Repeated previews of the same final words mean the user stopped speaking.
-  if (meaningfulNow && wordsNow !== session.duplexLastPartial) {
-    session.duplexLastPartial = wordsNow;
-    session.duplexLastWordAt = now;
-    session.duplexHadWords = true;
-    session.duplexSilenceMs = 0;
+  let isSpeech: boolean | null = null;
+  try {
+    // Incremental chunk VAD — never the overlapping STT preview window.
+    const vad = await getVoiceService().detectVad(chunk, SAMPLE_RATE);
+    isSpeech = Boolean(vad.isSpeech);
+  } catch {
+    isSpeech = null;
   }
+
+  const preview = await requestTranscriptPreview(ws, session, { throttleKey: 'duplex' });
+  const wordsNow = preview?.wordsNow ?? '';
+  const partial = preview?.partial ?? '';
+
+  const { state, shouldFinish, emitPartial } = updateDuplexEndpointing(
+    {
+      duplexSilenceMs: session.duplexSilenceMs,
+      duplexHadSpeech: session.duplexHadSpeech,
+      duplexHadWords: session.duplexHadWords,
+      duplexLastPartial: session.duplexLastPartial,
+      duplexLastWordAt: session.duplexLastWordAt,
+      duplexLastSpeechAt: session.duplexLastSpeechAt,
+      duplexVadSpeech: session.duplexVadSpeech,
+    },
+    {
+      now,
+      isSpeech,
+      wordsNow,
+      wordsAvailable: Boolean(preview),
+      silenceThresholdMs: DUPLEX_END_SILENCE_MS,
+      hasAudio: session.audioChunks.length > 0,
+      turnInFlight: session.duplexTurnInFlight,
+    },
+  );
+
+  session.duplexSilenceMs = state.duplexSilenceMs;
+  session.duplexHadSpeech = state.duplexHadSpeech;
+  session.duplexHadWords = state.duplexHadWords;
+  session.duplexLastPartial = state.duplexLastPartial;
+  session.duplexLastWordAt = state.duplexLastWordAt;
+  session.duplexLastSpeechAt = state.duplexLastSpeechAt;
+  session.duplexVadSpeech = state.duplexVadSpeech;
 
   ws.send(JSON.stringify({
     type: 'duplex_silence',
@@ -693,17 +784,18 @@ async function handleDuplexChunk(ws: WebSocket, session: VoiceWsSession, _chunk:
     thresholdMs: DUPLEX_END_SILENCE_MS,
   }));
 
-  if (partial) {
+  if (emitPartial && partial) {
     ws.send(JSON.stringify({ type: 'transcript_partial', text: partial }));
   }
 
-  if (session.duplexSilenceMs >= DUPLEX_END_SILENCE_MS && session.audioChunks.length > 0 && !session.duplexTurnInFlight) {
+  if (shouldFinish) {
     session.recording = false;
     await finishTurn(ws, session);
   }
 }
 
 async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
+  session.turnFinishing = false;
   session.recording = true;
   session.duplexTurnInFlight = false;
   session.audioChunks = [];
@@ -717,7 +809,12 @@ async function resetDuplexListening(session: VoiceWsSession): Promise<void> {
   session.pttLastPartial = '';
   session.pttLastSttAt = 0;
   try {
-    await getVoiceService().streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
+    const service = getVoiceService();
+    await enqueueSessionStt(session, () =>
+      service.streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true }),
+    );
+    // Clear Silero LSTM / debounce so the next utterance starts clean.
+    await service.detectVad(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
   } catch { /* best-effort */ }
 }
 
@@ -745,9 +842,12 @@ async function handlePlaybackFinished(_ws: WebSocket, session: VoiceWsSession): 
 }
 
 async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void> {
+  if (session.turnFinishing) return;
   if (session.mode === 'duplex') {
     session.duplexTurnInFlight = true;
   }
+  // Stop live previews immediately so they cannot race finalize on the sidecar.
+  session.turnFinishing = true;
   session.recording = false;
   session.textOnlyPlayback = false;
   const service = getVoiceService();
@@ -756,7 +856,12 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 
   const pcm = Buffer.concat(session.audioChunks);
   session.audioChunks = [];
+  const previewFallback = (
+    session.mode === 'push-to-talk' ? session.pttLastPartial : session.duplexLastPartial
+  )?.trim() ?? '';
+
   if (pcm.length === 0) {
+    session.turnFinishing = false;
     if (session.mode === 'duplex' || isAccidentalPttRecording(session)) {
       voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
       session.recordingStartedAt = undefined;
@@ -775,12 +880,28 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
   const timings = new VoiceTurnTimingTracker();
   try {
     ws.send(JSON.stringify({ type: 'transcript_pending' }));
-    await service.streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
-    const transcript = await service.streamTranscribeChunk(pcm, SAMPLE_RATE, { finalize: true });
+    let transcriptText = '';
+    try {
+      const transcript = await enqueueSessionStt(session, async () => {
+        await service.streamTranscribeChunk(Buffer.alloc(0), SAMPLE_RATE, { reset: true });
+        return service.streamTranscribeChunk(pcm, SAMPLE_RATE, { finalize: true });
+      });
+      transcriptText = transcript.text?.trim() ?? '';
+    } catch (sttErr) {
+      // Streaming STT can fail after a preview race; fall back to one-shot PCM STT.
+      getLogger().warn(
+        'VOICE',
+        `Streaming STT finalize failed — retrying one-shot: ${sttErr instanceof Error ? sttErr.message : String(sttErr)}`,
+      );
+      const fallback = await service.transcribePcmBuffer(pcm, SAMPLE_RATE);
+      transcriptText = fallback.text?.trim() ?? '';
+    }
     timings.markSttDone();
 
-    const text = transcript.text?.trim() ?? '';
+    // Prefer finalize text; if empty, keep the live partial the operator already saw.
+    const text = transcriptText || previewFallback;
     if (!text) {
+      session.turnFinishing = false;
       if (isAccidentalPttRecording(session)) {
         await discardAccidentalPttRecording(ws, session);
         return;
@@ -794,6 +915,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
     }
 
     ws.send(JSON.stringify({ type: 'transcript_final', text }));
+    session.turnFinishing = false;
 
     // If a tool is awaiting approval, treat this utterance as the permission decision
     // instead of starting a brand-new agent turn.
@@ -838,6 +960,13 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
     // starting a brand-new one.
     if (agent.isAwaitingClarification() && agent.respondToClarification(text)) {
       ws.send(JSON.stringify({ type: 'clarification_answered', text }));
+      // Keep PTT unlocked — the resumed turn continues server-side; operator can speak again.
+      voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+      if (session.mode === 'duplex') {
+        await resetDuplexListening(session);
+      } else {
+        ws.send(JSON.stringify({ type: 'agent_status', status: 'complete' }));
+      }
       return;
     }
 
@@ -880,7 +1009,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
         ws.send(JSON.stringify({
           type: 'agent_status',
           status: 'speaking',
-          text: agentDisplayText.trim() || undefined,
+          text: sanitizeVoiceDisplayText(agentDisplayText) || undefined,
         }));
       }
       const synthId = randomUUID();
@@ -938,7 +1067,7 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       ws.send(JSON.stringify({
         type: 'agent_status',
         status: 'complete',
-        text: agentDisplayText.trim() || undefined,
+        text: sanitizeVoiceDisplayText(agentDisplayText) || undefined,
       }));
       session.speaking = false;
       session.activeSynthId = undefined;
@@ -974,9 +1103,12 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
     };
 
     try {
+      const chatSession = eng.sessionManager.getSessionById(sid);
+      const crewCall = isCrewPrivateSessionRecord(chatSession);
+
       const priorAssistant = getLastAssistantInSession(sid);
       const priorContent = priorAssistant?.content ?? '';
-      const pendingVoiceSummary = priorAssistant != null
+      const pendingVoiceSummary = !crewCall && priorAssistant != null
         && isVoiceSummaryOnlyMessage(priorContent);
       // A prior voice-block turn means we're mid voice conversation — use the
       // follow-up phase even if that turn (incorrectly) included a chat body,
@@ -984,14 +1116,18 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       const priorHasVoiceBlock = priorAssistant != null
         && extractVoiceSpeakable(priorContent).voice.trim().length > 0;
       // "yes please" after the assistant offered the chat report counts as asking for it.
-      const wantsChatReport = userWantsVoiceChatReport(text)
-        || (isAffirmativeReply(text) && voiceOfferedChatReport(priorContent));
+      const wantsChatReport = !crewCall && (
+        userWantsVoiceChatReport(text)
+        || (isAffirmativeReply(text) && voiceOfferedChatReport(priorContent))
+      );
 
-      const turnInstruction = pendingVoiceSummary && wantsChatReport
-        ? buildVoiceChatReportPhaseInstruction()
-        : priorHasVoiceBlock
-          ? buildVoiceFollowUpPhaseInstruction()
-          : buildVoiceSummaryPhaseInstruction();
+      const turnInstruction = crewCall
+        ? buildCrewCallTurnInstruction()
+        : pendingVoiceSummary && wantsChatReport
+          ? buildVoiceChatReportPhaseInstruction()
+          : priorHasVoiceBlock
+            ? buildVoiceFollowUpPhaseInstruction()
+            : buildVoiceSummaryPhaseInstruction();
 
       const chatReportOnly = pendingVoiceSummary && wantsChatReport;
       if (chatReportOnly) {
@@ -1015,7 +1151,9 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
             }
             : {}),
           ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
-          ...(session.searchWeb ? { forceWebSearch: true } : {}),
+          // Crew calls always get web search (no dashboard toggle required).
+          // Dashboard voice still respects the search-web chip.
+          ...(crewCall || session.searchWeb ? { forceWebSearch: true } : {}),
         },
       );
 
@@ -1037,12 +1175,12 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       if (session.textOnlyPlayback) {
         session.unsub?.();
         session.unsub = undefined;
-        agentDisplayText = strayChat || turnContent;
+        agentDisplayText = sanitizeVoiceDisplayText(strayChat || turnContent);
         ws.send(JSON.stringify({
           type: 'agent_status',
           status: 'complete',
           textOnly: true,
-          text: agentDisplayText,
+          text: agentDisplayText || undefined,
         }));
         sendTimings();
         voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
@@ -1063,13 +1201,14 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
       session.unsub = undefined;
 
       const { chat: spokenChat } = extractVoiceSpeakable(turnContent);
-      agentDisplayText = spokenChat || voice || '';
+      agentDisplayText = sanitizeVoiceDisplayText(spokenChat || voice || turnContent);
 
       await completeVoiceTurn();
     } catch (phaseError) {
       handleVoiceTurnError(phaseError);
     }
   } catch (error) {
+    session.turnFinishing = false;
     const raw = error instanceof Error ? error.message : String(error);
     const message = raw.includes('fetch failed') || raw.includes('ECONNREFUSED')
       ? 'Voice engine offline — verify setup in Settings → Voice and restart Agent-X'
@@ -1094,18 +1233,108 @@ async function finishTurn(ws: WebSocket, session: VoiceWsSession): Promise<void>
 function getLastAssistantInSession(sessionId: string): { id: string; content: string } | null {
   try {
     const store = getEngine().sessionManager.getStorageAdapter();
-    const msgs = store?.getMessages?.(sessionId) ?? [];
-    for (let i = msgs.length - 1; i >= 0; i -= 1) {
-      const msg = msgs[i];
-      if (msg?.role === 'assistant' && typeof msg.content === 'string') {
-        const id = msg.id;
-        if (typeof id === 'string' && id.length > 0) {
-          return { id, content: msg.content };
+    // Prefer in-memory page of recent messages — avoid scanning full session history.
+    const msgs = store?.getMessages?.(sessionId);
+    if (msgs?.length) {
+      for (let i = msgs.length - 1; i >= Math.max(0, msgs.length - 40); i -= 1) {
+        const msg = msgs[i];
+        if (msg?.role === 'assistant' && typeof msg.content === 'string') {
+          const id = msg.id;
+          if (typeof id === 'string' && id.length > 0) {
+            return { id, content: msg.content };
+          }
         }
       }
     }
   } catch { /* best-effort */ }
   return null;
+}
+
+/** Crew-call proactive opener / post-hold resume (local STT→LLM→TTS path). */
+async function runCallKickoff(
+  ws: WebSocket,
+  session: VoiceWsSession,
+  kind: 'open' | 'resume',
+): Promise<void> {
+  if (session.callKickoffIssued || session.speaking || session.duplexTurnInFlight) return;
+  const chatSessionId = await resolveVoiceChatSessionId(session.chatSessionId);
+  if (!chatSessionId) {
+    sendError(ws, 'No chat session available for call');
+    return;
+  }
+  const sessionReady = await ensureChatSessionActive(chatSessionId);
+  if (!sessionReady) {
+    sendError(ws, 'Chat session not found');
+    return;
+  }
+  const eng = getEngine();
+  const agent = eng.agent;
+  if (!agent) {
+    sendError(ws, 'Agent is not ready');
+    return;
+  }
+  const chatSession = eng.sessionManager.getSessionById(chatSessionId);
+  if (!isCrewPrivateSessionRecord(chatSession)) {
+    // Still attempt opener if host crew is present (some restores omit contextKind briefly).
+    if (!chatSession?.hostCrewId) {
+      sendError(ws, 'Not a crew call session');
+      return;
+    }
+  }
+
+  session.callKickoffIssued = true;
+  session.duplexTurnInFlight = true;
+  const voiceSession = getVoiceService().getSession(session.sessionId);
+  voiceSession?.setState('agent_running');
+  ws.send(JSON.stringify({ type: 'agent_status', status: 'running' }));
+  refreshAgentPersona(agent);
+  if (session.clientSituation) agent.setClientSituation(session.clientSituation);
+  ensureSubscribed();
+
+  const eventText = kind === 'resume' ? '[call_event:resume]' : '[call_event:open]';
+  try {
+    const turnMessage = await runVoiceAgentPhase(
+      agent,
+      eventText,
+      buildCrewCallOpenerInstruction(kind),
+      randomUUID(),
+      chatSessionId,
+      {
+        userMessagePersisted: true,
+        ...(session.clientSituation ? { clientSituation: session.clientSituation } : {}),
+      },
+    );
+    const content = normalizeVoiceAssistantContent(extractAssistantText(turnMessage));
+    const { voice } = extractVoiceSpeakable(content);
+    const speakable = sanitizeSpeakableText(voice || buildVoiceFallback(content));
+    if (speakable && !session.textOnlyPlayback) {
+      session.speaking = true;
+      voiceSession?.setState('speaking');
+      ws.send(JSON.stringify({
+        type: 'agent_status',
+        status: 'speaking',
+        text: sanitizeVoiceDisplayText(speakable) || undefined,
+      }));
+      await speakSystemLine(session, speakable);
+    }
+    ws.send(JSON.stringify({
+      type: 'agent_status',
+      status: 'complete',
+      text: sanitizeVoiceDisplayText(speakable) || undefined,
+    }));
+    ws.send(JSON.stringify({ type: 'audio_end' }));
+    voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+  } catch (err) {
+    sendError(ws, err instanceof Error ? err.message : String(err));
+    voiceSession?.setState(session.mode === 'duplex' ? 'listening' : 'idle');
+  } finally {
+    session.speaking = false;
+    session.duplexTurnInFlight = false;
+    if (session.mode === 'duplex') {
+      await resetDuplexListening(session);
+      notifyDuplexListening(ws);
+    }
+  }
 }
 
 function runVoiceAgentPhase(

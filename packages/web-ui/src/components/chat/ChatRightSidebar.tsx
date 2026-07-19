@@ -226,7 +226,7 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
         )}
       </Box>
 
-      {/* ─── Crew Mission (not shown for Agent-X super-session) ─── */}
+      {/* ─── Crew Mission (not shown for Agent-X session) ─── */}
       {!isCrewPrivateSession && !coreSession && currentSessionId && (
       <Box>
         <Box

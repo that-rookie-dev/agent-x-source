@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -9,12 +9,14 @@ import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../styles
 import { StoreProviderCard } from './StoreProviderCard';
 import { ProviderDetailModal } from './ProviderDetailModal';
 import { IntegrationAuditPanel } from './IntegrationAuditPanel';
+import { IntegrationNotificationsPanel } from './IntegrationNotificationsPanel';
 import { StoreCardGrid, StoreSectionTitle } from './StoreLayout';
 import { useIntegrationsHub } from './useIntegrationsHub';
 import { CATEGORY_LABELS, CATEGORY_ORDER, isInstalledConnection, matchesProviderSearch } from './integration-ui';
 import type { IntegrationProvider } from '../../api';
+import { integrations } from '../../api';
 
-type StoreTab = 'browse' | 'installed' | 'activity';
+type StoreTab = 'browse' | 'installed' | 'activity' | 'alerts';
 type CategoryFilter = 'all' | 'connected' | (typeof CATEGORY_ORDER)[number];
 
 function renderProviderGrid(
@@ -47,6 +49,13 @@ export function McpStorePage() {
   const [tab, setTab] = useState<StoreTab>('browse');
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [search, setSearch] = useState('');
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    void integrations.notifications(1)
+      .then((res) => setAlertCount(res.count))
+      .catch(() => setAlertCount(0));
+  }, [hub.connections, hub.message, tab]);
 
   const filteredProviders = useMemo(() => {
     let list = hub.providers;
@@ -138,6 +147,7 @@ export function McpStorePage() {
         {([
           { id: 'browse' as const, label: 'Browse' },
           { id: 'installed' as const, label: `Installed (${connectedCount})` },
+          { id: 'alerts' as const, label: alertCount > 0 ? `Alerts (${alertCount})` : 'Alerts' },
           { id: 'activity' as const, label: 'Activity' },
         ]).map((item) => (
           <Button
@@ -166,8 +176,22 @@ export function McpStorePage() {
           </Typography>
         )}
 
-        {tab === 'activity' && (
+        {tab === 'alerts' && (
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
+            <IntegrationNotificationsPanel
+              onOpenProvider={(providerId) => {
+                const provider = hub.providers.find((p) => p.id === providerId);
+                if (provider) {
+                  hub.openDetail(provider);
+                  setTab('installed');
+                }
+              }}
+            />
+          </Box>
+        )}
+
+        {tab === 'activity' && (
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', px: 3, py: 2 }}>
             <IntegrationAuditPanel />
           </Box>
         )}
@@ -304,14 +328,24 @@ export function McpStorePage() {
           provider={hub.detailProvider}
           connection={hub.connectionByProvider.get(hub.detailProvider.id)}
           connecting={hub.connectingProvider?.id === hub.detailProvider.id}
-          busy={hub.busyId === hub.detailProvider.id || hub.busyId === hub.connectionByProvider.get(hub.detailProvider.id)?.id}
+          busy={
+            hub.busyId === hub.detailProvider.id
+            || hub.busyId === hub.connectionByProvider.get(hub.detailProvider.id)?.id
+            || hub.syncingId === hub.connectionByProvider.get(hub.detailProvider.id)?.id
+          }
           onClose={hub.closeDetail}
           onConnect={hub.startConnect}
           onDisconnect={hub.handleDisconnect}
           onSync={hub.handleSync}
           onConnectSubmit={hub.handleConnect}
           onOAuthStart={hub.handleOAuthStart}
-          onOAuthComplete={() => { void hub.refresh(); }}
+          onOAuthComplete={() => {
+            const conn = hub.connectionByProvider.get(hub.detailProvider!.id);
+            return hub.handleAuthSuccess({
+              connectionId: conn?.id,
+              providerId: hub.detailProvider!.id,
+            });
+          }}
           onCancelConnect={hub.cancelConnect}
           showConnectWizard={hub.connectingProvider?.id === hub.detailProvider.id}
           autoStartSignIn={hub.signInOnOpen}

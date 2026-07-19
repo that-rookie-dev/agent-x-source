@@ -1,4 +1,5 @@
 import { isChannelSessionId } from './channel-session.js';
+import { isCrewVoiceSessionId } from './crew-voice-session.js';
 
 /** Internal session id for one automation task's run history (not a user chat session). */
 export function automationRunSessionId(taskId: string): string {
@@ -23,5 +24,7 @@ export function isUserFacingSession(session: {
   if (session.parentId) return false;
   if (session.contextKind === 'automation') return false;
   if (isAutomationSessionId(session.id)) return false;
+  // Crew call transcripts live in voice:{textSessionId} — never list as text chats.
+  if (isCrewVoiceSessionId(session.id)) return false;
   return true;
 }

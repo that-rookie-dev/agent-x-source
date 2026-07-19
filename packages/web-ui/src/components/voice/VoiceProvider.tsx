@@ -37,13 +37,6 @@ function writeVoiceActiveToStorage(active: boolean): void {
 }
 
 interface VoiceContextValue {
-  /** Switch the active chat session to inline voice mode (chat page only). */
-  activateInlineVoice: (autoStart?: boolean) => void;
-  registerChatSession: (sessionId: string | null) => void;
-  registerInlineVoiceHandler: (handler: ((autoStart?: boolean) => void) | null) => void;
-  registerVoiceChatBridge: (bridge: VoiceChatBridge | null) => void;
-  getVoiceChatBridge: () => VoiceChatBridge | null;
-  inlineVoiceAvailable: boolean;
   coreSessionId: string | null;
   voiceReady: boolean;
   /** Merged voice configuration (engine, mode, etc.). */
@@ -74,13 +67,6 @@ interface VoiceCommsContextValue {
 
 const VoiceContext = createContext<VoiceContextValue | null>(null);
 const VoiceCommsContext = createContext<VoiceCommsContextValue | null>(null);
-
-export interface VoiceChatBridge {
-  onVoiceUserPending?: () => void;
-  onVoiceUserDiscarded?: () => void;
-  onTranscriptFinal?: (text: string, empty: boolean) => void;
-  onAgentRunning?: () => void;
-}
 
 export function useVoice(): VoiceContextValue {
   const ctx = useContext(VoiceContext);
@@ -113,10 +99,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [wakePhrase, setWakePhrase] = useState(() => resolveWakePhrase());
   const [canRunWeb, setCanRunWeb] = useState(false);
-  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
   const [voiceActive, setVoiceActiveState] = useState(() => readVoiceActiveFromStorage());
-  const inlineVoiceHandlerRef = useRef<((autoStart?: boolean) => void) | null>(null);
-  const voiceChatBridgeRef = useRef<VoiceChatBridge | null>(null);
   const voiceConsumersRef = useRef(0);
   const releaseTimerRef = useRef<number | null>(null);
 
@@ -214,7 +197,16 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     }
   }, []);
 
+  // Defer heavy voice config/capability loads until a voice-capable surface or
+  // an active voice session — avoids competing with Crew Hub / settings work.
+  const voiceSurface =
+    isDashboard
+    || location.pathname.includes('/console/chat')
+    || location.pathname.includes('/console/settings')
+    || voiceActive;
+
   useEffect(() => {
+    if (!voiceSurface) return;
     const defer = () => { void loadVoiceState(); };
     if (typeof window.requestIdleCallback === 'function') {
       const id = window.requestIdleCallback(defer, { timeout: 2500 });
@@ -222,9 +214,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     }
     const timer = window.setTimeout(defer, 1200);
     return () => window.clearTimeout(timer);
-  }, [loadVoiceState]);
+  }, [loadVoiceState, voiceSurface]);
 
   useEffect(() => {
+    if (!voiceSurface) return;
     const onFocus = () => { void loadVoiceState(); };
     const onPersonaUpdated = () => { void loadVoiceState(); };
     const onVoiceUpdated = (event: Event) => {
@@ -242,41 +235,17 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
       window.removeEventListener('agentx:persona-updated', onPersonaUpdated);
       window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
     };
-  }, [loadVoiceState, applyVoiceConfigSnapshot]);
-
-  const activateInlineVoice = useCallback((startListening = false) => {
-    if (!voiceEnabled || !canRunWeb || voiceDisabledReason()) return;
-    if (!activeChatSessionId || !inlineVoiceHandlerRef.current) return;
-    inlineVoiceHandlerRef.current(startListening);
-  }, [activeChatSessionId, voiceEnabled, canRunWeb]);
-
-  const registerChatSession = useCallback((sessionId: string | null) => {
-    setActiveChatSessionId(sessionId);
-  }, []);
-
-  const registerInlineVoiceHandler = useCallback((handler: ((autoStart?: boolean) => void) | null) => {
-    inlineVoiceHandlerRef.current = handler;
-  }, []);
-
-  const registerVoiceChatBridge = useCallback((bridge: VoiceChatBridge | null) => {
-    voiceChatBridgeRef.current = bridge;
-  }, []);
-
-  const getVoiceChatBridge = useCallback(() => voiceChatBridgeRef.current, []);
+  }, [loadVoiceState, applyVoiceConfigSnapshot, voiceSurface]);
 
   const onWakeWord = useCallback(() => {
-    activateInlineVoice(true);
-  }, [activateInlineVoice]);
+    if (!voiceEnabled || !canRunWeb || voiceDisabledReason()) return;
+    // Wake word activates the dashboard Voice Agent — chat stays text-only.
+    setVoiceActive(true);
+  }, [voiceEnabled, canRunWeb, setVoiceActive]);
 
   useWakeWord(wakeWordEnabled && voiceEnabled && canRunWeb, wakePhrase, onWakeWord);
 
   const value = useMemo<VoiceContextValue>(() => ({
-    activateInlineVoice,
-    registerChatSession,
-    registerInlineVoiceHandler,
-    registerVoiceChatBridge,
-    getVoiceChatBridge,
-    inlineVoiceAvailable: Boolean(activeChatSessionId),
     coreSessionId,
     voiceReady,
     voiceConfig,
@@ -295,12 +264,6 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
     voiceActive,
     setVoiceActive,
   }), [
-    activateInlineVoice,
-    registerChatSession,
-    registerInlineVoiceHandler,
-    registerVoiceChatBridge,
-    getVoiceChatBridge,
-    activeChatSessionId,
     coreSessionId,
     voiceReady,
     voiceConfig,

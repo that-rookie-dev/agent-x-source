@@ -1,6 +1,6 @@
 import type { Session, SessionStatus, SessionEvent, StorableTokenLog, StorableSession } from '@agentx/shared';
 import type { StorageAdapter } from '@agentx/shared';
-import { generateSessionId, generateId } from '@agentx/shared';
+import { generateSessionId, generateId, crewVoiceSessionId, isCrewVoiceSessionId } from '@agentx/shared';
 import { TokenTracker } from './TokenTracker.js';
 import { normalizeSessionUpdates, EMPTY_SESSION_KPIS, hostCrewSnapshotFromInput, hostCrewSnapshotPatch } from './session-field-utils.js';
 import type { SessionListKpis } from './session-field-utils.js';
@@ -125,8 +125,62 @@ export class SessionManager {
     return this.listSessions(500).find((s) =>
       !s.parentId
       && s.contextKind === 'crew_private'
-      && s.hostCrewId === crewId,
+      && s.hostCrewId === crewId
+      && !isCrewVoiceSessionId(s.id),
     ) ?? null;
+  }
+
+  /** Lifelong private-call transcript for a crew text session (`voice:{textSessionId}`). */
+  findCrewVoiceSession(textSessionId: string): Session | null {
+    const voiceId = crewVoiceSessionId(textSessionId);
+    return this.getSessionRecord(voiceId);
+  }
+
+  /**
+   * Create or return the voice-call sibling of a crew private text session.
+   * Keeps call transcripts out of the text chat while preserving crew_private prompts.
+   */
+  createCrewVoiceSession(
+    providerId: string,
+    modelId: string,
+    scopePath: string,
+    textSessionId: string,
+    crew: {
+      id: string;
+      name: string;
+      callsign: string;
+      title?: string;
+      color?: string;
+      catalogId?: string;
+      categoryId?: string;
+      expertise?: string[];
+      requiresMedicalDisclaimer?: boolean;
+      honorsDoctorate?: boolean;
+    },
+  ): Session {
+    const voiceId = crewVoiceSessionId(textSessionId);
+    const existing = this.getSessionRecord(voiceId);
+    if (existing) {
+      const patch = hostCrewSnapshotPatch(existing, crew);
+      if (Object.keys(patch).length > 0) {
+        this.patchSession(existing.id, patch as Partial<Session>);
+      }
+      return { ...existing, ...patch };
+    }
+
+    const session = this.buildSessionRecord(
+      providerId,
+      modelId,
+      scopePath,
+      voiceId,
+      undefined,
+      `${crew.name} · Call`,
+    );
+    session.contextKind = 'crew_private';
+    session.hostCrewId = crew.id;
+    Object.assign(session, hostCrewSnapshotFromInput(crew));
+    this.createSessionRecord(session);
+    return session;
   }
 
   /** The global Agent-X core session — never deleted, used for voice and lifelong learning. */
@@ -309,12 +363,21 @@ export class SessionManager {
         if ((s.contextKind ?? 'agent_x') === 'automation') return false;
         if ((s.contextKind ?? 'agent_x') === 'agent_x_core') return false;
         if (s.id.startsWith('automation:')) return false;
+        if (isCrewVoiceSessionId(s.id)) return false;
         return true;
       });
     if (this.store.listRootSessions) {
       return filterAutomation(this.store.listRootSessions(limit).map((s) => this.castSession(s)));
     }
     return filterAutomation(this.store.listSessions(limit).map((s) => this.castSession(s)));
+  }
+
+  /** Crew private-call transcripts (`voice:{textSessionId}`), newest first. */
+  listCrewVoiceSessions(limit = 100): Session[] {
+    return this.listSessions(Math.max(limit * 4, 200))
+      .filter((s) => isCrewVoiceSessionId(s.id) && (s.contextKind ?? 'agent_x') === 'crew_private')
+      .sort((a, b) => String(b.updatedAt ?? b.createdAt ?? '').localeCompare(String(a.updatedAt ?? a.createdAt ?? '')))
+      .slice(0, limit);
   }
 
   getSessionTree(): Session[] {

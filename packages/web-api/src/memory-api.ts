@@ -10,8 +10,6 @@ import { createNodesRouter } from './memory/nodes.js';
 import { createBenchmarkRouter } from './memory/benchmark.js';
 import { createMaintenanceRouter } from './memory/maintenance.js';
 import { createVaultRouter } from './memory/vault.js';
-import { createIngestRouter } from './memory/ingest.js';
-import { createJobsRouter } from './memory/jobs.js';
 import { createGraphLayoutRouter } from './memory/graph-layout.js';
 import { createSourcesRouter } from './memory/sources.js';
 
@@ -21,8 +19,6 @@ router.use(createNodesRouter());
 router.use(createBenchmarkRouter());
 router.use(createMaintenanceRouter());
 router.use(createVaultRouter());
-router.use(createIngestRouter());
-router.use(createJobsRouter());
 router.use(createGraphLayoutRouter());
 router.use(createSourcesRouter());
 

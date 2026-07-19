@@ -6,7 +6,7 @@ import { health } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
 import { useCapabilitiesReady } from '../hooks/useSystemCapabilities';
 import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
-import { useApp } from '../store/AppContext';
+import { useAppCore } from '../store/AppContext';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
 
@@ -26,7 +26,7 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
   const capabilitiesReady = useCapabilitiesReady();
-  const { config: appConfig } = useApp();
+  const { config: appConfig } = useAppCore();
   const voice = useVoiceOptional();
   const commsCtx = useVoiceCommsOptional();
   const comms = commsCtx?.comms;

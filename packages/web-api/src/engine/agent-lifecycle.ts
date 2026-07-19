@@ -21,6 +21,47 @@ import { resolveCrewPrivateHostForAgent } from '../host-crew-session.js';
 import { persistClarificationResumeFromAgent } from '../clarification-resume.js';
 import { unsubscribeAgent } from '../ws.js';
 import { registerOrphanedEventBus, connectToOrphanedBus, unregisterOrphanedEventBus } from './background-task-bridge.js';
+const historyHydratedAgents = new WeakSet<Agent>();
+
+/** Page recent user/assistant turns into agent memory without loading full session history. */
+export async function hydrateAgentRecentHistory(
+  agent: Agent,
+  sessionId: string,
+  limit = 24,
+): Promise<void> {
+  if (historyHydratedAgents.has(agent)) return;
+  try {
+    const eng = getEngine();
+    const store = eng.sessionManager.getStorageAdapter();
+    await store?.ensureSessionHydrated?.(sessionId);
+    let recent: Array<Record<string, unknown>> = [];
+    if (store?.getMessagesPage) {
+      const page = await store.getMessagesPage(sessionId, { limit });
+      recent = (page.messages ?? []).filter((m) => {
+        const role = (m as { role?: string }).role;
+        return role === 'user' || role === 'assistant';
+      }) as Array<Record<string, unknown>>;
+    } else if (store?.getMessages) {
+      // Legacy adapters: still avoid feeding unbounded history into the model.
+      recent = store.getMessages(sessionId)
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-limit) as unknown as Array<Record<string, unknown>>;
+    }
+    if (recent.length === 0) {
+      historyHydratedAgents.add(agent);
+      return;
+    }
+    const historyEntries = hydrateMessageHistoryEntries(recent);
+    for (const entry of historyEntries) {
+      agent.addToHistory(entry);
+    }
+    try {
+      agent.rebuildContext();
+      agent.rebuildSystemPrompt();
+    } catch { /* best-effort */ }
+    historyHydratedAgents.add(agent);
+  } catch { /* best-effort */ }
+}
 
 export function createAgent(
   config: AgentXConfig | undefined,
@@ -242,25 +283,8 @@ export function createAgent(
     }
   } catch { /* best-effort */ }
 
-  // Restore recent conversation history from DB into agent memory
-  try {
-    const store = eng.sessionManager.getStorageAdapter();
-    if (store?.getMessages) {
-      const msgs = store.getMessages(session.id);
-      const restorable = msgs.filter((m) =>
-        m.role === 'user' || m.role === 'assistant',
-      );
-      const recent = restorable.slice(-24);
-      const historyEntries = hydrateMessageHistoryEntries(recent);
-      for (const entry of historyEntries) {
-        agent.addToHistory(entry);
-      }
-      try {
-        agent.rebuildContext();
-        agent.rebuildSystemPrompt();
-      } catch { /* best-effort */ }
-    }
-  } catch { /* best-effort */ }
+  // Paged recent history (non-blocking). Voice/call paths await hydrateAgentRecentHistory.
+  void hydrateAgentRecentHistory(agent, session.id, 24);
 
   agent.onTokenLog = (opts) => {
     eng.sessionManager.addTokenLog({

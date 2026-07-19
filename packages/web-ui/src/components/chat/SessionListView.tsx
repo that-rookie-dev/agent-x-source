@@ -44,8 +44,8 @@ export const SessionListView = React.memo(function SessionListView() {
         </Box>
         <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
           {([
-            { id: 'agent_x' as const, label: 'AGENT-X', count: agentSessionCount },
-            { id: 'crew_private' as const, label: 'CREW PRIVATE', count: crewPrivateSessionCount },
+            { id: 'agent_x' as const, label: 'GROUP CHAT', count: agentSessionCount },
+            { id: 'crew_private' as const, label: 'PRIVATE CHAT', count: crewPrivateSessionCount },
           ]).map((tab) => (
             <Button
               key={tab.id}
@@ -85,7 +85,7 @@ export const SessionListView = React.memo(function SessionListView() {
             '&:hover': { bgcolor: alphaColor(colors.accent.blue, '15'), borderColor: alphaColor(colors.accent.blue, '60') },
           }}
         >
-          NEW SESSION
+          NEW GROUP CHAT
         </Button>
         )}
         {sessionListTab === 'crew_private' && (
@@ -122,12 +122,12 @@ export const SessionListView = React.memo(function SessionListView() {
             </Box>
             <Box sx={{ textAlign: 'center' }}>
               <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.dim, letterSpacing: '2px', mb: 0.5 }}>
-                {sessionListTab === 'crew_private' ? 'NO CREW PRIVATE CHATS' : 'NO SESSIONS'}
+                {sessionListTab === 'crew_private' ? 'NO PRIVATE CHATS' : 'NO GROUP CHATS'}
               </Typography>
               <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, opacity: 0.6 }}>
                 {sessionListTab === 'crew_private'
                   ? 'Start a private 1:1 chat from the crew roster or Crew Hub'
-                  : 'Send a message to start your first session'}
+                  : 'Send a message to start a group chat with Agent-X and crew'}
               </Typography>
             </Box>
             {sessionListTab === 'crew_private' ? (

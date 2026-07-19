@@ -20,6 +20,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import KeyboardVoiceIcon from '@mui/icons-material/KeyboardVoice';
 import SecurityIcon from '@mui/icons-material/Security';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import { CheckCircle } from './CheckCircle';
 import { config, personaApi, settingsPermissions, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
@@ -46,9 +47,10 @@ import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
 import { NeuralTab } from './settings/NeuralTab';
+import { KnowledgeTab } from './settings/KnowledgeTab';
 import { PermissionsTab } from './settings/PermissionsTab';
 
-type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'channels' | 'runtime' | 'voice' | 'permissions';
+type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'knowledge' | 'channels' | 'runtime' | 'voice' | 'permissions';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -57,6 +59,7 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
   { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
   { id: 'neural', label: 'Neural', icon: <HubIcon sx={{ fontSize: 14 }} /> },
+  { id: 'knowledge', label: 'Knowledge', icon: <LibraryBooksIcon sx={{ fontSize: 14 }} /> },
   { id: 'voice', label: 'Voice', icon: <KeyboardVoiceIcon sx={{ fontSize: 14 }} /> },
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
   { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
@@ -204,6 +207,7 @@ export function SettingsPanel() {
         {activeTab === 'models' && <ProvidersPanel />}
         {activeTab === 'local-model' && <LocalModelTab />}
         {activeTab === 'neural' && <NeuralTab />}
+        {activeTab === 'knowledge' && <KnowledgeTab />}
         {activeTab === 'voice' && (
           <VoiceTab
             value={cfg.voice}

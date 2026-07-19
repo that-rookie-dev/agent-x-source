@@ -4,6 +4,7 @@ import { VoiceSessionClient, type VoiceClientState, type VoiceTurnTimings, type 
 import { VOICE_MAX_TURN_SECONDS, VOICE_TURN_COUNTDOWN_FROM_SECONDS, VOICE_MIN_RECORDING_MS, VOICE_ACCIDENTAL_TAP_MS, VOICE_MIN_SPEECH_LEVEL } from '../voice/constants';
 import { type VoiceTurnPipeline } from '../voice/voice-turn-pipeline';
 import { markVoiceOutputUnlocked } from '../voice/support';
+import { sanitizeVoiceDisplayText } from '../voice/sanitize-display-text';
 import { friendlyVoiceError } from '../components/voice/voice-comms-theme';
 
 export type VoiceHookState = VoiceClientState;
@@ -170,7 +171,7 @@ export function useVoiceSession(
           setWarning(null);
         },
         onAgentText: (text) => {
-          setAgentText(text);
+          setAgentText(sanitizeVoiceDisplayText(text));
           setTurnPipeline((prev) => (
             prev === 'agent_thinking' ? 'llm_processing' : prev
           ));
@@ -519,6 +520,10 @@ export function useVoiceSession(
     clientRef.current?.setToggles(toggles);
   }, []);
 
+  const requestCallKickoff = useCallback((reason: 'open' | 'resume' = 'open') => {
+    return clientRef.current?.requestCallKickoff(reason) ?? false;
+  }, []);
+
   const retryPermission = useCallback(() => {
     setError(null);
   }, []);
@@ -565,6 +570,7 @@ export function useVoiceSession(
     replayPlayback,
     setPlaybackTextOnly,
     setToggles,
+    requestCallKickoff,
     retryPermission,
   };
 }

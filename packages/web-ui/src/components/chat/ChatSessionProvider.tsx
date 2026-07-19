@@ -117,9 +117,9 @@ type InputGate = Pick<ChatSessionStateReturn, InputGateKey>;
 
 // ─── Composer keys ───
 const COMPOSER_KEYS = [
-  'attachments', 'composerMode', 'voiceAutoStart',
+  'attachments',
   'webSearchAvailable', 'webSearchForce', 'crewSuggestionRequested',
-  'voiceCtx', 'inputClearSignal',
+  'inputClearSignal',
 ] as const;
 
 type ComposerKey = typeof COMPOSER_KEYS[number];
@@ -161,12 +161,11 @@ type Sidebar = Pick<ChatSessionStateReturn, SidebarKey>;
 
 // ─── Modal keys ───
 const MODAL_KEYS = [
-  'paletteOpen', 'searchOpen', 'checkpointsOpen',
+  'searchOpen', 'checkpointsOpen',
   'folderPickerOpen', 'folderPickerCallback', 'folderConsentOpen', 'folderPickerLoading',
   'stepCapPrompt',
   'crewDossierOpen', 'crewDossierCrew',
   'clearSessionModalOpen', 'clearSessionBusy',
-  'paletteActions',
 ] as const;
 
 type ModalKey = typeof MODAL_KEYS[number];
@@ -195,13 +194,12 @@ const SETTER_KEYS = [
   'setCwd',
   'setProviderMenuAnchor', 'setModelMenuAnchor',
   'setConnState', 'setLastEventAt',
-  'setPaletteOpen', 'setSearchOpen', 'setCheckpointsOpen',
+  'setSearchOpen', 'setCheckpointsOpen',
   'setFolderPickerOpen', 'setFolderPickerCallback', 'setFolderConsentOpen', 'setFolderPickerLoading',
   'setStepCapPrompt',
   'setCrewDossierOpen', 'setCrewDossierCrew',
   'setClearSessionModalOpen', 'setClearSessionBusy',
   'setWebSearchAvailable', 'setWebSearchForce', 'setCrewSuggestionRequested',
-  'setComposerMode', 'setVoiceAutoStart',
   'setTodoItems', 'setContextData', 'setRebuildingContext',
   'setContextExpanded', 'setTokenExpanded', 'setTasksExpanded', 'setMissionExpanded',
   'setCrewAddQuery', 'setCrewAddResults', 'setCrewAddOpen', 'setCrewAddLoading',
@@ -221,7 +219,6 @@ const INPUT_HANDLER_KEYS = [
   'handleFileSelect', 'handleRemoveAttachment',
   'handlePermissionRespond', 'handlePermissionRespondBatch',
   'handleWebSearchToggle', 'handleCrewSuggestionToggle',
-  'handleVoiceUserPending', 'handleVoiceUserDiscarded', 'handleVoiceTranscript', 'handleVoiceTiming',
 ] as const;
 
 type InputHandlerKey = typeof INPUT_HANDLER_KEYS[number];

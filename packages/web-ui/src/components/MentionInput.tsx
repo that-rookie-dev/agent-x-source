@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useImperativeHandle } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import { colors, alphaColor } from '../theme';
@@ -87,6 +87,13 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
   const isComposing = useRef(false);
   const plainRef = useRef('');
   const mentionOriginRef = useRef<number | null>(null);
+  const lastValidatedPlainRef = useRef('');
+
+  const validCallsigns = useMemo(() => {
+    const set = new Set<string>(['agentx', 'agent-x']);
+    for (const c of crewList) set.add(c.callsign.toLowerCase());
+    return set;
+  }, [crewList]);
 
   const syncFromDom = useCallback(() => {
     const el = editorRef.current;
@@ -96,12 +103,15 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     setIsEmpty(plain.trim().length === 0);
     onTextChange?.(plain);
 
-    const mentions = plain.match(/(?<!\w)@(\w+)/g) ?? [];
-    const invalid = mentions
-      .map((m) => m.slice(1).toLowerCase())
-      .filter((callsign) => callsign !== 'agentx' && callsign !== 'agent-x'
-        && !crewList.some((c) => c.callsign.toLowerCase() === callsign));
-    setInvalidMentions([...new Set(invalid)]);
+    // Only re-validate mentions when plain text changed (skip cursor-only moves).
+    if (plain !== lastValidatedPlainRef.current) {
+      lastValidatedPlainRef.current = plain;
+      const mentions = plain.match(/(?<!\w)@(\w+)/g) ?? [];
+      const invalid = mentions
+        .map((m) => m.slice(1).toLowerCase())
+        .filter((callsign) => !validCallsigns.has(callsign));
+      setInvalidMentions([...new Set(invalid)]);
+    }
 
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) {
@@ -130,7 +140,7 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     mentionOriginRef.current = null;
     onMentionQuery(null);
     return plain;
-  }, [onMentionQuery, onTextChange, crewList]);
+  }, [onMentionQuery, onTextChange, validCallsigns]);
 
   const insertMention = useCallback((callsign: string) => {
     const el = editorRef.current;

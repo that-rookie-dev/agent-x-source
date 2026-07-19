@@ -30,6 +30,30 @@ def test_preview_transcribe_does_not_mutate_stream_buffer(tmp_path, monkeypatch)
     assert len(stt._stream_buffer) == 0
 
 
+def test_preview_does_not_feed_overlapping_windows_into_vad(tmp_path, monkeypatch) -> None:
+    """Regression: preview used to re-run Silero on a trailing 5s window every tick,
+    which kept isSpeech stuck true after the user stopped talking."""
+    stt = FasterWhisperStt(str(tmp_path))
+    pcm = _pcm(0.5)
+    pcm_b64 = base64.b64encode(pcm).decode("ascii")
+
+    mock_model = MagicMock()
+    mock_model.transcribe.return_value = ([], MagicMock(language="en"))
+    monkeypatch.setattr(stt, "_load", lambda *_args, **_kwargs: mock_model)
+
+    vad = MagicMock()
+    vad.detect.return_value = {"isSpeech": True, "speechEndMs": None}
+
+    response = stt.stream_transcribe(
+        {"pcmBase64": pcm_b64, "sampleRate": 16_000, "preview": True},
+        vad=vad,
+    )
+
+    assert vad.detect.call_count == 0
+    assert response.get("isSpeech") is None
+    assert response.get("speechEnd") is False
+
+
 def test_finalize_resets_stream_buffer(tmp_path, monkeypatch) -> None:
     stt = FasterWhisperStt(str(tmp_path))
     pcm = _pcm(0.5)

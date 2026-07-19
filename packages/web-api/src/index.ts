@@ -22,6 +22,7 @@ import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutoma
 import { registerMarkdownRoutes } from './markdown-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { createApiService } from './services/ApiService.js';
+import { getKnowledgeBaseManager } from './services/knowledge-base.js';
 import { memoryRouter } from './memory-api.js';
 import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import localModelRouter from './local-model-api.js';
@@ -32,6 +33,7 @@ import { router as jobsRouter } from './routes/jobs.js';
 import { router as healthRouter } from './routes/health.js';
 import { router as metricsRouter } from './routes/metrics.js';
 import { router as legacyRouter } from './routes/legacy.js';
+import { router as knowledgeRouter } from './routes/knowledge.js';
 import { DATA_DIR, SESSIONS_DIR, UPLOADS_DIR, UI_DIST, NEURON_DIST } from './api-helpers.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -171,6 +173,7 @@ app.use('/', healthRouter({ api }));
 app.use('/api/jobs', jobsRouter({ api }));
 app.use('/', metricsRouter({ api }));
 app.use('/', legacyRouter({ api }));
+app.use('/api', knowledgeRouter({ api }));
 
 // Global error handler
 app.use(errorHandler);
@@ -242,6 +245,16 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       initAgentXOverviewBridge();
     } catch (e) {
       getLogger().warn('STARTUP', `Agent-X overview bridge init failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const kb = await getKnowledgeBaseManager();
+      if (kb) {
+        getLogger().info('STARTUP', 'Knowledge base manager initialized');
+      } else {
+        getLogger().warn('STARTUP', 'Knowledge base manager unavailable');
+      }
+    } catch (e) {
+      getLogger().warn('STARTUP', `Knowledge base manager init failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     getLogger().info('SERVER', `Agent-X web API listening on ${HOST}:${port} (v${VERSION})`);
   });

@@ -171,6 +171,42 @@ export interface IntegrationAuthField {
 
 export type IntegrationConnectionStatus = 'connected' | 'disconnected' | 'error' | 'syncing';
 
+/** Result of probing a single MCP tool after connect/sync. */
+export type IntegrationToolBenchmarkStatus = 'ok' | 'error' | 'skipped' | 'pending';
+
+export interface IntegrationToolBenchmark {
+  mcpName: string;
+  readonly: boolean;
+  status: IntegrationToolBenchmarkStatus;
+  /** Cleaned server/MCP error for UI. */
+  error?: string;
+  testedAt?: string;
+  skipReason?: string;
+}
+
+export interface IntegrationBenchmarkSummary {
+  ok: number;
+  error: number;
+  skipped: number;
+}
+
+export type IntegrationNotificationKind = 'benchmark_error' | 'runtime_error' | 'sync_error';
+
+/** Persistent MCP Store alert (benchmark failures + later write/runtime errors). */
+export interface IntegrationNotification {
+  id: string;
+  connectionId: string;
+  providerId: string;
+  displayName: string;
+  toolName?: string;
+  kind: IntegrationNotificationKind;
+  /** Cleaned exact MCP/server error for the user. */
+  message: string;
+  createdAt: string;
+  dismissedAt?: string;
+  source: 'benchmark' | 'runtime' | 'sync';
+}
+
 export interface IntegrationConnection {
   id: string;
   providerId: string;
@@ -183,6 +219,10 @@ export interface IntegrationConnection {
   accountLabel?: string;
   toolCount?: number;
   enabled: boolean;
+  /** Per-tool probe results from the latest connect/sync benchmark. */
+  toolBenchmarks?: IntegrationToolBenchmark[];
+  lastBenchmarkAt?: string;
+  benchmarkSummary?: IntegrationBenchmarkSummary;
   stdio?: {
     command: string;
     args: string[];

@@ -54,6 +54,30 @@ describe('integration-tool-availability', () => {
     expect(reconciled.policy?.hintKind).toBe('degraded');
   });
 
+  it('keeps SERVICE hints when MCP tools are only reachable via tool_search bridge', () => {
+    const hint = [
+      '[INTEGRATION SERVICE] Notion MCP is connected for this third-party app request.',
+      'Active tools this turn: integration__notion__search.',
+      'Call one of these tools now — only use names from your active toolset.',
+    ].join(' ');
+    const policy = {
+      hintKind: 'service' as const,
+      reason: 'test',
+      providerIds: ['notion'],
+      blockLocalExploration: true,
+    };
+
+    const reconciled = reconcileIntegrationHintWithActiveTools(
+      hint,
+      policy,
+      ['tool_search', 'tool_call', 'file_read'],
+      ['integration__notion__search', 'file_read'],
+    );
+    expect(reconciled.hint).not.toContain('INTEGRATION DEGRADED');
+    expect(reconciled.hint).toContain('integration__notion__search');
+    expect(reconciled.policy?.hintKind).toBe('service');
+  });
+
   it('refreshes active tool list after permission filtering', () => {
     const hint = '[INTEGRATION SERVICE] Gmail MCP is connected. Active tools this turn: integration__gmail__send_email, integration__gmail__read_email.';
     const policy = {

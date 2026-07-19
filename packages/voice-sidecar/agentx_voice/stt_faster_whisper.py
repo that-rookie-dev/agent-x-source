@@ -80,12 +80,14 @@ class FasterWhisperStt:
         vad_result: dict[str, Any] | None = None
         if isinstance(pcm_b64, str) and pcm_b64:
             pcm = base64.b64decode(pcm_b64)
-            # Run VAD on every chunk (including preview) so duplex mode can
-            # use isSpeech/speechEnd for endpoint detection.
+            if preview:
+                # Never feed overlapping preview windows into stateful Silero —
+                # that keeps isSpeech stuck true after the user stops talking.
+                # Duplex endpointing calls /vad/detect on incremental chunks.
+                return self._preview_transcribe(pcm, sample_rate, request, None)
+            # Incremental stream chunks: VAD for speechEnd / isSpeech.
             if vad is not None and pcm:
                 vad_result = vad.detect({"pcm": pcm, "sampleRate": sample_rate})
-            if preview:
-                return self._preview_transcribe(pcm, sample_rate, request, vad_result)
             self._append_stream_pcm(pcm)
 
         speech_end = bool(vad_result and vad_result.get("speechEndMs") is not None and not vad_result.get("isSpeech"))

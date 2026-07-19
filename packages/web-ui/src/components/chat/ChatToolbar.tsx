@@ -5,8 +5,6 @@ import Tooltip from '@mui/material/Tooltip';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import CircularProgress from '@mui/material/CircularProgress';
-import MicIcon from '@mui/icons-material/Mic';
-import KeyboardIcon from '@mui/icons-material/Keyboard';
 import { colors, alphaColor } from '../../theme';
 import { models, providers, type ModelInfo } from '../../api';
 import { ExecutionStatusChip } from '../../chat/ExecutionStatusChip';
@@ -40,9 +38,6 @@ export interface ChatToolbarProps {
   setTokenReserved: (n: number) => void;
   streaming: boolean;
   turnActivity: { stage: string; step: number; elapsedMs: number } | null;
-  composerMode: 'text' | 'voice';
-  setComposerMode: (fn: (m: 'text' | 'voice') => 'text' | 'voice') => void;
-  voiceReady: boolean;
 }
 
 export function ChatToolbar(props: ChatToolbarProps) {
@@ -55,7 +50,6 @@ export function ChatToolbar(props: ChatToolbarProps) {
     currentModel, modelList, loadingModels, currentProviderId,
     setTokenTotal, setTokenReserved,
     streaming, turnActivity,
-    composerMode, setComposerMode, voiceReady,
   } = props;
 
   return (
@@ -196,37 +190,6 @@ export function ChatToolbar(props: ChatToolbarProps) {
           step={turnActivity?.step}
           elapsedMs={turnActivity?.elapsedMs}
         />
-      )}
-
-      {/* Text / Voice composer toggle */}
-      {voiceReady && (
-        <Tooltip title={composerMode === 'text' ? 'Switch to voice' : 'Switch to text'} arrow>
-          <Chip
-            size="small"
-            icon={composerMode === 'text' ? <MicIcon sx={{ fontSize: '14px !important' }} /> : <KeyboardIcon sx={{ fontSize: '14px !important' }} />}
-            label={composerMode === 'text' ? 'Voice' : 'Text'}
-            onClick={() => {
-              setComposerMode((m) => {
-                const next = m === 'text' ? 'voice' : 'text';
-                if (next === 'voice') {
-                  requestAnimationFrame(() => {
-                    (document.activeElement as HTMLElement | null)?.blur?.();
-                  });
-                }
-                return next;
-              });
-            }}
-            sx={{
-              fontSize: '0.55rem', height: 20, cursor: 'pointer',
-              bgcolor: composerMode === 'voice' ? alphaColor(colors.accent.green, '18') : colors.bg.tertiary,
-              border: `1px solid ${composerMode === 'voice' ? alphaColor(colors.accent.green, '40') : colors.border.default}`,
-              borderRadius: '10px',
-              color: composerMode === 'voice' ? colors.accent.green : colors.text.secondary,
-              '& .MuiChip-icon': { color: 'inherit' },
-              '&:hover': { bgcolor: composerMode === 'voice' ? alphaColor(colors.accent.green, '28') : colors.bg.primary },
-            }}
-          />
-        </Tooltip>
       )}
     </>
   );

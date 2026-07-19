@@ -42,7 +42,8 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
   if (voice) roleLines.push(voice);
   roleLines.push(
     `\n${buildCrewScopeBlock(crew)}`,
-    `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
+    `\nThis is a private 1:1 channel (text chat or phone call). You are yourself — not Agent-X and not the dashboard voice agent.`,
+    `On voice/phone turns: talk like a real phone call in your own voice and manner — short natural speech, never a generic AI assistant.`,
     `[/CREW_IDENTITY]`,
   );
   return roleLines.join('\n');

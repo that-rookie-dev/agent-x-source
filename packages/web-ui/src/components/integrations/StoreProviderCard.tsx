@@ -148,6 +148,24 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
         />
       )}
 
+      {installed && connection && (connection.benchmarkSummary?.error ?? 0) > 0 && connection.status !== 'error' && (
+        <Chip
+          label={`${connection.benchmarkSummary!.error} tool error${connection.benchmarkSummary!.error === 1 ? '' : 's'}`}
+          size="small"
+          onClick={(e) => e.stopPropagation()}
+          sx={{
+            alignSelf: 'flex-start',
+            height: 22,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            bgcolor: `${alphaColor(settingsTheme.accent.alert, '22')}`,
+            color: settingsTheme.accent.alert,
+            border: `1px solid ${alphaColor(settingsTheme.accent.alert, '55')}`,
+            ...settingsMonoSx,
+          }}
+        />
+      )}
+
       {installed && connection && connection.status === 'error' && onSync && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignSelf: 'flex-start' }}>
           <Chip
@@ -165,6 +183,11 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
               ...settingsMonoSx,
             }}
           />
+          {connection.error && (
+            <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.accent.alert, maxWidth: 220, ...settingsMonoSx }}>
+              {connection.error}
+            </Typography>
+          )}
           <Button
             size="small"
             variant="outlined"

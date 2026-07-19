@@ -10,12 +10,15 @@ import type {
   VoiceConfig,
   VoiceSessionMode,
 } from '@agentx/shared';
-import { getAgentFilesDir, getLogger } from '@agentx/shared';
-import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs } from '@agentx/engine';
+import { getAgentFilesDir, getLogger, isCrewVoiceSessionId } from '@agentx/shared';
+import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCrewPrivateIdentityPrompt } from '@agentx/engine';
 import type { VoiceEngineSession, VoiceEngineState } from './types.js';
 import { getEngine } from '../../engine.js';
 import { persistMessageDirect } from '../../ws.js';
-import { loadSessionMessagesPage, buildAgentInstruction } from '../../chat-helpers.js';
+import { loadSessionMessagesPage, buildAgentInstruction, isCrewPrivateSessionRecord } from '../../chat-helpers.js';
+import { resolveCrewPrivateHostForAgent } from '../../host-crew-session.js';
+import { buildCrewCallRealtimeOpenerInstruction } from '../../voice-speakable.js';
+import { syncIntegrationToolsIntoToolkit } from '../sync-integration-tools.js';
 
 const XAI_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
 const VOICE_SAMPLE_RATE = 16_000;
@@ -55,10 +58,17 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   private playbackFinished = false;
   private responseFinished = false;
   private currentResponseId?: string;
+  /** Wall clock when assistant audio first started — used to ignore early false barge-ins. */
+  private speakingStartedAt = 0;
   private assistantText = '';
   private userTranscript = '';
   private searchWeb = false;
   private bypassChip = false;
+  /** Connected MCP / integration provider names last synced into this voice toolkit. */
+  private connectedIntegrationNames: string[] = [];
+  /** Greeting kickoff queued before xAI session.updated, or requested by client. */
+  private pendingKickoff: 'open' | 'resume' | null = null;
+  private kickoffIssued = false;
   private closed = false;
   private ready = false;
   private xaiUrl: string;
@@ -150,6 +160,9 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       case 'client_situation':
         this.handleClientSituation(msg);
         break;
+      case 'call_kickoff':
+        this.handleCallKickoff(msg.reason === 'resume' ? 'resume' : 'open');
+        break;
       case 'session_end':
         this.onDisconnect();
         break;
@@ -185,15 +198,13 @@ export class XaiRealtimeSession implements VoiceEngineSession {
 
       ws.on('open', () => {
         getLogger().info('XAI_VOICE', 'xAI realtime WebSocket open');
-        try {
-          this.sendSessionUpdate();
-        } catch (err) {
+        void this.refreshToolsAndSessionUpdate().catch((err: unknown) => {
           const message = err instanceof Error ? err.message : String(err);
           getLogger().error('XAI_VOICE', `session.update failed: ${message}`);
           this.sendError(`xAI session update failed: ${message}`);
           this.setState('error');
           this.disconnectXai();
-        }
+        });
       });
 
       ws.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
@@ -245,18 +256,43 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     }
   }
 
+  /**
+   * Sync native + MCP tools into this voice toolkit, then push session.update.
+   * Permissions UI tabs are display-only — agents always receive the full set.
+   */
+  private async refreshToolsAndSessionUpdate(): Promise<void> {
+    const sync = await syncIntegrationToolsIntoToolkit(
+      this.toolService.getRegistry(),
+      this.toolService.getToolExecutor(),
+    );
+    this.connectedIntegrationNames = sync.connectedNames;
+    getLogger().info(
+      'XAI_VOICE',
+      `Tool sync: ${sync.registeredCount} MCP tool(s)`
+        + (sync.connectedNames.length ? ` from ${sync.connectedNames.join(', ')}` : ' (no MCP connections)'),
+    );
+    this.sendSessionUpdate();
+  }
+
   private sendSessionUpdate(): void {
     const registry = this.toolService.getRegistry();
+    // Include native + MCP (integrations). Only strip meta tools unused on voice.
     const toolList = registry.list().filter((t) => t.category !== 'ai_meta' && t.category !== 'agent_meta');
     const tools = registry.toSchemas(toolList);
-    // xAI default VAD threshold is 0.85 (very aggressive — cuts off on brief pauses).
-    // Use 0.5 for sensitive speech detection + 1000ms silence for natural turn-taking.
-    // interrupt_response: true lets xAI automatically cancel the in-progress
-    // response when the user barges in (speech_started during agent response).
-    // create_response: true lets xAI automatically generate a response after the
-    // user finishes speaking (no manual response.create needed).
+    // VAD threshold is 0–1 where *higher* = louder audio required (fewer false
+    // positives from speaker echo / ambient noise). 0.5 was too sensitive and
+    // randomly cut assistant playback mid-sentence during crew calls.
+    // interrupt_response: true cancels the in-progress response on barge-in.
+    // create_response: true auto-starts a reply after the user finishes speaking.
     const turnDetection = this.mode === 'duplex'
-      ? { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 1000, interrupt_response: true, create_response: true }
+      ? {
+          type: 'server_vad',
+          threshold: 0.72,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 1000,
+          interrupt_response: true,
+          create_response: true,
+        }
       : { type: null };
 
     const payload = {
@@ -288,36 +324,63 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   }
 
   private buildInstructions(): string {
-    const persona = this.getPersona();
+    const crewHost = this.resolveCrewCallHost();
     const parts: string[] = [];
-    if (persona) {
-      const description = [persona.name, persona.description].filter(Boolean).join(' — ');
-      if (description) parts.push(`You are ${description}.`);
-      if (persona.communicationStyle) parts.push(`Communication style: ${persona.communicationStyle}`);
-      if (persona.decisionMaking) parts.push(`Decision making: ${persona.decisionMaking}`);
-      if (persona.domainContext) parts.push(`Domain context: ${persona.domainContext}`);
-      if (persona.traits?.length) parts.push(`Traits: ${persona.traits.join(', ')}`);
+    if (crewHost) {
+      parts.push(buildCrewPrivateIdentityPrompt(crewHost));
+      parts.push(
+        'PHONE CALL MODE: You are on a live phone call as yourself — not Agent-X. ' +
+        'Speak in short natural turns (1–3 sentences). No markdown, skill menus, or generic assistant clichés. ' +
+        'Use prior conversation history for continuity across holds and later calls.',
+      );
+      parts.push(
+        'CLARIFICATION: Ask one spoken question at a time. Never use forms or questionnaires.',
+      );
+      parts.push(
+        'RESEARCH: You have web search and other tools available on this call. ' +
+        'Use them when the conversation needs current facts, research, or live information — ' +
+        'then answer briefly in character.',
+      );
+      if (this.connectedIntegrationNames.length > 0) {
+        parts.push(
+          `CONNECTED INTEGRATIONS (MCP): ${this.connectedIntegrationNames.join(', ')}. ` +
+          'Use the matching integration__* tools for those services when the user asks. ' +
+          'Do not claim you lack access when an integration is listed here.',
+        );
+      }
+    } else {
+      const persona = this.getPersona();
+      if (persona) {
+        const description = [persona.name, persona.description].filter(Boolean).join(' — ');
+        if (description) parts.push(`You are ${description}.`);
+        if (persona.communicationStyle) parts.push(`Communication style: ${persona.communicationStyle}`);
+        if (persona.decisionMaking) parts.push(`Decision making: ${persona.decisionMaking}`);
+        if (persona.domainContext) parts.push(`Domain context: ${persona.domainContext}`);
+        if (persona.traits?.length) parts.push(`Traits: ${persona.traits.join(', ')}`);
+      }
+      parts.push(buildAgentInstruction());
+      parts.push(
+        'VOICE MODE RULES: Keep responses short and crisp — ideally 1-3 sentences. ' +
+        'Answer the question directly, then stop. Do not elaborate, summarize, or ' +
+        'repeat unless the user explicitly asks for more detail. ' +
+        'Ask crisp follow-up questions only when needed to move the conversation forward. ' +
+        'Never read back what the user just said. Never preface answers with "Sure", "Great", etc.',
+      );
+      parts.push(
+        'CLARIFICATION RULES: When you need more information, ask the question directly ' +
+        'in your voice response — one question at a time. Wait for the user to answer ' +
+        'before asking the next question. Never present multiple questions at once. ' +
+        'Never use forms, questionnaires, or structured input — this is a voice conversation.',
+      );
+      if (this.searchWeb) parts.push('Use web search when the answer may benefit from current information.');
+      if (this.connectedIntegrationNames.length > 0) {
+        parts.push(
+          `CONNECTED INTEGRATIONS (MCP): ${this.connectedIntegrationNames.join(', ')}. ` +
+          'Use the matching integration__* tools for those services when the user asks. ' +
+          'Do not claim you lack access when an integration is listed here.',
+        );
+      }
     }
-    parts.push(buildAgentInstruction());
-    // Voice-specific: keep responses crisp and conversational.
-    parts.push(
-      'VOICE MODE RULES: Keep responses short and crisp — ideally 1-3 sentences. ' +
-      'Answer the question directly, then stop. Do not elaborate, summarize, or ' +
-      'repeat unless the user explicitly asks for more detail. ' +
-      'Ask crisp follow-up questions only when needed to move the conversation forward. ' +
-      'Never read back what the user just said. Never preface answers with "Sure", "Great", etc.',
-    );
-    // Clarifying questions: ask directly via voice, one at a time. Do NOT use
-    // questionnaire forms or multi-question payloads — the user is in a voice
-    // conversation and cannot interact with UI forms. Ask one question, wait for
-    // the answer, then ask the next if needed.
-    parts.push(
-      'CLARIFICATION RULES: When you need more information, ask the question directly ' +
-      'in your voice response — one question at a time. Wait for the user to answer ' +
-      'before asking the next question. Never present multiple questions at once. ' +
-      'Never use forms, questionnaires, or structured input — this is a voice conversation.',
-    );
-    if (this.searchWeb) parts.push('Use web search when the answer may benefit from current information.');
     if (this.clientSituation) {
       const situationParts: string[] = [];
       if (this.clientSituation.clientNow) {
@@ -337,6 +400,86 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       }
     }
     return parts.filter(Boolean).join('\n\n');
+  }
+
+  private resolveCrewCallHost() {
+    try {
+      const id = this.chatSessionId;
+      if (!id || id === '__channel__:voice') return null;
+      const eng = getEngine();
+      const session = eng.sessionManager.getSessionById(id);
+      if (!isCrewPrivateSessionRecord(session) || !session?.hostCrewId) return null;
+      const store = eng.sessionManager.getStorageAdapter();
+      return resolveCrewPrivateHostForAgent(eng.crewManager, session, store) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private isCrewCallSession(): boolean {
+    const id = this.chatSessionId;
+    if (!id || id === '__channel__:voice') return false;
+    if (isCrewVoiceSessionId(id)) return true;
+    try {
+      const session = getEngine().sessionManager.getSessionById(id);
+      return Boolean(isCrewPrivateSessionRecord(session) && session?.hostCrewId);
+    } catch {
+      return false;
+    }
+  }
+
+  private handleCallKickoff(kind: 'open' | 'resume'): void {
+    // Always record the latest requested kind (resume supersedes open).
+    this.pendingKickoff = kind;
+    if (!this.ready || this.closed || !this.xaiWs || this.xaiWs.readyState !== WebSocket.OPEN) {
+      getLogger().info('XAI_VOICE', `Queued call_kickoff (${kind}) until session is ready`);
+      return;
+    }
+    this.flushPendingKickoff();
+  }
+
+  private flushPendingKickoff(): void {
+    const kind = this.pendingKickoff;
+    if (!kind || this.kickoffIssued || this.closed) return;
+    if (!this.xaiWs || this.xaiWs.readyState !== WebSocket.OPEN) return;
+
+    // Dashboard voice should never auto-greet as a crew call.
+    if (!this.isCrewCallSession()) {
+      this.pendingKickoff = null;
+      return;
+    }
+
+    const host = this.resolveCrewCallHost();
+    if (!host) {
+      getLogger().warn('XAI_VOICE', 'Call kickoff: crew host unresolved — greeting anyway with session instructions');
+    }
+
+    this.kickoffIssued = true;
+    this.pendingKickoff = null;
+    getLogger().info('XAI_VOICE', `Issuing call greeting kickoff (${kind})`);
+
+    // Inject opener guidance and ask the model to speak first (realtime audio — no ⟨voice⟩ tags).
+    this.sendXai({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [{
+          type: 'input_text',
+          text: kind === 'resume'
+            ? '[Call resumed from hold. Speak first and continue naturally.]'
+            : '[Call connected. Speak first and open the conversation in character.]',
+        }],
+      },
+    });
+    this.sendXai({
+      type: 'response.create',
+      response: {
+        instructions: buildCrewCallRealtimeOpenerInstruction(kind),
+      },
+    });
+    this.setState('processing');
+    this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'running' });
   }
 
   private getPersona() {
@@ -470,6 +613,9 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     // don't undo the interruption by setting state back to 'speaking'.
     if (!this.currentResponseId) return;
     if (this.state !== 'speaking' && this.state !== 'processing') return;
+    if (this.state !== 'speaking') {
+      this.speakingStartedAt = Date.now();
+    }
     this.setState('speaking');
     void this.transport.playAudio(data, OUTPUT_SAMPLE_RATE);
   }
@@ -480,6 +626,15 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     await this.seedHistory();
     await this.transport.start();
     this.setState(this.mode === 'duplex' ? 'listening' : 'idle');
+    // Crew calls: greet as soon as the realtime session is live.
+    // Wait briefly so a client resume kickoff can supersede the default open greeting.
+    if (this.isCrewCallSession()) {
+      setTimeout(() => {
+        if (this.closed || this.kickoffIssued) return;
+        if (!this.pendingKickoff) this.pendingKickoff = 'open';
+        this.flushPendingKickoff();
+      }, 500);
+    }
   }
 
   private async ensureChatSession(): Promise<void> {
@@ -588,6 +743,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     this.responseAudioDone = false;
     this.playbackFinished = false;
     this.responseFinished = false;
+    this.speakingStartedAt = 0;
     this.setState('processing');
     this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'running' });
   }
@@ -602,6 +758,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     if (typeof delta === 'string' && delta.length > 0) {
       const pcm = Buffer.from(delta, 'base64');
       if (this.state !== 'speaking') {
+        this.speakingStartedAt = Date.now();
         this.setState('speaking');
         this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'speaking' });
       }
@@ -768,7 +925,14 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     // speech_started during processing prevents false VAD/noise from aborting a
     // response before any audio has been produced.
     if (this.state !== 'speaking') return;
+    // Ignore the first ~450ms of TTS — speaker bleed / AEC settle often fires a
+    // spurious speech_started right when playback begins.
+    if (this.speakingStartedAt > 0 && Date.now() - this.speakingStartedAt < 450) {
+      getLogger().info('XAI_VOICE', 'Ignoring early speech_started during barge-in grace window');
+      return;
+    }
     this.currentResponseId = undefined;
+    this.speakingStartedAt = 0;
     void this.transport.stopPlayback();
     this.transport.sendControl({ type: 'agent_status', sessionId: this.sessionId, status: 'listening' });
     // Do not send response.cancel — xAI realtime handles the new user audio
@@ -852,7 +1016,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       }
     }
     if (needsUpdate) {
-      this.sendSessionUpdate();
+      void this.refreshToolsAndSessionUpdate();
     }
   }
 
@@ -861,7 +1025,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     // Store and refresh instructions on the next session update.
     // For now we keep it minimal and re-apply the existing persona.
     this.clientSituation = situation as ClientSituation;
-    this.sendSessionUpdate();
+    void this.refreshToolsAndSessionUpdate();
   }
 
   private sendXai(payload: Record<string, unknown>): void {

@@ -56,6 +56,14 @@ class SileroVad:
         if request.get("reset"):
             self.reset_states()
 
+        if len(pcm) == 0:
+            return {
+                "isSpeech": self._current_is_speech,
+                "confidence": 0.0,
+                "speechStartMs": 0 if self._current_is_speech else None,
+                "speechEndMs": None if self._current_is_speech else 0,
+            }
+
         if self.model is not None:
             try:
                 import torch

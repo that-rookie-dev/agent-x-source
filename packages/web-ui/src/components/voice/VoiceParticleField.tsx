@@ -43,20 +43,25 @@ const PARTICLE_COUNT = 40;
 export function VoiceParticleField({
   phase,
   active,
+  level = 0,
   centerRef,
 }: {
   phase: ParticlePhase;
   active: boolean;
+  /** 0–1 audio level — amplifies motion while user is speaking. */
+  level?: number;
   /** Optional ref to an element whose center should be used as the particle origin. */
   centerRef?: React.RefObject<HTMLElement | null>;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const phaseRef = useRef<ParticlePhase>(phase);
   const activeRef = useRef<boolean>(active);
+  const levelRef = useRef<number>(level);
   const animationRef = useRef<number>(0);
 
   phaseRef.current = phase;
   activeRef.current = active;
+  levelRef.current = Math.max(0, Math.min(1, level));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -187,22 +192,23 @@ export function VoiceParticleField({
             break;
           }
           case 'recording': {
-            // Gravitational pull toward center
+            // Gravitational pull toward center — stronger with mic level
+            const energy = 0.35 + levelRef.current * 1.4;
             const dx = cx - p.x;
             const dy = cy - p.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const pull = 0.15;
-            p.vx += (dx / dist) * pull;
-            p.vy += (dy / dist) * pull;
+            const pull = 0.12 * energy;
+            p.vx += (dx / dist) * pull + (Math.random() - 0.5) * 0.35 * levelRef.current;
+            p.vy += (dy / dist) * pull + (Math.random() - 0.5) * 0.35 * levelRef.current;
             // Damping
-            p.vx *= 0.92;
-            p.vy *= 0.92;
-            p.x += p.vx;
-            p.y += p.vy;
-            // If too close, reset to orbit
-            if (dist < 15) {
+            p.vx *= 0.9;
+            p.vy *= 0.9;
+            p.x += p.vx * energy;
+            p.y += p.vy * energy;
+            // If too close, reset to orbit (radius reacts to volume)
+            if (dist < 12 + levelRef.current * 10) {
               p.angle = Math.random() * Math.PI * 2;
-              p.orbitRadius = 40 + Math.random() * 80;
+              p.orbitRadius = 28 + Math.random() * (55 + levelRef.current * 50);
               p.x = cx + Math.cos(p.angle) * p.orbitRadius;
               p.y = cy + Math.sin(p.angle) * p.orbitRadius;
               p.vx = 0;

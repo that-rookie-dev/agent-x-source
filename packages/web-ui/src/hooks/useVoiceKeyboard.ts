@@ -41,14 +41,22 @@ export function useVoiceKeyboard(options: {
         if (opts.pushToTalk) opts.onEndPushToTalk();
         return;
       }
-      if (event.key === ' ') {
-        if (event.repeat) return;
+      if (event.key === ' ' || event.code === 'Space') {
+        if (event.repeat) {
+          // Keep holding Space from scrolling / activating focused controls.
+          if (opts.globalSpace) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
 
-        // When globalSpace is active (dashboard voice card / inline voice),
+        // When globalSpace is active (dashboard voice card / inline voice / call),
         // always prevent default to avoid page scrolling — even if push-to-talk
         // is blocked or the engine is still warming up.
         if (opts.globalSpace) {
           event.preventDefault();
+          event.stopPropagation();
         }
 
         const now = Date.now();
@@ -71,15 +79,9 @@ export function useVoiceKeyboard(options: {
             repeat: false,
           })
         ) {
-          event.preventDefault();
-          event.stopPropagation();
           spacePttHeldRef.current = true;
           opts.onBeginPushToTalk();
           return;
-        }
-
-        if (opts.globalSpace) {
-          event.stopPropagation();
         }
         return;
       }
@@ -87,7 +89,7 @@ export function useVoiceKeyboard(options: {
 
     const onKeyUp = (event: KeyboardEvent) => {
       const opts = optionsRef.current;
-      if (event.key !== ' ') return;
+      if (event.key !== ' ' && event.code !== 'Space') return;
       if (
         opts.pushToTalk &&
         spacePttHeldRef.current &&
@@ -101,8 +103,9 @@ export function useVoiceKeyboard(options: {
         spacePttHeldRef.current = false;
         opts.onEndPushToTalk();
       } else if (opts.globalSpace) {
-        // Prevent page scroll on keyup too when globalSpace is active.
+        // Prevent page scroll / button activation on keyup too.
         event.preventDefault();
+        event.stopPropagation();
       }
     };
 

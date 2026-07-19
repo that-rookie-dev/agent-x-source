@@ -107,26 +107,38 @@ export const crewSuggestionResolveSchema = z.object({
   })).optional(),
 });
 
+const crewChatRecruitSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  title: z.string().optional(),
+  callsign: z.string().optional(),
+  systemPrompt: z.string(),
+  description: z.string().optional(),
+  tone: z.string().optional(),
+  expertise: z.array(z.string()).optional(),
+  traits: z.array(z.string()).optional(),
+  tools: z.array(z.string()).optional(),
+  source: z.string().optional(),
+  catalogId: z.string().optional(),
+  categoryId: z.string().optional(),
+  color: z.string().optional(),
+});
+
 export const crewChatSessionSchema = z.object({
   crewId: z.string().optional(),
   scopePath: z.string().optional(),
-  recruit: z.object({
-    id: z.string().optional(),
-    name: z.string(),
-    title: z.string().optional(),
-    callsign: z.string().optional(),
-    systemPrompt: z.string(),
-    description: z.string().optional(),
-    tone: z.string().optional(),
-    expertise: z.array(z.string()).optional(),
-    traits: z.array(z.string()).optional(),
-    tools: z.array(z.string()).optional(),
-    source: z.string().optional(),
-    catalogId: z.string().optional(),
-    categoryId: z.string().optional(),
-    color: z.string().optional(),
-  }).optional(),
+  recruit: crewChatRecruitSchema.optional(),
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
+
+/** Same as text crew chat, plus optional textSessionId to bind `voice:{textSessionId}`. */
+export const crewChatVoiceSessionSchema = z.object({
+  crewId: z.string().optional(),
+  scopePath: z.string().optional(),
+  textSessionId: z.string().optional(),
+  recruit: crewChatRecruitSchema.optional(),
+}).refine((d) => d.crewId || d.recruit || d.textSessionId, {
+  message: 'crewId, recruit, or textSessionId required',
+});
 
 export const chatSteerSchema = z.object({
   text: z.string().default(''),
@@ -338,20 +350,6 @@ export const memorySourceCreateSchema = z.object({
   name: z.string().min(1),
   kind: z.string().min(1),
   colorHex: z.string().min(1),
-});
-
-export const documentIngestSchema = z.object({
-  name: z.string().min(1),
-  kind: z.enum(['pdf', 'web', 'markdown', 'text', 'json']),
-  content: z.string().min(1),
-  colorHex: z.string().optional(),
-  sourceId: z.string().optional(),
-  sessionId: z.string().optional(),
-  agentId: z.string().optional(),
-  chunkSize: z.number().int().min(100).max(5000).optional(),
-  chunkOverlap: z.number().int().min(0).max(1000).optional(),
-  maxEntitiesPerChunk: z.number().int().min(1).max(100).optional(),
-  maxChunks: z.number().int().min(1).max(200).optional(),
 });
 
 export const benchmarkRunSchema = z.object({

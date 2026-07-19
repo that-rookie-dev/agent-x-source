@@ -8,6 +8,7 @@ import type {
   IntegrationConnectionSecrets,
   IntegrationHealth,
   IntegrationHubSettings,
+  IntegrationNotification,
   IntegrationOAuthConfig,
   IntegrationProvider,
   OAuthFlowResult,
@@ -24,7 +25,10 @@ import type { ToolExecutionContext } from '@agentx/shared';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import { IntegrationAuditLog } from './audit-log.js';
+import { cleanMcpErrorMessage } from './clean-mcp-error.js';
 import { IntegrationConnectionStore } from './connection-store.js';
+import { IntegrationNotificationStore } from './notification-store.js';
+import { benchmarkReadTools, summarizeBenchmarks } from './tool-benchmark.js';
 import {
   getIntegrationProvider,
   getIntegrationHubSettings,
@@ -116,6 +120,7 @@ interface StoredOAuthResult {
 export class IntegrationHub {
   private readonly store: IntegrationConnectionStore;
   private readonly audit: IntegrationAuditLog;
+  private readonly notifications: IntegrationNotificationStore;
   private readonly oauth = new OAuthPkceStore();
   private readonly mcpStdioOAuth = new McpStdioOAuthStore();
   private readonly oauthResults = new Map<string, StoredOAuthResult>();
@@ -134,6 +139,7 @@ export class IntegrationHub {
   constructor(options?: { baseDir?: string; getDek?: () => Buffer | null; redirectBaseUrl?: string }) {
     this.store = new IntegrationConnectionStore(options?.baseDir);
     this.audit = new IntegrationAuditLog(options?.baseDir);
+    this.notifications = new IntegrationNotificationStore(options?.baseDir);
     this.getDek = options?.getDek;
     // Use "localhost" (not 127.0.0.1) — OAuth providers like Google enforce EXACT
     // redirect_uri string matching, and users register http://localhost:PORT/... per our docs.
@@ -790,6 +796,7 @@ Rules:
 
   async disconnect(connectionId: string): Promise<void> {
     await this.closeSession(connectionId);
+    this.notifications.clearForConnection(connectionId);
     await this.store.removeConnection(connectionId);
   }
 
@@ -835,23 +842,115 @@ Rules:
         tools,
       });
 
-      const updated = this.store.updateConnection(connectionId, {
+      this.store.updateConnection(connectionId, {
         status: 'connected',
         lastSyncAt: new Date().toISOString(),
         toolCount: tools.length,
         error: undefined,
       });
-      return updated ?? connection;
+
+      // Probe read tools immediately so auth/config failures surface in the store.
+      return this.benchmarkConnection(connectionId);
     } catch (error) {
       const stdioCommand = connection.stdio?.command ?? provider.server.command;
-      const message = formatStdioSpawnError(error, stdioCommand);
+      const message = cleanMcpErrorMessage(formatStdioSpawnError(error, stdioCommand));
       getLogger().error('INTEGRATION_SYNC_FAILED', { connectionId, error: message });
+      this.notifications.add({
+        connectionId,
+        providerId: connection.providerId,
+        displayName: connection.displayName,
+        kind: 'sync_error',
+        message,
+        source: 'sync',
+      });
       const updated = this.store.updateConnection(connectionId, {
         status: 'error',
         error: message,
       });
       return updated ?? connection;
     }
+  }
+
+  /** Re-run read-tool probes for an already-synced connection. */
+  async benchmarkConnection(connectionId: string): Promise<IntegrationConnection> {
+    const connection = this.store.getConnection(connectionId);
+    if (!connection) throw new Error(`Connection "${connectionId}" not found`);
+    const provider = this.resolveProvider(connection.providerId);
+    if (!provider) throw new Error(`Provider "${connection.providerId}" not found`);
+
+    let active = this.sessions.get(connectionId);
+    if (!active) {
+      await this.syncConnection(connectionId);
+      return this.store.getConnection(connectionId) ?? connection;
+    }
+
+    const bridgeNames = new Set(getProviderBridgeTools(provider).map((b) => b.mcpName));
+    try {
+      const toolBenchmarks = await benchmarkReadTools({
+        session: active.session,
+        provider,
+        toolNames: active.tools.map((t) => t.mcpName),
+        bridgeNames,
+      });
+      const benchmarkSummary = summarizeBenchmarks(toolBenchmarks);
+      const lastBenchmarkAt = new Date().toISOString();
+
+      for (const row of toolBenchmarks) {
+        if (row.status !== 'error' || !row.error) continue;
+        this.notifications.add({
+          connectionId,
+          providerId: connection.providerId,
+          displayName: connection.displayName,
+          toolName: row.mcpName,
+          kind: 'benchmark_error',
+          message: row.error,
+          source: 'benchmark',
+        });
+      }
+
+      const connectionError = benchmarkSummary.error > 0
+        ? `${benchmarkSummary.error} read tool${benchmarkSummary.error === 1 ? '' : 's'} failed probe — open Connected tools or Alerts`
+        : undefined;
+
+      return this.store.updateConnection(connectionId, {
+        status: 'connected',
+        toolBenchmarks,
+        lastBenchmarkAt,
+        benchmarkSummary,
+        // Keep session connected; surface probe failures without tearing down the MCP link.
+        error: connectionError,
+      }) ?? connection;
+    } catch (error) {
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
+      this.notifications.add({
+        connectionId,
+        providerId: connection.providerId,
+        displayName: connection.displayName,
+        kind: 'benchmark_error',
+        message,
+        source: 'benchmark',
+      });
+      return this.store.updateConnection(connectionId, {
+        status: 'connected',
+        error: message,
+      }) ?? connection;
+    }
+  }
+
+  listNotifications(limit = 100): IntegrationNotification[] {
+    return this.notifications.list({ limit });
+  }
+
+  notificationCount(): number {
+    return this.notifications.activeCount();
+  }
+
+  dismissNotification(id: string): boolean {
+    return this.notifications.dismiss(id);
+  }
+
+  dismissAllNotifications(): number {
+    return this.notifications.dismissAll();
   }
 
   async restoreAll(): Promise<void> {
@@ -993,7 +1092,7 @@ Rules:
         },
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
       this.audit.append({
         connectionId,
         providerId: connection.providerId,
@@ -1004,6 +1103,7 @@ Rules:
         argsSummary: summarizeArgs(args),
         error: message,
       });
+      this.recordRuntimeToolError(connection, bridge.mcpName, message, readonly);
       return { success: false, output: message, error: 'INTEGRATION_TOOL_FAILED' };
     }
   }
@@ -1034,6 +1134,7 @@ Rules:
         output = enhanceGoogleMapsToolOutput(toolName, output);
       }
       const failed = isMcpToolResultError(result, output);
+      const cleanedError = failed ? cleanMcpErrorMessage(output) : undefined;
       const toolId = integrationToolId(connection.providerId, toolName);
       const structured = parseIntegrationStructuredResult(toolId, output);
       this.audit.append({
@@ -1044,11 +1145,14 @@ Rules:
         readonly,
         success: !failed,
         argsSummary: summarizeArgs(args),
-        error: failed ? output.slice(0, 500) : undefined,
+        error: cleanedError,
       });
+      if (failed && cleanedError) {
+        this.recordRuntimeToolError(connection, toolName, cleanedError, readonly);
+      }
       return {
         success: !failed,
-        output,
+        output: failed ? cleanedError ?? output : output,
         error: failed ? 'INTEGRATION_TOOL_FAILED' : undefined,
         metadata: {
           providerId: connection.providerId,
@@ -1058,7 +1162,7 @@ Rules:
         },
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
       this.audit.append({
         connectionId,
         providerId: connection.providerId,
@@ -1069,13 +1173,65 @@ Rules:
         argsSummary: summarizeArgs(args),
         error: message,
       });
+      this.recordRuntimeToolError(connection, toolName, message, readonly);
       const lower = message.toLowerCase();
       if (lower.includes('not connected') || lower.includes('connection') || lower.includes('econnrefused') || lower.includes('closed')) {
         getLogger().warn('INTEGRATION_TOOL_CONNECTION_LOST', `${connectionId}: ${message}`);
         await this.closeSession(connectionId).catch(() => { /* ignore */ });
       }
       const clarified = provider ? this.clarifyPackageSignInOutput(provider, toolName, message) : message;
-      return { success: false, output: clarified, error: 'INTEGRATION_TOOL_FAILED' };
+      return { success: false, output: cleanMcpErrorMessage(clarified), error: 'INTEGRATION_TOOL_FAILED' };
+    }
+  }
+
+  private recordRuntimeToolError(
+    connection: IntegrationConnection,
+    toolName: string,
+    cleanedError: string,
+    readonly: boolean,
+  ): void {
+    // Read failures at connect are already captured by benchmarks; still record write/runtime.
+    this.notifications.add({
+      connectionId: connection.id,
+      providerId: connection.providerId,
+      displayName: connection.displayName,
+      toolName,
+      kind: 'runtime_error',
+      message: cleanedError,
+      source: 'runtime',
+    });
+
+    // Attach latest write/runtime error onto the matching tool row when present.
+    if (!readonly && connection.toolBenchmarks?.length) {
+      const next = connection.toolBenchmarks.map((row) => (
+        row.mcpName === toolName
+          ? {
+              ...row,
+              status: 'error' as const,
+              error: cleanedError,
+              testedAt: new Date().toISOString(),
+              skipReason: undefined,
+            }
+          : row
+      ));
+      const hasRow = next.some((row) => row.mcpName === toolName);
+      const toolBenchmarks = hasRow
+        ? next
+        : [
+            ...next,
+            {
+              mcpName: toolName,
+              readonly: false,
+              status: 'error' as const,
+              error: cleanedError,
+              testedAt: new Date().toISOString(),
+            },
+          ];
+      this.store.updateConnection(connection.id, {
+        toolBenchmarks,
+        benchmarkSummary: summarizeBenchmarks(toolBenchmarks),
+        lastBenchmarkAt: new Date().toISOString(),
+      });
     }
   }
 

@@ -348,7 +348,10 @@ const handleLoadingStart = (ev: TelemetryEvent, ctx: EventHandlerContext): void 
   });
 };
 
-/** Stream text deltas into the assistant bubble with ~12 fps RAF coalescing. */
+/** Stream flush interval — ~6.5 fps keeps Markdown cost down without visible hitch. */
+const STREAM_COALESCE_MS = 150;
+
+/** Stream text deltas into the assistant bubble with coalesced commits. */
 const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   ctx.setMessages((prev) => {
     const last = prev[prev.length - 1];
@@ -398,7 +401,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
                 : [...parts, textPart];
               return updateLastMessage(ensured, { content: fullContent, parts: updatedParts, streaming: true });
             });
-          }, 80);
+          }, STREAM_COALESCE_MS);
         }
         return base;
       }
@@ -414,9 +417,8 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
     if (last?.role === 'assistant') {
       ctx.streamChunkPendingRef.current = rawFull || null;
       if (ctx.streamChunkRAFRef.current === null) {
-        // ~12 fps flush: markdown re-parses the full message on every
-        // update, so a modest interval slashes CPU vs per-frame flushes
-        // with no perceptible loss of streaming smoothness.
+        // Coalesced flush: markdown re-parses the active bubble on every
+        // commit, so a lower rate cuts CPU while streaming still feels live.
         ctx.streamChunkRAFRef.current = window.setTimeout(() => {
           ctx.streamChunkRAFRef.current = null;
           const fullContent = ctx.streamChunkPendingRef.current ?? '';
@@ -425,6 +427,8 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
           ctx.setMessages(p => {
             const l = p[p.length - 1];
             if (l?.role !== 'assistant') return p;
+            // Skip identical content commits (common when delta events repeat fullContent).
+            if (l.content === fullContent) return p;
             const parts = l.parts || [];
             const lastPart = parts[parts.length - 1];
             const prefixEnd = lastPart?.type === 'text' ? parts.length - 1 : parts.length;
@@ -444,7 +448,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
           const streamingEst = Math.ceil(fullContent.length / 4);
           ctx.setTokenStreaming(streamingEst);
           ctx.setTokenUsed(ctx.tokenInputRef.current + ctx.tokenOutputRef.current + streamingEst + ctx.tokenReservedRef.current);
-        }, 80);
+        }, STREAM_COALESCE_MS);
       }
       return prev;
     }

@@ -1067,3 +1067,33 @@ export function ensureSubscribed(): void {
   if (subscribedAgent === agent) return;
   subscribeToAgent(agent);
 }
+
+export function broadcastKnowledgeSourceStatus(payload: {
+  sourceId: string;
+  status: string;
+  progress: number;
+  detail?: string;
+  error?: string;
+}): void {
+  broadcast({
+    type: 'knowledge_source_status',
+    ...payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastKnowledgeSourceReady(payload: { sourceId: string }): void {
+  broadcast({
+    type: 'knowledge_source_ready',
+    ...payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastKnowledgeSourceFailed(payload: { sourceId: string; error: string }): void {
+  broadcast({
+    type: 'knowledge_source_failed',
+    ...payload,
+    timestamp: new Date().toISOString(),
+  });
+}

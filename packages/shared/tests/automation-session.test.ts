@@ -19,5 +19,6 @@ describe('automation-session utils', () => {
     expect(isUserFacingSession({ id: 'abc-123', contextKind: 'agent_x' })).toBe(true);
     expect(isUserFacingSession({ id: automationRunSessionId('t1'), contextKind: 'automation' })).toBe(false);
     expect(isUserFacingSession({ id: '__channel__', contextKind: 'agent_x' })).toBe(false);
+    expect(isUserFacingSession({ id: 'voice:abc-123', contextKind: 'crew_private' })).toBe(false);
   });
 });

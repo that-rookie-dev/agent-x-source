@@ -88,6 +88,7 @@ import { PromptEngine } from '../prompt/PromptEngine.js';
 import type { IntentResult } from '../prompt/PromptEngine.js';
 import { DecisionEngine } from './DecisionEngine.js';
 import type { DecisionResult } from './DecisionEngine.js';
+import { runTurnJourney } from './TurnJourney.js';
 import { AgentBus, getAgentBus } from './AgentBus.js';
 import { SpecialistRegistry } from './SpecialistRegistry.js';
 import type { SpecialistType } from './SpecialistRegistry.js';
@@ -314,8 +315,9 @@ export class Agent {
   private currentDecision: DecisionResult | null = null;
   private currentIntent: IntentResult | null = null;
 
-  // ─── RAG
+  // ─── RAG / Turn Journey
   private lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }> = [];
+  private lastJourneyBlock = '';
 
   // ─── Reflection & Learning (lazy-init)
   private _reflectionLoop: ReflectionLoop | null = null;
@@ -1078,7 +1080,9 @@ export class Agent {
         this.toolExecutor.getPermissionManager().resetForNewSession(this.sessionId);
       }
       this.toolExecutor.setSessionContextKind(this.options.contextKind);
-      if (this.options.channelSession) {
+      // Messaging channels always prompt; dashboard voice (__channel__:voice) uses
+      // normal risk rules + the bypass chip so PTT turns aren't stuck on every tool.
+      if (this.options.channelSession && this.options.promptProfile !== 'voice') {
         this.toolExecutor.setAlwaysPromptPermissions(true);
       }
     }
@@ -2240,19 +2244,42 @@ export class Agent {
     this.currentIntent = this.promptEngine.detectIntent(content);
     this.emit({ type: 'intent_detected', intent: this.currentIntent.intent, confidence: this.currentIntent.confidence });
 
-    // Auto-query RAG for relevant documents (skip for conversational messages)
+    // ─── TURN JOURNEY: default research pipeline (chat + voice)
+    // Prefetch local knowledge + inject stage order so users need not direct tools.
     this.lastRagResults = [];
-    if (!this.currentDecision.skipRag && !this.usesCompactContext()) {
-      const rag = getRAGEngineInstance();
-      if (rag && rag.isEnabled) {
-        try {
-          const ragStart = Date.now();
-          const docs = await rag.search(content, 3);
-          this.lastRagResults = docs.map((d) => ({ content: d.content, score: d.score, metadata: d.metadata }));
-          this.emit({ type: 'rag_queried', resultCount: docs.length, elapsed: Date.now() - ragStart });
-        } catch (e) {
-          getLogger().warn('RAG_QUERY', e instanceof Error ? e.message : String(e));
+    this.lastJourneyBlock = '';
+    {
+      const skipJourney =
+        this.currentDecision.skipRag === true || this.currentDecision.skipTools === true;
+      const toolIds = this.toolRegistry?.list().map((t) => t.id) ?? [];
+      try {
+        const journey = await runTurnJourney({
+          userText: content,
+          skip: skipJourney,
+          compact: this.usesCompactContext(),
+          voiceTurn: options?.voiceTurn === true,
+          availableToolIds: toolIds,
+        });
+        this.lastRagResults = journey.ragResults;
+        this.lastJourneyBlock = journey.journeyBlock;
+        if (journey.ragResults.length > 0) {
+          this.emit({
+            type: 'rag_queried',
+            resultCount: journey.ragResults.length,
+            elapsed: journey.elapsedMs,
+          });
         }
+        if (journey.journeyBlock) {
+          this.emit({
+            type: 'turn_journey',
+            stages: journey.stages,
+            localHitCount: journey.ragResults.length,
+            elapsedMs: journey.elapsedMs,
+            voiceTurn: options?.voiceTurn === true,
+          });
+        }
+      } catch (e) {
+        getLogger().warn('TURN_JOURNEY', e instanceof Error ? e.message : String(e));
       }
     }
 
@@ -2540,6 +2567,7 @@ export class Agent {
         integrationHint,
         integrationAccessPolicy,
         Object.keys(tools),
+        registry.list().map((t) => t.id),
       );
       integrationHint = reconciled.hint;
       integrationAccessPolicy = reconciled.policy;
@@ -3410,12 +3438,21 @@ export class Agent {
       }
     }
 
-    if (!opts.compact && this.lastRagResults.length > 0) {
-      const ragCtx = this.promptEngine.buildRagContext(this.lastRagResults);
+    if (this.lastRagResults.length > 0) {
+      const hits = opts.compact ? this.lastRagResults.slice(0, 3) : this.lastRagResults;
+      const ragCtx = this.promptEngine.buildRagContext(hits);
       const userIdx = aiMessages.findLastIndex(m => m.role === 'user');
       const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
       if (userMsg) {
         aiMessages[userIdx] = { ...userMsg!, content: `${ragCtx}\n\n${userMsg.content}` };
+      }
+    }
+
+    if (this.lastJourneyBlock) {
+      const userIdx = aiMessages.findLastIndex((m) => m.role === 'user');
+      const userMsg = userIdx >= 0 ? aiMessages[userIdx] : null;
+      if (userMsg && !userMsg.content.includes('[TURN_JOURNEY]')) {
+        aiMessages[userIdx] = { ...userMsg!, content: `${this.lastJourneyBlock}\n\n${userMsg.content}` };
       }
     }
 

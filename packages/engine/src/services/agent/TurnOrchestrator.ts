@@ -147,6 +147,7 @@ export class TurnOrchestrator implements ITurnOrchestrator {
         integrationHint,
         integrationAccessPolicy,
         Object.keys(tools),
+        registry.list().map((t) => t.id),
       );
       integrationHint = reconciled.hint;
       integrationAccessPolicy = reconciled.policy;

@@ -9,7 +9,6 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import { colors, alphaColor } from '../../theme';
 import { ActionPreviewCard } from '../integrations/ActionPreviewCard';
 import { ChatInputBar } from '../ChatInputBar';
-import { ChatVoicePanel } from '../voice/ChatVoicePanel';
 import { WebSearchGlobeToggle } from '../WebSearchGlobeToggle';
 import { CrewSuggestionToggle } from '../CrewSuggestionToggle';
 import { ChatToolbar } from './ChatToolbar';
@@ -35,7 +34,7 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
   // Prompts — re-render only when a permission/tool prompt appears/dismisses.
   const { permissionPrompt, pendingPermissionCount } = useChatPromptsContext();
   // Session identity and privacy.
-  const { currentSessionId, coreSession } = useChatSessionIdentityContext();
+  const { coreSession } = useChatSessionIdentityContext();
   const { isCrewPrivateSession, crewPrivateHost } = useChatSessionPrivacyContext();
   // Crew list and bypass permissions.
   const { crewList } = useChatCrewListContext();
@@ -50,15 +49,15 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
   // Input gate and composer.
   const { questionnairePending, sendBlocked, sendBlockedReason } = useChatInputGateContext();
   const {
-    attachments, composerMode, inputClearSignal, voiceAutoStart, webSearchAvailable,
-    webSearchForce, crewSuggestionRequested, voiceCtx,
+    attachments, inputClearSignal, webSearchAvailable,
+    webSearchForce, crewSuggestionRequested,
   } = useChatComposerContext();
   // Stable dispatch values — refs, handlers, setters.
   const {
-    setPermissionPrompt, setPendingPermissionCount, setVoiceAutoStart,
+    setPermissionPrompt, setPendingPermissionCount,
     setProviderMenuAnchor, setCurrentProvider, setCurrentModel,
     setModelList, setModelMenuAnchor, setTokenTotal, setTokenReserved,
-    setComposerMode, fileInputRef, inputBarRef, tokenReservedRef,
+    fileInputRef, inputBarRef, tokenReservedRef,
     toggleBypassPermissions, revokeSessionPermissions,
   } = useChatSessionSettersContext();
   // Input handlers.
@@ -67,7 +66,6 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
     handleFileSelect, handleRemoveAttachment,
     handlePermissionRespond, handlePermissionRespondBatch,
     handleWebSearchToggle, handleCrewSuggestionToggle,
-    handleVoiceUserPending, handleVoiceUserDiscarded, handleVoiceTranscript, handleVoiceTiming,
   } = useChatInputHandlersContext();
 
   // Stable callbacks so React.memo on leaf components (PermissionBanner) is effective.
@@ -155,7 +153,6 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
           </Box>
         )}
         <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => { handleFileSelect(e.target.files); e.currentTarget.value = ''; }} accept="image/*,.pdf,.txt,.md,.json,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.csv,.xml,.html,.css,.sh,.sql,.log,.env,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.rb,.php,.swift,.kt,.docx,.xlsx,.pptx" />
-        {composerMode === 'text' ? (
         <ChatInputBar
           ref={inputBarRef}
           streaming={streaming}
@@ -179,17 +176,6 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
           onSteer={handleSteer}
           clearSignal={inputClearSignal}
         />
-        ) : (
-          <ChatVoicePanel
-            chatSessionId={currentSessionId}
-            onVoiceUserPending={handleVoiceUserPending}
-            onVoiceUserDiscarded={handleVoiceUserDiscarded}
-            onTranscriptFinal={handleVoiceTranscript}
-            onVoiceTiming={handleVoiceTiming}
-            autoStart={voiceAutoStart}
-            onAutoStartConsumed={() => setVoiceAutoStart(false)}
-          />
-        )}
 
         {/* Toolbar row */}
         <Box sx={{
@@ -239,9 +225,6 @@ export const ChatInputArea = React.memo(function ChatInputArea() {
             setTokenReserved={(n: number) => { tokenReservedRef.current = n; setTokenReserved(n); }}
             streaming={streaming}
             turnActivity={turnActivity}
-            composerMode={composerMode}
-            setComposerMode={setComposerMode}
-            voiceReady={!!voiceCtx?.voiceReady}
           />
         </Box>
       </Box>

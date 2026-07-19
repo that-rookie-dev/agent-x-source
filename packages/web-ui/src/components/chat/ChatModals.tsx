@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  CommandPalette,
   SessionSearchModal,
   CheckpointDrawer,
 } from '../ChatEnhancements';
@@ -25,7 +24,7 @@ export const ChatModals = React.memo(function ChatModals() {
   const { currentSessionId } = useChatSessionIdentityContext();
   // Modal state only — ChatModals does NOT re-render on streaming chunks.
   const {
-    paletteOpen, paletteActions, searchOpen, checkpointsOpen,
+    searchOpen, checkpointsOpen,
     folderPickerOpen, folderPickerCallback,
     crewDossierOpen, crewDossierCrew, stepCapPrompt,
     clearSessionModalOpen, clearSessionBusy,
@@ -33,7 +32,7 @@ export const ChatModals = React.memo(function ChatModals() {
   } = useChatModalContext();
   // Stable dispatch values — setters, handlers, refs.
   const {
-    navigate, setPaletteOpen, setSearchOpen, setCheckpointsOpen,
+    navigate, setSearchOpen, setCheckpointsOpen,
     setMessages, setTokenUsed, setTokenInput, setTokenOutput,
     setFolderPickerOpen, setFolderPickerCallback,
     setStreaming, setCrewDossierOpen, setCrewDossierCrew,
@@ -46,7 +45,6 @@ export const ChatModals = React.memo(function ChatModals() {
   return (
     <>
       {/* ─── Global enhancement modals ─── */}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
       <SessionSearchModal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}

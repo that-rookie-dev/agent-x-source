@@ -25,6 +25,80 @@ export function buildVoiceTurnInstruction(): string {
   return buildVoiceSummaryPhaseInstruction();
 }
 
+/** Phone-call turn for crew-private sessions — stay in character, not Agent-X voice chat. */
+export function buildCrewCallTurnInstruction(): string {
+  return `CREW PHONE CALL — spoken turn.
+
+You are on a live phone call with the user as yourself (the crew persona above) — not Agent-X, not a generic assistant.
+
+Speak naturally like a real phone conversation in your persona:
+- Short turns (1–3 spoken sentences). Plain speech only.
+- Stay in character — match your tone, expertise, and mannerisms.
+- Prefer ending with a short question when it keeps the call moving.
+- No markdown, bullet lists, URLs, skill menus, or generic AI clichés.
+- Do not offer to "put a report in chat" unless they explicitly ask for written notes.
+- Use tools (web_search, deep_web_search, http_get, integration__* MCP tools, etc.) when you need live facts, research, or connected apps before answering.
+
+Output ONLY a brief spoken reply inside this exact wrapper:
+
+${VOICE_BLOCK_OPEN}
+Your spoken reply as this person on the call.
+${VOICE_BLOCK_CLOSE}
+
+CRITICAL:
+- Your reply MUST start with ${VOICE_BLOCK_OPEN} — nothing before it.
+- After ${VOICE_BLOCK_CLOSE} write NOTHING else.
+- Keep the voice block under 60 words.
+- Prefer web_search for current information when the topic needs it.
+- THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] and questionnaire/clarification forms — ask follow-ups as spoken sentences inside the voice block.`;
+}
+
+/** First move when a crew call connects (or reconnects after hold) — local STT→LLM→TTS. */
+export function buildCrewCallOpenerInstruction(kind: 'open' | 'resume' = 'open'): string {
+  const beat = kind === 'resume'
+    ? 'The call was on hold and just resumed. You speak first: briefly acknowledge you are back, then ask one natural follow-up from prior context (or invite them to continue).'
+    : 'The call just connected. YOU MUST SPEAK FIRST with a warm in-character welcome (as this crew person, not Agent-X), then ask ONE short question to open the conversation. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.';
+  return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} turn.
+
+${beat}
+
+Stay fully in character (name, tone, expertise). Sound like a real person on a phone — not a generic AI assistant.
+
+Output ONLY:
+
+${VOICE_BLOCK_OPEN}
+Welcome / greeting in character, then one short question. 2–3 spoken sentences max.
+${VOICE_BLOCK_CLOSE}
+
+CRITICAL:
+- Start with ${VOICE_BLOCK_OPEN}. Nothing after ${VOICE_BLOCK_CLOSE}.
+- You MUST include a welcome note AND a question.
+- Under 55 words. No markdown. No capability lists. No tools on this turn.`;
+}
+
+/**
+ * xAI / realtime opener — spoken audio is produced natively.
+ * Must NOT use ⟨voice⟩ wrappers (those are for the local TTS pipeline only).
+ */
+export function buildCrewCallRealtimeOpenerInstruction(kind: 'open' | 'resume' = 'open'): string {
+  const beat = kind === 'resume'
+    ? 'The call was on hold and just resumed. Speak first now: briefly acknowledge you are back, then ask one natural follow-up (or invite them to continue).'
+    : 'The call just connected. Speak first immediately with a warm in-character welcome, then ask ONE short question. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.';
+  return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} greeting.
+
+${beat}
+
+You are on a live phone call as yourself — not Agent-X. Speak naturally out loud:
+- 2–3 short spoken sentences max.
+- Plain speech only — no markdown, tags, wrappers, tool lists, or stage directions.
+- Include a welcome AND one question.
+- No tools on this turn.`;
+}
+
+export function isCrewCallEventText(text: string): boolean {
+  return /^\[call_event:(open|resume)\]$/i.test(text.trim());
+}
+
 /** Phase 1: tools + spoken summary + ask what the user wants next. */
 export function buildVoiceSummaryPhaseInstruction(): string {
   return `VOICE CHANNEL — spoken summary turn.
@@ -136,10 +210,10 @@ export function extractVoiceSpeakable(content: string): { voice: string; chat: s
   const normalized = normalizeVoiceAssistantContent(content);
   const match = normalized.match(VOICE_BLOCK_RE);
   if (!match) {
-    return { voice: '', chat: normalized.trim() };
+    return { voice: '', chat: sanitizeSpeakableText(normalized) };
   }
-  const voice = match[1]?.trim() ?? '';
-  const chat = normalized.replace(VOICE_BLOCK_STRIP_RE, '').trim();
+  const voice = sanitizeSpeakableText(match[1] ?? '');
+  const chat = sanitizeSpeakableText(normalized.replace(VOICE_BLOCK_STRIP_RE, ''));
   return { voice, chat };
 }
 
@@ -161,7 +235,8 @@ export function buildVoiceFallback(chat: string): string {
  * or model-specific token leaks like ]<]minimax[>[ that sometimes appear
  * inside or after voice blocks.
  */
-const LLM_TOKEN_BLEED_RE = /\]?<\]?[a-zA-Z_]+\[?>?\[?/g;
+// Allow digits/hyphen in model tokens (e.g. minimax, gpt-4o bleed variants).
+const LLM_TOKEN_BLEED_RE = /\]?<\]?[a-zA-Z0-9_-]+\[?>?\[?/g;
 const XML_LIKE_TAG_RE = /<\/?[a-zA-Z_][^>]*>/g;
 
 export function sanitizeSpeakableText(text: string): string {
@@ -178,6 +253,14 @@ export function sanitizeSpeakableText(text: string): string {
   // 4. Collapse whitespace
   out = out.replace(/\s+/g, ' ').trim();
   return out;
+}
+
+/** Sanitize assistant text for UI / WS status (voice block preferred when present). */
+export function sanitizeVoiceDisplayText(text: string): string {
+  if (!text) return '';
+  const { voice, chat } = extractVoiceSpeakable(text);
+  const raw = voice.trim() || chat.trim() || text;
+  return sanitizeSpeakableText(raw);
 }
 
 /** Extracts speakable deltas from streamed assistant output (voice block only). */

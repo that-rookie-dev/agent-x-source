@@ -20,11 +20,10 @@ import ErrorIcon from '@mui/icons-material/Error';
 import HelpIcon from '@mui/icons-material/Help';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import { settings, factoryReset, setAuthToken, knowledge, type DbStatus } from '../../api';
+import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { clearAgentxClientStorage } from '../../utils/client-storage';
 import { invalidateApiCache, invalidateCoreSessionCache } from '../../perf/api-cache';
-import { useNeuralBrainSupported } from '../../hooks/useSystemCapabilities';
 import {
   settingsTheme,
   settingsMonoSx,
@@ -40,10 +39,9 @@ import {
 import { SettingsCard } from './SettingsCard';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
 
-import { colors, alphaColor } from '../../theme';
+import { alphaColor } from '../../theme';
 export function PersistenceTab() {
   const { initialize } = useApp();
-  const neuralBrainSupported = useNeuralBrainSupported();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [migrating, setMigrating] = useState(false);
@@ -265,8 +263,6 @@ export function PersistenceTab() {
         </Box>
       </SettingsCard>
 
-      {neuralBrainSupported && <RagStudioStorageCard />}
-
       <SettingsCard title="Soft Reset" accent={settingsTheme.accent.amber}>
         <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
           Clears domain data — sessions, messages, memories, crews, plugins. Credentials and provider config remain intact.
@@ -373,78 +369,3 @@ function FilePathRow({ label, path, size, desc }: { label: string; path: string;
   );
 }
 
-function formatBytes(n: number): string {
-  if (n >= 1073741824) return `${(n / 1073741824).toFixed(2)} GB`;
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${n} B`;
-}
-
-function RagStudioStorageCard() {
-  const [stats, setStats] = useState<{ fileCount: number; totalBytes: number; path: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [clearing, setClearing] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try { setStats(await knowledge.storageStats()); } catch { /* ignore */ }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const handleClear = async () => {
-    setClearing(true);
-    try {
-      const r = await knowledge.clearStorage();
-      setResult(`Deleted ${r.deletedFiles} files, freed ${formatBytes(r.freedBytes)}`);
-      setConfirmOpen(false);
-      await load();
-      setTimeout(() => setResult(null), 4000);
-    } catch (e) { setResult(e instanceof Error ? e.message : 'Failed'); }
-    finally { setClearing(false); }
-  };
-
-  return (
-    <SettingsCard title="RAG Studio Storage" subtitle="Original copies of uploaded documents. Clearing does not delete knowledge entries in the brain.">
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-          <CircularProgress size={18} sx={{ color: settingsTheme.text.dim }} />
-        </Box>
-      ) : (
-        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
-          <StatItem label="Files" value={stats ? String(stats.fileCount) : '—'} />
-          <StatItem label="Total Size" value={stats ? formatBytes(stats.totalBytes) : '—'} />
-        </Box>
-      )}
-
-      {stats && stats.fileCount > 0 && (
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button variant="outlined" startIcon={<DeleteOutlineIcon />}
-            onClick={() => setConfirmOpen(true)} disabled={clearing} sx={settingsBtnDangerSx}>
-            {clearing ? <CircularProgress size={14} /> : 'Clear RAG Studio Files'}
-          </Button>
-          {result && (
-            <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>{result}</Typography>
-          )}
-        </Box>
-      )}
-
-      {confirmOpen && (
-        <Box sx={{ mt: 1.5, p: 1.5, borderRadius: '4px', bgcolor: `${alphaColor(settingsTheme.accent.alert, '08')}`, border: `1px solid ${alphaColor(settingsTheme.accent.alert, '33')}` }}>
-          <Typography sx={{ ...settingsHelperSx, mb: 1.25 }}>
-            Delete all original file copies? Knowledge entries remain in the brain.
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button size="small" onClick={() => setConfirmOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.6rem', color: settingsTheme.text.dim }}>Cancel</Button>
-            <Button size="small" variant="contained" onClick={handleClear} disabled={clearing} sx={{ ...settingsBtnDangerSx, bgcolor: settingsTheme.accent.alert, color: colors.text.primary, border: 'none' }}>
-              {clearing ? 'Clearing…' : 'Delete Files'}
-            </Button>
-          </Box>
-        </Box>
-      )}
-    </SettingsCard>
-  );
-}

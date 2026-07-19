@@ -88,6 +88,7 @@ const SAFE_PARALLEL = new Set([
   'memory_search',
   'memory_recall',
   'memory_fabric_search',
+  'knowledge_search',
   'rag_search',
   'system_info',
   'system_which',
