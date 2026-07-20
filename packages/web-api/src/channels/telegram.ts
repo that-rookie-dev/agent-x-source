@@ -308,6 +308,10 @@ export async function startTelegramInbound(token: string): Promise<void> {
       runningPlugin.setOwnerClaimHandler(claimOwner);
       runningPlugin.rewirePermissionHandling();
       getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent + allowlist');
+      try {
+        const { propagateTelegramConnectedToAgents } = await import('../channel-session-bridge.js');
+        propagateTelegramConnectedToAgents(eng);
+      } catch { /* best-effort */ }
       return;
     }
   }
@@ -337,6 +341,10 @@ export async function startTelegramInbound(token: string): Promise<void> {
   } catch (e) {
     getLogger().warn('CHANNELS', `Telegram permission rewire failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+  try {
+    const { propagateTelegramConnectedToAgents } = await import('../channel-session-bridge.js');
+    propagateTelegramConnectedToAgents(eng);
+  } catch { /* best-effort */ }
   getLogger().info('CHANNELS', 'Telegram inbound bridge started');
 }
 

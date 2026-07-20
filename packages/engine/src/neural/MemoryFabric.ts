@@ -8,6 +8,7 @@
 import { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
 import { MemoryMigrationRunner } from './MemoryMigrationRunner.js';
+import { getGlobalBrainEventStreamer } from './BrainEventStreamer.js';
 import { PiiRedactor } from './PiiRedactor.js';
 import { SecureVault } from './SecureVault.js';
 import {
@@ -126,6 +127,8 @@ export interface MemoryNode extends Omit<MemoryNodeInput, 'charSpan' | 'provenan
   updatedAt: Date;
   accessCount: number;
   lastAccessedAt: Date | null;
+  /** Louvain community assigned by the server-side layout pass (null before first layout). */
+  communityId?: string | null;
   /**
    * Provenance: character span in the source text. On write this is `[start, end]`;
    * on read from PostgreSQL the INT4RANGE column comes back as a string like `"[0,10]"`.
@@ -369,15 +372,33 @@ export class MemoryFabric {
   }
 
   async createNode(input: MemoryNodeInput): Promise<MemoryNode> {
-    return createNodeImpl(this.nodeCrudCtx(), input);
+    const node = await createNodeImpl(this.nodeCrudCtx(), input);
+    getGlobalBrainEventStreamer().emitNodeCreated({
+      nodeId: node.id,
+      label: node.label,
+      category: node.category,
+      x: node.x ?? null,
+      y: node.y ?? null,
+      sourceId: node.sourceId ?? null,
+      sessionId: node.sessionId ?? null,
+    });
+    return node;
   }
 
   async bindEdge(input: MemoryEdgeInput): Promise<MemoryEdge> {
-    return bindEdgeImpl(this.nodeCrudCtx(), input);
+    const edge = await bindEdgeImpl(this.nodeCrudCtx(), input);
+    getGlobalBrainEventStreamer().emitSynapseConnected({
+      sourceId: edge.sourceNodeId,
+      targetId: edge.targetNodeId,
+      relationshipType: edge.relationshipType,
+      weight: edge.weight,
+    });
+    return edge;
   }
 
   async fireNeuron(nodeId: string): Promise<void> {
-    return fireNeuronImpl(this.nodeCrudCtx(), nodeId);
+    await fireNeuronImpl(this.nodeCrudCtx(), nodeId);
+    getGlobalBrainEventStreamer().emitNeuronActivated({ nodeIds: [nodeId] });
   }
 
   /**
@@ -473,7 +494,7 @@ export class MemoryFabric {
     const where = filters.join(' AND ');
     const { rows: nodes } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId", n.community_id AS "communityId",
               n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
               COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
        FROM memory_nodes n
@@ -493,6 +514,68 @@ export class MemoryFabric {
       [nodeIds],
     );
     return { nodes, edges };
+  }
+
+  /** Hydrate a set of node ids into full nodes (with activity + community). */
+  async getNodesByIds(ids: string[]): Promise<MemoryNode[]> {
+    if (ids.length === 0) return [];
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId", n.community_id AS "communityId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.id = ANY($1::uuid[]) AND n.status = 'active'`,
+      [ids],
+    );
+    return rows;
+  }
+
+  /**
+   * Aggregate stats for the Neural Cortex visualization HUD:
+   * counts, per-category breakdown, layout epoch, and 30-day growth series.
+   */
+  async getCortexMeta(): Promise<{
+    nodeCount: number;
+    edgeCount: number;
+    communityCount: number;
+    layoutEpoch: number;
+    categories: Array<{ category: string; count: number }>;
+    growth: Array<{ day: string; count: number }>;
+    lastNodeAt: string | null;
+  }> {
+    // Sequential queries — embedded PostgreSQL runs with max_connections=10,
+    // so a parallel fan-out here can exhaust the server's connection budget.
+    const { rows: statsRows } = await this.pool.query<{
+      nodeCount: number; edgeCount: number; communityCount: number; lastNodeAt: string | null;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM memory_nodes WHERE status = 'active') AS "nodeCount",
+         (SELECT COUNT(*)::int FROM memory_edges) AS "edgeCount",
+         (SELECT COUNT(DISTINCT community_id)::int FROM memory_nodes WHERE community_id IS NOT NULL AND status = 'active') AS "communityCount",
+         (SELECT MAX(created_at)::text FROM memory_nodes WHERE status = 'active') AS "lastNodeAt"`,
+    );
+    const { rows: categories } = await this.pool.query<{ category: string; count: number }>(
+      `SELECT category, COUNT(*)::int AS count FROM memory_nodes WHERE status = 'active' GROUP BY category ORDER BY count DESC`,
+    );
+    const { rows: growth } = await this.pool.query<{ day: string; count: number }>(
+      `SELECT TO_CHAR(created_at::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS count
+       FROM memory_nodes
+       WHERE status = 'active' AND created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY created_at::date
+       ORDER BY created_at::date`,
+    );
+    const epoch = await this.getLayoutEpoch();
+    return {
+      nodeCount: statsRows[0]?.nodeCount ?? 0,
+      edgeCount: statsRows[0]?.edgeCount ?? 0,
+      communityCount: statsRows[0]?.communityCount ?? 0,
+      layoutEpoch: epoch,
+      categories,
+      growth,
+      lastNodeAt: statsRows[0]?.lastNodeAt ?? null,
+    };
   }
 
   /**

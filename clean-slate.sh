@@ -244,7 +244,7 @@ rm -rf dist release
 # ── 4b. Clean all package dist folders (so the fresh build has no stale code) ─
 echo ">>> Cleaning all package dist/ outputs..."
 cd "$ROOT_DIR"
-for pkg in shared engine web-api web-ui web-neuron runtime server desktop; do
+for pkg in shared engine web-api web-ui runtime server desktop; do
   rm -rf "packages/$pkg/dist" 2>/dev/null || true
 done
 
@@ -274,7 +274,6 @@ pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
-pnpm --filter @agentx/web-neuron run build
 
 # ── 6b. Build and install PostgreSQL extension (pgvector) ──────
 echo ">>> Building PostgreSQL extension (pgvector)..."

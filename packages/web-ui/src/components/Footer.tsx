@@ -1,10 +1,24 @@
 import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { colors } from '../theme';
-import { health } from '../api';
+import { health, getAuthToken } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
 import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
+import { CORTEX_VIZ_ENABLED } from '../cortex/flags';
+
+/** Open the Neural Cortex visualization in its own window, handing the auth token over via URL hash. */
+function openCortexWindow(): void {
+  if (!CORTEX_VIZ_ENABLED) return;
+  const token = getAuthToken();
+  const url = `${window.location.origin}/cortex${token ? `#tk=${encodeURIComponent(token)}` : ''}`;
+  if (window.agentx?.openInternalWindow) {
+    void window.agentx.openInternalWindow(url);
+  } else {
+    window.open(url, 'agentx-cortex', 'width=1400,height=900');
+  }
+}
 
 function getZoomShortcutHint(): string {
   if (typeof navigator === 'undefined') return 'zoom Ctrl +/− · Ctrl 0';
@@ -179,6 +193,26 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                   {voiceStatusText}
                 </Box>
               )}
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
+        {CORTEX_VIZ_ENABLED && (
+          <>
+            <Box
+              component="span"
+              onClick={openCortexWindow}
+              title="Neural Cortex — watch your agent's brain grow"
+              sx={{
+                display: 'inline-flex', alignItems: 'center', gap: 0.5,
+                cursor: 'pointer', userSelect: 'none', letterSpacing: '0.5px',
+                color: colors.text.dim,
+                transition: 'color 0.15s',
+                '&:hover': { color: colors.accent.purple },
+              }}
+            >
+              <PsychologyIcon sx={{ fontSize: 13 }} />
+              cortex
             </Box>
             <span style={{ color: colors.border.default }}>/</span>
           </>

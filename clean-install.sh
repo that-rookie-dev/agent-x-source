@@ -47,14 +47,13 @@ done
 rm -rf packages/server/release packages/server/.pack-staging packages/runtime/python packages/runtime/ffmpeg packages/desktop/python packages/desktop/ffmpeg 2>/dev/null || true
 
 # 6. Build dependencies
-echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
+echo ">>> Building shared, engine, web-api, and web-ui..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
-pnpm --filter @agentx/web-neuron run build
 
 # 7. Build PostgreSQL extension (pgvector) for the embedded binaries
 echo ">>> Building PostgreSQL extension (pgvector) for embedded PostgreSQL..."

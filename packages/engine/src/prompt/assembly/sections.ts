@@ -184,7 +184,8 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean }): Prom
     `- The originating channel (where the user sent the request from) gets the FULL result as a thread-aware reply. All other surfaces get a notification summary.`,
     `- If the user says "send the result to Telegram" or "notify me on Slack", use the matching channel send tool (telegram_send_message, slack_send_message, etc.) to deliver the result there explicitly.`,
     `- If the user does NOT specify where to respond, do not worry about routing — the platform handles it. Just delegate with background: true and the user will see the result somewhere.`,
-    `- You can use agent_x_overview to check which channels are currently connected if the user asks about available delivery surfaces.`,
+    `- Prefer tools over guessing channel state: if the user asks to deliver via Telegram/Slack/etc., call automation_register or the matching send tool. Do not invent "not connected" from memory.`,
+    `- You can use agent_x_overview to check which channels are currently connected when that tool is available.`,
     `- Cross-channel routing is seamless: a request from Slack can deliver results to Telegram, and vice versa. The user's connected channels are all part of one ecosystem.`,
     ``,
     ...(technical ? [
@@ -595,7 +596,8 @@ export function createSchedulingSection(): PromptSection<string> {
     `Steps:`,
     `1. Parse intent → title, instruction, schedule (once or recurring cron), required tools.`,
     `2. Briefly confirm in chat what will run and when.`,
-    `3. Call automation_register — a notification channel questionnaire appears automatically; do not pass notify_channels yourself.`,
+    `3. Call automation_register immediately — a notification channel questionnaire appears automatically; do not pass notify_channels yourself.`,
+    `4. If the user already named a delivery surface (e.g. "to my Telegram"), still call automation_register now. Never refuse with a fake "channel not connected" claim — only report that after a tool failure.`,
     ``,
     `Schedule mapping:`,
     `- "remind me in X" / "ping me in X" → schedule_type=once, prefer delay_seconds (relative) OR run_at = [CURRENT_TIME] + delay (ISO 8601 with timezone)`,
@@ -810,14 +812,19 @@ export function createChannelFocusSection(ctx: SectionContext): PromptSection<Ch
         `Messages can come from TUI, Web-UI, or Telegram. The active "focus" channel receives responses.`,
         `Focus automatically switches to whichever channel the user last sent a message from.`,
         ``,
-        `Telegram connection status: ${state.connected ? 'CONNECTED (Settings → Channels)' : 'NOT CONNECTED'}`,
+        `Telegram connection status: ${state.connected ? 'CONNECTED' : 'UNKNOWN / NOT CONFIRMED'}`,
         state.connected
-          ? `Messaging channels are linked via Settings → Channels. Each surface (Telegram, Slack, Discord) has its own transcript session; desktop sessions stay separate. A linked desktop session supplies goals, crew, and resume context per channel. Use agent_x_overview for fleet state.`
-          : `Telegram is not linked. Tell the user to open Settings → Channels, add their bot token, and message the bot once to link chat.`,
+          ? `Telegram IS linked. For daily/recurring Telegram pings, call automation_register immediately — do NOT ask the user to connect Telegram or open Settings → Channels.`
+          : [
+            `Do NOT claim Telegram is disconnected or tell the user to open Settings → Channels unless a tool has just failed for that reason.`,
+            `If the user asks to ping/notify Telegram (or says Telegram is already connected): proceed with automation_register / telegram_send_message.`,
+            `Only after a tool error proves Telegram is unavailable may you guide setup (Settings → Channels → Telegram bot token + /start once).`,
+          ].join(' '),
+        `Messaging surfaces (Telegram, Slack, Discord) each have their own transcript session; desktop sessions stay separate. Use agent_x_overview for fleet state when available.`,
         ``,
-        `When starting a long-running task:`,
+        `When starting a long-running task from desktop/web:`,
         `1. ASK the user ONCE: "Would you like progress updates on Telegram?" (do NOT ask again)`,
-        `2. If yes, send concise updates.`,
+        `2. If yes (or Telegram is CONNECTED and they already asked for Telegram delivery), send concise updates / schedule via automation_register.`,
         `3. Keep updates brief: "Step X of Y done" / "File Z created" / "Build passed".`,
         `[/CHANNEL_FOCUS]`,
       ];
@@ -826,9 +833,9 @@ export function createChannelFocusSection(ctx: SectionContext): PromptSection<Ch
     diff: (prev, current) => {
       if (prev.connected === current.connected) return null;
       if (current.connected) {
-        return `[CHANNEL_FOCUS — UPDATE]\nTelegram is now CONNECTED. You can send updates using the telegram_send_message tool.\n[/CHANNEL_FOCUS]`;
+        return `[CHANNEL_FOCUS — UPDATE]\nTelegram is now CONNECTED. Schedule or send via automation_register / telegram_send_message — do not ask the user to reconnect.\n[/CHANNEL_FOCUS]`;
       }
-      return `[CHANNEL_FOCUS — UPDATE]\nTelegram disconnected. Updates will appear in TUI or Web-UI only.\n[/CHANNEL_FOCUS]`;
+      return `[CHANNEL_FOCUS — UPDATE]\nTelegram status unconfirmed. Do not invent a disconnect — try tools first; only mention Settings → Channels after a tool failure.\n[/CHANNEL_FOCUS]`;
     },
   };
 }

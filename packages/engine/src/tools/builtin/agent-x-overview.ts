@@ -35,10 +35,13 @@ export async function agentXOverview(
     };
   }
 
-  if (!isSuperSessionId(context.sessionId) && view !== 'session_detail') {
+  // Fleet overview is for operator consoles: messaging channel super-sessions
+  // and the desktop Agent-X core session (agent_x_core).
+  const isCoreSession = context.contextKind === 'agent_x_core';
+  if (!isSuperSessionId(context.sessionId) && !isCoreSession && view !== 'session_detail') {
     return {
       success: false,
-      output: 'agent_x_overview is only available from messaging channel sessions',
+      output: 'agent_x_overview is only available from Agent-X core or messaging channel sessions',
       error: 'NOT_CHANNEL',
     };
   }

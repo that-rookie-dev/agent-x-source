@@ -6,6 +6,7 @@ import type { MemoryNodeCategory } from '@agentx/engine';
 import { getLogger } from '@agentx/shared';
 import { getFabric, handleFabricUnavailable } from '../../memory/shared.js';
 import embeddingRouter from '../../embedding-model-api.js';
+import { cortexGraphRouter } from './graph.js';
 
 const logger = getLogger();
 
@@ -13,6 +14,7 @@ export function neuralCortexRouter(): Router {
   const r = Router();
 
   r.use(embeddingRouter);
+  r.use(cortexGraphRouter());
 
   r.get('/neural-cortex/storage-status', async (_req: Request, res: Response) => {
     const fabric = getFabric();

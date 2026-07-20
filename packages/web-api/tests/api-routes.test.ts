@@ -8,6 +8,15 @@ const mockFabric = {
   migrate: vi.fn(),
   getNodesBySource: vi.fn(),
   reEmbedAll: vi.fn(),
+  getCortexMeta: vi.fn(),
+  getGraphSnapshot: vi.fn(),
+  getLayoutEpoch: vi.fn(),
+  getViewport: vi.fn(),
+  getNode: vi.fn(),
+  getNodesByIds: vi.fn(),
+  walkGraph: vi.fn(),
+  computeLouvainLayout: vi.fn(),
+  getPool: vi.fn(),
   pool: {},
 };
 
@@ -37,6 +46,7 @@ vi.mock('@agentx/engine', () => ({
   SynapticPlasticity: vi.fn(),
   MemoryConsolidator: vi.fn(),
   OnnxEmbeddingProvider: vi.fn(),
+  getGlobalBrainEventStreamer: vi.fn(() => ({ on: vi.fn(() => vi.fn()) })),
 }));
 
 vi.mock('@huggingface/transformers', () => ({ pipeline: vi.fn(), env: { allowLocalModels: false } }));
@@ -156,6 +166,101 @@ describe('neural-cortex-api routes', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.nodes).toHaveLength(1);
+  });
+});
+
+describe('neural-cortex graph routes', () => {
+  const sampleNode = {
+    id: 'n1', label: 'Fact about auth', category: 'semantic', content: 'JWT tokens expire after 24h.',
+    x: 12.5, y: -4.2, communityId: '3', sourceId: null, sessionId: null, tag: null,
+    confidence: 0.9, accessCount: 7, lastAccessedAt: null, createdAt: new Date().toISOString(),
+  };
+
+  it('GET /graph/meta returns cortex stats', async () => {
+    mockFabric.getCortexMeta.mockResolvedValue({
+      nodeCount: 42, edgeCount: 61, communityCount: 4, layoutEpoch: 2,
+      categories: [{ category: 'semantic', count: 42 }], growth: [], lastNodeAt: null,
+    });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/meta`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nodeCount).toBe(42);
+    expect(body.communityCount).toBe(4);
+  });
+
+  it('GET /graph/snapshot returns trimmed wire nodes and edges', async () => {
+    mockFabric.getGraphSnapshot.mockResolvedValue({
+      nodes: [sampleNode],
+      edges: [{ id: 'e1', sourceNodeId: 'n1', targetNodeId: 'n2', relationshipType: 'RELATED_TO', weight: 0.7 }],
+    });
+    mockFabric.getLayoutEpoch.mockResolvedValue(2);
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/snapshot?limit=100`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.epoch).toBe(2);
+    expect(body.nodes[0].contentPreview).toBe('JWT tokens expire after 24h.');
+    expect(body.nodes[0].content).toBeUndefined();
+    expect(body.edges[0]).toEqual({ id: 'e1', source: 'n1', target: 'n2', type: 'RELATED_TO', weight: 0.7 });
+  });
+
+  it('GET /graph/viewport validates bounds', async () => {
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/viewport?xmin=abc`);
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /graph/viewport returns spatial slice', async () => {
+    mockFabric.getViewport.mockResolvedValue({ nodes: [sampleNode], edges: [], epoch: 2, band: 'A' });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/viewport?xmin=-100&xmax=100&ymin=-100&ymax=100&zoom=1`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.band).toBe('A');
+    expect(body.nodes).toHaveLength(1);
+  });
+
+  it('GET /graph/node/:id returns detail with connections', async () => {
+    mockFabric.getNode.mockResolvedValue({ ...sampleNode, content: 'full content' });
+    mockFabric.walkGraph.mockResolvedValue({
+      nodeIds: ['n1', 'n2'],
+      edges: [{ sourceNodeId: 'n1', targetNodeId: 'n2', relationshipType: 'RELATED_TO', weight: 0.5 }],
+    });
+    mockFabric.getNodesByIds.mockResolvedValue([{ ...sampleNode, id: 'n2', label: 'Neighbor' }]);
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/node/n1`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.node.content).toBe('full content');
+    expect(body.connections[0].neighborLabel).toBe('Neighbor');
+  });
+
+  it('GET /graph/node/:id returns 404 for missing node', async () => {
+    mockFabric.getNode.mockResolvedValue(null);
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/node/missing`);
+    expect(res.status).toBe(404);
+  });
+
+  it('GET /graph/neighborhood/:id hydrates walk results', async () => {
+    mockFabric.walkGraph.mockResolvedValue({ nodeIds: ['n1', 'n2'], edges: [] });
+    mockFabric.getNodesByIds.mockResolvedValue([sampleNode]);
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/neighborhood/n1?depth=2`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nodes).toHaveLength(1);
+    expect(mockFabric.walkGraph).toHaveBeenCalledWith(expect.objectContaining({ maxDepth: 2 }));
+  });
+
+  it('GET /graph/search returns empty for short queries', async () => {
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/search?q=a`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.results).toEqual([]);
+  });
+
+  it('POST /graph/layout triggers server-side re-layout', async () => {
+    mockFabric.computeLouvainLayout.mockResolvedValue({ epoch: 3, count: 42, communities: 5 });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/graph/layout`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.epoch).toBe(3);
+    expect(body.communities).toBe(5);
   });
 });
 

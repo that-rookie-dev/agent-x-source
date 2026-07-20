@@ -492,8 +492,10 @@ export class Agent {
   private enabledCrewSessionIds: Set<string> = new Set();
 
   setTelegramConnected(connected: boolean, chatId?: number | null): void {
+    const nextChatId = chatId ?? this._telegramChatId;
+    if (this._telegramConnected === connected && this._telegramChatId === nextChatId) return;
     this._telegramConnected = connected;
-    this._telegramChatId = chatId ?? this._telegramChatId;
+    this._telegramChatId = nextChatId;
     this.rebuildSystemPrompt();
   }
 

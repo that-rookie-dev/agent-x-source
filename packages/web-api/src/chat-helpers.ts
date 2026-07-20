@@ -6,6 +6,7 @@ import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
+import { propagateTelegramConnectedToAgents } from './channel-session-bridge.js';
 
 const SESSION_HYDRATE_TIMEOUT_MS = 3_000;
 
@@ -304,6 +305,13 @@ export function runAgentTurnAsync(
   if (clientSituation) {
     agent.setClientSituation(clientSituation);
   }
+
+  // Keep CHANNEL_FOCUS telegram status fresh for the desktop Agent-X session.
+  // Without this, a stale "NOT CONNECTED" prompt makes the model refuse Telegram
+  // delivery even when the bridge is live.
+  try {
+    propagateTelegramConnectedToAgents(getEngine());
+  } catch { /* best-effort */ }
 
   void agent.sendMessage(fullText, {
     ...(instruction ? { instruction } : {}),

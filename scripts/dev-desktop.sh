@@ -15,13 +15,12 @@ pkill -9 -f "Agent-X.app/Contents/MacOS/Agent-X" 2>/dev/null || true
 pkill -9 -f "release/mac-arm64/Agent-X.app" 2>/dev/null || true
 sleep 1
 
-echo ">>> Building shared, engine, web-api, web-ui, web-neuron..."
+echo ">>> Building shared, engine, web-api, web-ui..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
-pnpm --filter @agentx/web-neuron run build
 
 echo ">>> Building desktop main/preload..."
 cd "$DESKTOP_DIR"
@@ -36,7 +35,6 @@ pnpm exec electron-builder --mac --dir
 echo ">>> Syncing latest web assets into .app Resources..."
 rsync -a --delete "$ROOT_DIR/packages/web-api/dist/" "$APP_RES/web-api/"
 rsync -a --delete "$ROOT_DIR/packages/web-ui/dist/" "$APP_RES/web-ui/"
-rsync -a --delete "$ROOT_DIR/packages/web-neuron/dist/" "$APP_RES/web-neuron/"
 
 echo ">>> Removing Gatekeeper quarantine (if present)..."
 xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
