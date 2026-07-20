@@ -5,6 +5,7 @@ import type {
   AgentXConfig,
   QuestionnairePayload,
   ClientSituation,
+  SessionContextKind,
 } from '@agentx/shared';
 import type { SessionLogger } from '../../session/SessionLogger.js';
 import type { TokenTracker } from '../../session/TokenTracker.js';
@@ -30,6 +31,8 @@ export interface TurnRunOptions {
 export interface TurnHostOptions {
   promptProfile?: 'default' | 'crew_worker' | 'crew_private' | 'voice';
   channelSession?: boolean;
+  /** Session context kind — gates autonomous crew tools in the completion loop. */
+  contextKind?: SessionContextKind;
   prepareIntegrationTools?: (userText: string) => Promise<
     string | { hint?: string; policy?: ThirdPartyTurnPolicy } | undefined | null
   >;
