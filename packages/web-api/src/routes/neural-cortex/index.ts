@@ -48,13 +48,18 @@ export function neuralCortexRouter(): Router {
   r.get('/neural-cortex/sources/:id/nodes', async (req: Request, res: Response) => {
     const fabric = getFabric();
     if (!fabric) return handleFabricUnavailable(res);
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: 'Source id is required' });
+      return;
+    }
     try {
       const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
       const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
       const category = typeof req.query.category === 'string'
         ? req.query.category as MemoryNodeCategory
         : undefined;
-      const result = await fabric.getNodesBySource(req.params.id, { limit, offset, category });
+      const result = await fabric.getNodesBySource(id, { limit, offset, category });
       res.json(result);
     } catch (e) {
       logger.error('NEURAL_CORTEX', e instanceof Error ? e.message : e);
