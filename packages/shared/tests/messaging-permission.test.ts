@@ -23,7 +23,9 @@ describe('messaging-permission', () => {
   });
 
   it('formats instructed tool output', () => {
-    expect(formatPermissionInstructedToolOutput('retry with smaller scope')).toBe('[USER INSTRUCTION] retry with smaller scope');
+    expect(formatPermissionInstructedToolOutput('retry with smaller scope')).toBe(
+      '[PERMISSION DENIED — ACTION NOT PERFORMED] retry with smaller scope',
+    );
     expect(PERMISSION_INSTRUCTED_ERROR).toBe('PERMISSION_INSTRUCTED');
   });
 });

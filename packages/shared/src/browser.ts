@@ -99,6 +99,10 @@ export {
   formatPermissionInstructedToolOutput,
 } from './utils/messaging-permission.js';
 export type { PermissionHandlerResult, PermissionInstructResult } from './utils/messaging-permission.js';
+export {
+  VOICE_PERMISSION_TIMEOUT_MS,
+  VOICE_PERMISSION_TIMEOUT_INSTRUCTION,
+} from './utils/voice-permission.js';
 
 export {
   CHART_P0_TYPES,
@@ -183,6 +187,7 @@ export {
   isChannelSessionId,
   isSuperSessionId,
   resolveFleetToolSessionScope,
+  resolveAutomationSessionScope,
 } from './utils/channel-session.js';
 export {
   CHANNEL_COVERED_MCP_INTEGRATION_IDS,

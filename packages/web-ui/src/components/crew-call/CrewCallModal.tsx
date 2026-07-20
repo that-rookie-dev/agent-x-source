@@ -10,12 +10,14 @@ import CallEndIcon from '@mui/icons-material/CallEnd';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import MicIcon from '@mui/icons-material/Mic';
+import MinimizeIcon from '@mui/icons-material/Minimize';
 import { alphaColor } from '../../theme';
 import { friendlyVoiceError } from '../voice/voice-comms-theme';
 import { getCrewAccent } from '../../styles/crew-theme';
-import { VoiceParticleField, type ParticlePhase } from '../voice/VoiceParticleField';
+import { VoiceParticleField } from '../voice/VoiceParticleField';
 import type { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
 import { callTheme, formatCallDuration } from './crew-call-theme';
+import { resolveCallParticlePhase } from './resolve-call-particle-phase';
 import type { CrewCallPhase, CrewCallTarget, CrewCallTranscriptLine } from './types';
 
 type Comms = ReturnType<typeof useVoiceCommsSession>;
@@ -34,6 +36,7 @@ export interface CrewCallModalProps {
   onEnd: () => void;
   onHold: () => void;
   onResume: () => void;
+  onMinimize: () => void;
   onRetry?: () => void;
 }
 
@@ -55,80 +58,6 @@ const CTRL_BTN = {
   flexShrink: 0,
 } as const;
 
-function resolveParticlePhase(
-  phase: CrewCallPhase,
-  comms: Comms,
-  elapsedMs: number,
-): { particlePhase: ParticlePhase; level: number; label: string } {
-  if (phase === 'on_hold') {
-    return { particlePhase: 'paused', level: 0, label: 'On hold' };
-  }
-  if (phase === 'failed' || phase === 'ending' || phase === 'idle') {
-    return { particlePhase: 'disabled', level: 0, label: phase === 'failed' ? 'Offline' : 'Ending…' };
-  }
-  // Dialing / reconnecting — blue until the channel is live.
-  if (phase === 'resolving' || phase === 'connecting' || phase === 'encoding') {
-    return {
-      particlePhase: 'connecting',
-      level: 0.25,
-      label: elapsedMs > 0 ? 'Reconnecting…' : 'Connecting…',
-    };
-  }
-
-  // Linked but still bringing uplink up — keep connecting (blue).
-  const uplinkLive =
-    comms.commsReady
-    && (comms.session.state === 'ready'
-      || comms.session.state === 'listening'
-      || comms.session.state === 'speaking'
-      || comms.session.state === 'processing'
-      || (!comms.isDuplex && comms.session.pttReady)
-      || comms.agentActive || comms.operatorActive);
-  if (!uplinkLive || comms.session.state === 'connecting' || comms.commsPhase === 'boot' || comms.commsPhase === 'link') {
-    return { particlePhase: 'connecting', level: 0.2, label: 'Connecting…' };
-  }
-
-  // Greeting / agent audio — purple speaking (never treat open greeting as Thinking…).
-  if (comms.agentActive || comms.commsPhase === 'agent_tx' || comms.session.state === 'speaking') {
-    return {
-      particlePhase: 'speaking',
-      level: Math.max(0.2, comms.session.playbackLevel),
-      label: 'Speaking…',
-    };
-  }
-
-  // Thinking only after the operator has spoken this call — not on bare connect.
-  const operatorHasSpoken = Boolean((comms.session.finalTranscript || '').trim())
-    || Boolean((comms.session.partialTranscript || '').trim());
-  if (
-    operatorHasSpoken
-    && (
-      comms.session.state === 'processing'
-      || comms.commsPhase === 'relay_process'
-      || comms.commsPhase === 'operator_stt'
-      || comms.commsPhase === 'agent_prep'
-      || (comms.relayBusy && comms.session.state !== 'listening' && comms.session.state !== 'ready')
-    )
-  ) {
-    return { particlePhase: 'thinking', level: 0.4, label: 'Thinking…' };
-  }
-
-  if (comms.operatorActive) {
-    return {
-      particlePhase: 'listening',
-      level: Math.max(0.15, comms.session.audioLevel),
-      label: 'Listening…',
-    };
-  }
-
-  // Live channel waiting for speech — green listening state.
-  return {
-    particlePhase: 'listening',
-    level: 0.12,
-    label: comms.isDuplex ? 'Listening…' : 'Ready',
-  };
-}
-
 export function CrewCallModal({
   open,
   phase,
@@ -143,6 +72,7 @@ export function CrewCallModal({
   onEnd,
   onHold,
   onResume,
+  onMinimize,
   onRetry,
 }: CrewCallModalProps) {
   const [mousePttHeld, setMousePttHeld] = useState(false);
@@ -156,7 +86,7 @@ export function CrewCallModal({
   // Keyboard + mouse PTT both surface through session.holding.
   const pttHeld = mousePttHeld || Boolean(comms.session.holding);
   const { particlePhase, level, label: particleLabel } = useMemo(
-    () => resolveParticlePhase(phase, comms, elapsedMs),
+    () => resolveCallParticlePhase(phase, comms, elapsedMs),
     [phase, comms, elapsedMs],
   );
 
@@ -267,8 +197,9 @@ export function CrewCallModal({
     <Dialog
       open={open}
       onClose={(_, reason) => {
+        // Escape / dismiss collapses into the footer instead of hanging up.
         if (reason === 'backdropClick') return;
-        onEnd();
+        onMinimize();
       }}
       maxWidth={false}
       disableAutoFocus
@@ -350,7 +281,7 @@ export function CrewCallModal({
             @{callsign}{target?.title ? ` · ${target.title}` : ''}
           </Typography>
         </Box>
-        <Box sx={{ textAlign: 'right' }}>
+        <Box sx={{ textAlign: 'right', mr: 0.25 }}>
           <Typography
             sx={{
               fontFamily: callTheme.mono,
@@ -375,6 +306,27 @@ export function CrewCallModal({
             {PHASE_LABEL[phase]}
           </Typography>
         </Box>
+        <Tooltip title="Minimize — keep call in footer" arrow>
+          <IconButton
+            onClick={onMinimize}
+            onKeyDown={ignoreSpaceActivation}
+            size="small"
+            aria-label="Minimize call"
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: '7px',
+              border: `1px solid ${callTheme.border.line}`,
+              color: callTheme.text.secondary,
+              '&:hover': {
+                bgcolor: alphaColor(callTheme.uplink, 0.12),
+                color: callTheme.uplink,
+              },
+            }}
+          >
+            <MinimizeIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {/* Body */}
@@ -502,10 +454,10 @@ export function CrewCallModal({
                 line.role === 'operator' ? callTheme.operator
                   : line.role === 'crew' ? accent
                     : callTheme.text.dim;
-              const label = line.role === 'operator' ? 'YOU' : line.role === 'crew' ? callsign.toUpperCase() : 'SYS';
+              const label = line.role === 'operator' ? 'You' : line.role === 'crew' ? name : 'System';
               return (
                 <Box key={line.id}>
-                  <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.48rem', letterSpacing: '0.1em', color, mb: 0.15 }}>
+                  <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.48rem', letterSpacing: '0.06em', color, mb: 0.15 }}>
                     {label}
                   </Typography>
                   <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.65rem', color: callTheme.text.secondary, lineHeight: 1.4 }}>
@@ -516,8 +468,8 @@ export function CrewCallModal({
             })}
             {linked && (comms.session.partialTranscript || '').trim() && (
               <Box sx={{ opacity: 0.7 }}>
-                <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.48rem', letterSpacing: '0.1em', color: callTheme.operator, mb: 0.15 }}>
-                  YOU · LIVE
+                <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.48rem', letterSpacing: '0.06em', color: callTheme.operator, mb: 0.15 }}>
+                  You · live
                 </Typography>
                 <Typography sx={{ fontFamily: callTheme.mono, fontSize: '0.65rem', color: callTheme.text.dim }}>
                   {comms.session.partialTranscript}

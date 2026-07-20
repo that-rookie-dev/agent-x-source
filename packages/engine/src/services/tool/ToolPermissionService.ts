@@ -110,10 +110,9 @@ export class ToolPermissionService {
     }
 
     const permissionHandler = this.resolvePermissionRequestHandler(host, sessionId);
-    if (ruleResult === 'ask' && !permissionHandler) {
-      return { decision: 'allow' };
-    }
-
+    // Never silently allow risky tools when a prompt is required but no UI/handler
+    // is wired (e.g. crew voice call without a permission modal). Fail closed so
+    // the agent receives an honest denial instead of a false success.
     if (!permissionHandler) {
       return { decision: 'deny', error: 'PERMISSION_DENIED' };
     }

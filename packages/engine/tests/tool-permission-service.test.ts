@@ -150,4 +150,21 @@ describe('ToolPermissionService', () => {
     const result = await service.requestPermission(host, 'write_file', {}, 'session', '/project/file.txt');
     expect(result.decision).toBe('allow');
   });
+
+  it('denies risky tools when no permission handler is wired (fail closed)', async () => {
+    const registry = new ToolRegistry();
+    registry.register(sampleTool());
+    const service = new ToolPermissionService();
+    const host = buildHost({
+      getRegistry: () => registry,
+      getPermissionRequestHandler: () => undefined,
+      getAgentPermissions: () => [
+        { action: 'tool:write_file', pattern: '*', effect: 'ask' } as PermissionRule,
+      ],
+    });
+
+    const result = await service.requestPermission(host, 'write_file', {}, 'session', '/project/file.txt');
+    expect(result.decision).toBe('deny');
+    expect(result.error).toBe('PERMISSION_DENIED');
+  });
 });

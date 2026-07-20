@@ -1,6 +1,17 @@
-import type { ToolResult, ToolExecutionContext, AutomationNotifyChannel } from '@agentx/shared';
-import { isChannelSessionId, resolveFleetToolSessionScope, parseChannelBindingFromSessionId } from '@agentx/shared';
-import { getAutomationBridge } from '../../automation/automation-bridge.js';
+import type {
+  ToolResult,
+  ToolExecutionContext,
+  AutomationNotifyChannel,
+  AutomationTaskRecord,
+} from '@agentx/shared';
+import {
+  isChannelSessionId,
+  resolveAutomationSessionScope,
+  parseChannelBindingFromSessionId,
+  crewVoiceSessionId,
+  isCrewVoiceSessionId,
+} from '@agentx/shared';
+import { getAutomationBridge, type AutomationBridge } from '../../automation/automation-bridge.js';
 import { inferAutomationSourceChannel, getNotificationChannelStatus } from '../../automation/automation-notify.js';
 import { getAgentXOverviewBridge } from '../../agent/agent-x-overview-bridge.js';
 import { inferAutomationTools, toolsNeedingConsent, NOTIFY_TOOL_IDS } from '../../automation/infer-automation-tools.js';
@@ -15,6 +26,49 @@ function resolveNotifyChannelsFromConfig(config?: import('@agentx/shared').Agent
   if (status.email.configured && status.email.enabled) out.push('email');
   if (status.discord.configured && status.discord.enabled) out.push('discord');
   return out;
+}
+
+/** Text + voice sibling scopes so crew call/chat share (and migrate) the same automations. */
+function automationScopeCandidates(sessionId: string): string[] | undefined {
+  const primary = resolveAutomationSessionScope(sessionId);
+  if (primary === undefined) return undefined;
+  const voiceSibling = isCrewVoiceSessionId(sessionId)
+    ? sessionId
+    : crewVoiceSessionId(primary);
+  return [...new Set([primary, voiceSibling])];
+}
+
+async function listAutomationTasksForSession(
+  bridge: AutomationBridge,
+  sessionId: string,
+): Promise<AutomationTaskRecord[]> {
+  const scopes = automationScopeCandidates(sessionId);
+  if (scopes === undefined) return bridge.listTasks();
+  const pages = await Promise.all(scopes.map((scope) => bridge.listTasks(scope)));
+  const byId = new Map<string, AutomationTaskRecord>();
+  for (const page of pages) {
+    for (const task of page) byId.set(task.id, task);
+  }
+  return [...byId.values()];
+}
+
+async function cancelAutomationInSessionScopes(
+  bridge: AutomationBridge,
+  idOrKey: string,
+  sessionId: string,
+): Promise<{ ok: boolean; error?: string; scopeUsed?: string }> {
+  const scopes = automationScopeCandidates(sessionId);
+  if (scopes === undefined) {
+    const result = await bridge.cancelTask(idOrKey);
+    return { ...result, scopeUsed: undefined };
+  }
+  let lastError = 'Automation not found';
+  for (const scope of scopes) {
+    const result = await bridge.cancelTask(idOrKey, scope);
+    if (result.ok) return { ok: true, scopeUsed: scope };
+    lastError = result.error ?? lastError;
+  }
+  return { ok: false, error: lastError };
 }
 
 export async function automationRegister(
@@ -90,6 +144,13 @@ export async function automationRegister(
     }
   }
 
+  // Crew voice sessions share automations with their parent private text chat.
+  const automationScope = resolveAutomationSessionScope(context.sessionId);
+  const sourceSessionId = automationScope
+    ?? (isChannelSessionId(context.sessionId) ? context.sessionId : undefined)
+    ?? getAgentXOverviewBridge()?.getActiveSessionId()
+    ?? context.sessionId;
+
   const result = await bridge.registerTask({
     title,
     instruction,
@@ -101,11 +162,7 @@ export async function automationRegister(
     taskKey,
     notifyChannels,
     sourceChannel,
-    sourceSessionId: isChannelSessionId(context.sessionId)
-      ? context.sessionId
-      : (resolveFleetToolSessionScope(context.sessionId)
-        ? context.sessionId
-        : (getAgentXOverviewBridge()?.getActiveSessionId() ?? context.sessionId)),
+    sourceSessionId,
   });
 
   if (!result.ok || !result.taskId) {
@@ -132,8 +189,8 @@ export async function automationList(
   if (!bridge) {
     return { success: false, output: 'Automation service not available', error: 'NO_AUTOMATION' };
   }
-  const scope = resolveFleetToolSessionScope(context.sessionId);
-  const tasks = await bridge.listTasks(scope);
+  const scope = resolveAutomationSessionScope(context.sessionId);
+  const tasks = await listAutomationTasksForSession(bridge, context.sessionId);
   if (tasks.length === 0) {
     return {
       success: true,
@@ -163,10 +220,39 @@ export async function automationCancel(
   if (!id) {
     return { success: false, output: 'Provide id or task_key to cancel', error: 'INVALID_ARGS' };
   }
-  const scope = resolveFleetToolSessionScope(context.sessionId);
-  const result = await bridge.cancelTask(id, scope);
+  const before = await listAutomationTasksForSession(bridge, context.sessionId);
+  const match = before.find((t) =>
+    t.id === id || t.displayId === id || t.taskKey === id,
+  );
+  if (!match) {
+    return {
+      success: false,
+      output: `Automation not found for "${id}". Use automation_list and cancel with the exact display id (or task_key).`,
+      error: 'NOT_FOUND',
+    };
+  }
+  const result = await cancelAutomationInSessionScopes(bridge, id, context.sessionId);
   if (!result.ok) {
     return { success: false, output: result.error ?? 'Cancel failed', error: 'CANCEL_FAILED' };
   }
-  return { success: true, output: `Automation cancelled (${id}).` };
+
+  // Verify the cancel stuck — never report success on a still-active task.
+  const after = await listAutomationTasksForSession(bridge, context.sessionId);
+  const stillActive = after.some((t) =>
+    t.id === match.id
+    || t.displayId === match.displayId
+    || (match.taskKey != null && match.taskKey !== '' && t.taskKey === match.taskKey),
+  );
+  if (stillActive) {
+    return {
+      success: false,
+      output: `Cancel did not apply for "${match.title}" (${match.displayId || match.id}). The task is still active.`,
+      error: 'CANCEL_NOT_APPLIED',
+    };
+  }
+
+  return {
+    success: true,
+    output: `Automation cancelled: "${match.title}" (${match.displayId || match.id}).`,
+  };
 }

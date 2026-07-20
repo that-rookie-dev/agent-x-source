@@ -498,9 +498,17 @@ export class VoiceSessionClient {
     this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
   }
 
-  respondToPermission(choice: VoicePermissionChoice): void {
+  respondToPermission(
+    choice: VoicePermissionChoice,
+    opts?: { reason?: 'timeout' | 'user'; requestId?: string },
+  ): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'permission_response', choice }));
+      this.ws.send(JSON.stringify({
+        type: 'permission_response',
+        choice,
+        ...(opts?.requestId ? { requestId: opts.requestId } : {}),
+        ...(opts?.reason ? { reason: opts.reason } : {}),
+      }));
     }
   }
 

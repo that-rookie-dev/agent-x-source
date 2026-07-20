@@ -14,6 +14,9 @@ import { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
 import { sanitizeVoiceDisplayText } from '../../voice/sanitize-display-text';
 import { CrewCallModal } from './CrewCallModal';
 import { mapCallHistoryMessages } from './map-call-transcript';
+import { resolveCallParticlePhase } from './resolve-call-particle-phase';
+import { VoiceToolPermissionModal } from '../voice/VoiceToolPermissionModal';
+import type { ParticlePhase } from '../voice/VoiceParticleField';
 import type { CrewCallPhase, CrewCallTarget, CrewCallTranscriptLine } from './types';
 
 const HISTORY_PAGE = 12;
@@ -25,10 +28,18 @@ interface CrewCallContextValue {
   sessionId: string | null;
   isActive: boolean;
   error: string | null;
+  /** True when the call UI is collapsed into the footer while the call stays live. */
+  minimized: boolean;
+  elapsedMs: number;
+  /** Same listening / thinking / speaking phase as the call particle field. */
+  particlePhase: ParticlePhase;
+  activityLabel: string;
   startCall: (target: CrewCallTarget) => Promise<void>;
   endCall: () => void;
   holdCall: () => void;
   resumeCall: () => void;
+  minimizeCall: () => void;
+  expandCall: () => void;
 }
 
 const CrewCallContext = createContext<CrewCallContextValue | null>(null);
@@ -53,6 +64,7 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [minimized, setMinimized] = useState(false);
   const pausedDashboardVoiceRef = useRef(false);
   const startGuardRef = useRef(false);
   const lastAgentTextRef = useRef('');
@@ -69,7 +81,7 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
   const historySeededForSessionRef = useRef<string | null>(null);
 
   const callLive = phase === 'connecting' || phase === 'encoding' || phase === 'linked';
-  const callModalOpen = phase !== 'idle';
+  const callModalOpen = phase !== 'idle' && !minimized;
 
   const pushLine = useCallback((role: CrewCallTranscriptLine['role'], text: string) => {
     const raw = text.trim();
@@ -288,8 +300,19 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     if (kickoffTimerRef.current != null) window.clearTimeout(kickoffTimerRef.current);
   }, []);
 
+  const minimizeCall = useCallback(() => {
+    if (phase === 'idle' || phase === 'ending') return;
+    setMinimized(true);
+  }, [phase]);
+
+  const expandCall = useCallback(() => {
+    if (phase === 'idle') return;
+    setMinimized(false);
+  }, [phase]);
+
   const endCall = useCallback(() => {
     setPhase((prev) => (prev === 'idle' ? prev : 'ending'));
+    setMinimized(false);
     if (endingTimerRef.current) window.clearTimeout(endingTimerRef.current);
     endingTimerRef.current = window.setTimeout(() => {
       setPhase('idle');
@@ -299,6 +322,7 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       setTranscript([]);
       setHistoryHasMore(false);
       setElapsedMs(0);
+      setMinimized(false);
       lastAgentTextRef.current = '';
       runningSinceRef.current = null;
       accruedMsRef.current = 0;
@@ -358,8 +382,9 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     historySeededForSessionRef.current = null;
     suppressAgentTranscriptRef.current = false;
     setTarget(next);
+    setMinimized(false);
     setPhase('resolving');
-    pushLine('system', `Calling @${next.callsign}…`);
+    pushLine('system', `Calling ${next.displayName}…`);
 
     try {
       if (voice?.voiceActive) {
@@ -416,23 +441,49 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     }
   }, [phase, pushLine, voice, loadHistoryPage]);
 
+  const { particlePhase, label: activityLabel } = useMemo(
+    () => resolveCallParticlePhase(phase, comms, elapsedMs),
+    [phase, comms, elapsedMs],
+  );
+
   const value = useMemo<CrewCallContextValue>(() => ({
     phase,
     target,
     sessionId,
     isActive: phase !== 'idle' && phase !== 'failed' && phase !== 'ending',
     error,
+    minimized,
+    elapsedMs,
+    particlePhase,
+    activityLabel,
     startCall,
     endCall,
     holdCall,
     resumeCall,
-  }), [phase, target, sessionId, error, startCall, endCall, holdCall, resumeCall]);
+    minimizeCall,
+    expandCall,
+  }), [
+    phase,
+    target,
+    sessionId,
+    error,
+    minimized,
+    elapsedMs,
+    particlePhase,
+    activityLabel,
+    startCall,
+    endCall,
+    holdCall,
+    resumeCall,
+    minimizeCall,
+    expandCall,
+  ]);
 
   return (
     <CrewCallContext.Provider value={value}>
       {children}
       <CrewCallModal
-        open={phase !== 'idle'}
+        open={phase !== 'idle' && !minimized}
         phase={phase}
         target={target}
         error={error}
@@ -445,7 +496,15 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
         onEnd={endCall}
         onHold={holdCall}
         onResume={resumeCall}
+        onMinimize={minimizeCall}
         onRetry={target ? () => { void startCall(target); } : undefined}
+      />
+      {/* Crew calls use a separate voice WebSocket from the dashboard — must host
+          their own permission modal (including while the call UI is minimized). */}
+      <VoiceToolPermissionModal
+        open={Boolean(comms.session.permissionPrompt)}
+        prompt={comms.session.permissionPrompt}
+        onRespond={comms.session.respondToPermission}
       />
     </CrewCallContext.Provider>
   );

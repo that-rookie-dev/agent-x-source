@@ -29,7 +29,13 @@ import { getEngine, createAgent, destroyAgent, setCurrentClientSituation, hydrat
 import { runAgentTurnAsync, VOICE_TURN_TIMEOUT_MS, VOICE_TURN_MAX_MS, isCrewPrivateSessionRecord } from './chat-helpers.js';
 import { getVoiceService, resetVoiceService } from './voice-runtime.js';
 import { parseVoicePermissionIntent, type VoicePermissionIntent } from './voice-permission-intent.js';
-import { normalizeClientSituation, getAgentFilesDir, getLogger } from '@agentx/shared';
+import {
+  normalizeClientSituation,
+  getAgentFilesDir,
+  getLogger,
+  VOICE_PERMISSION_TIMEOUT_MS,
+  VOICE_PERMISSION_TIMEOUT_INSTRUCTION,
+} from '@agentx/shared';
 import type { ProviderId, QuestionnairePayload } from '@agentx/shared';
 import { normalizeVoiceAssistantContent } from './voice-speakable.js';
 import { refreshAgentPersona } from './chat-helpers.js';
@@ -46,8 +52,6 @@ export const DUPLEX_END_SILENCE_MS = 2_000;
 const DUPLEX_ERROR_COOLDOWN_MS = 8_000;
 /** PTT shorter than this is treated as accidental (mis-click). */
 const MIN_PTT_RECORDING_MS = 220;
-/** Auto-deny a voice permission prompt if the user doesn't respond in time. */
-const VOICE_PERMISSION_TIMEOUT_MS = 45_000;
 
 interface PendingVoicePermission {
   requestId: string;
@@ -231,6 +235,7 @@ async function resolveVoicePermission(
   ws: WebSocket,
   session: VoiceWsSession,
   intent: VoicePermissionIntent,
+  reason?: 'timeout' | 'user',
 ): Promise<boolean> {
   const pending = session.pendingPermission;
   if (!pending) return false;
@@ -238,9 +243,13 @@ async function resolveVoicePermission(
   const eng = getEngine();
   const agent = eng.agent;
   const choice = intent === 'approve_all' ? 'allow_once' : intent;
+  const timedOut = intent === 'deny' && reason === 'timeout';
 
   try {
-    if (intent === 'approve_all') {
+    if (timedOut) {
+      // Instructed denial — tool result tells the agent the action did not run.
+      agent?.respondToPermissionInstruction(pending.requestId, VOICE_PERMISSION_TIMEOUT_INSTRUCTION);
+    } else if (intent === 'approve_all') {
       agent?.respondToPermissionBatch('allow_once');
     } else {
       agent?.respondToPermission(pending.requestId, choice);
@@ -248,15 +257,22 @@ async function resolveVoicePermission(
   } catch { /* best-effort */ }
 
   clearPendingPermission(session);
-  ws.send(JSON.stringify({ type: 'permission_resolved', requestId: pending.requestId, choice: intent }));
+  ws.send(JSON.stringify({
+    type: 'permission_resolved',
+    requestId: pending.requestId,
+    choice: intent,
+    ...(timedOut ? { reason: 'timeout' } : {}),
+  }));
 
-  const spoken = intent === 'deny'
-    ? 'Denied. I will skip that step.'
-    : intent === 'allow_always'
-      ? 'Always allowed.'
-      : intent === 'approve_all'
-        ? 'Approved everything.'
-        : 'Allowed.';
+  const spoken = timedOut
+    ? 'No response — that action was cancelled.'
+    : intent === 'deny'
+      ? 'Denied. I will skip that step.'
+      : intent === 'allow_always'
+        ? 'Always allowed.'
+        : intent === 'approve_all'
+          ? 'Approved everything.'
+          : 'Allowed.';
   await speakSystemLine(session, spoken);
   return true;
 }
@@ -275,14 +291,12 @@ async function handleVoicePermissionRequired(
   await cancelActiveSynth(session);
   session.speaking = false;
 
+  // Server-side backstop (client modal also auto-denies at the same deadline).
   const timeoutTimer = setTimeout(() => {
     void (async () => {
       const pending = session.pendingPermission;
       if (!pending || pending.requestId !== req.requestId) return;
-      try { getEngine().agent?.respondToPermission(req.requestId, 'deny'); } catch { /* best-effort */ }
-      clearPendingPermission(session);
-      ws.send(JSON.stringify({ type: 'permission_resolved', requestId: req.requestId, choice: 'deny', reason: 'timeout' }));
-      await speakSystemLine(session, 'No response, so I skipped that step.');
+      await resolveVoicePermission(ws, session, 'deny', 'timeout');
     })();
   }, VOICE_PERMISSION_TIMEOUT_MS);
 
@@ -479,7 +493,8 @@ async function handleVoiceMessage(ws: WebSocket, data: WebSocket.RawData, isBina
           choice === 'allow_once' || choice === 'allow_always' || choice === 'deny' || choice === 'approve_all'
             ? choice
             : null;
-        if (intent) await resolveVoicePermission(ws, session, intent);
+        const reason = msg.reason === 'timeout' ? 'timeout' as const : 'user' as const;
+        if (intent) await resolveVoicePermission(ws, session, intent, reason);
       }
       break;
     case 'client_situation':

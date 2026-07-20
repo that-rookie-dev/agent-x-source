@@ -14,6 +14,7 @@ export * from './tokens.js';
 export * from './model-limits.js';
 export * from './commandcode-routing.js';
 export * from './messaging-permission.js';
+export * from './voice-permission.js';
 export * from './validation.js';
 export * from './text-sanitize.js';
 export * from './notification-body.js';

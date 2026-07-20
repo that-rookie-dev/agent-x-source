@@ -1,12 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import PsychologyIcon from '@mui/icons-material/Psychology';
-import { colors } from '../theme';
+import { alphaColor, colors } from '../theme';
 import { health, getAuthToken } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
 import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
+import { PARTICLE_PHASE_COLORS, type ParticlePhase } from './voice/VoiceParticleField';
+import { useCrewCallOptional } from './crew-call';
+import { formatCallDuration } from './crew-call/crew-call-theme';
 import { CORTEX_VIZ_ENABLED } from '../cortex/flags';
+
+function particlePhaseCss(phase: ParticlePhase): string {
+  const { r, g, b } = PARTICLE_PHASE_COLORS[phase];
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 /** Open the Neural Cortex visualization in its own window, handing the auth token over via URL hash. */
 function openCortexWindow(): void {
@@ -36,10 +45,13 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
   const voice = useVoiceOptional();
+  const crewCall = useCrewCallOptional();
   const commsCtx = useVoiceCommsOptional();
   const comms = commsCtx?.comms;
   const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+  const showMinimizedCall = Boolean(crewCall?.minimized && crewCall.phase !== 'idle' && crewCall.target);
+  const callActivityColor = particlePhaseCss(crewCall?.particlePhase ?? 'paused');
 
   // Derive voice status text from the dashboard comms session so the user can
   // see the exact voice state (listening/thinking/speaking) from any page.
@@ -115,6 +127,76 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         </span>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        {showMinimizedCall && crewCall?.target && (
+          <>
+            <Box
+              component="button"
+              type="button"
+              onClick={() => crewCall.expandCall()}
+              title={`${crewCall.activityLabel} — return to call`}
+              sx={{
+                appearance: 'none',
+                border: `1px solid ${alphaColor(callActivityColor, 0.55)}`,
+                bgcolor: alphaColor(callActivityColor, 0.1),
+                borderRadius: '999px',
+                px: 1,
+                py: 0.15,
+                m: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.6,
+                cursor: 'pointer',
+                color: callActivityColor,
+                fontFamily: 'inherit',
+                fontSize: 'inherit',
+                letterSpacing: '0.04em',
+                lineHeight: 1.2,
+                transition: 'color 0.2s, border-color 0.2s, background-color 0.2s, box-shadow 0.2s',
+                boxShadow: `0 0 8px ${alphaColor(callActivityColor, 0.28)}`,
+                '&:hover': {
+                  bgcolor: alphaColor(callActivityColor, 0.18),
+                },
+              }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  bgcolor: callActivityColor,
+                  boxShadow: `0 0 6px ${callActivityColor}`,
+                  transition: 'background-color 0.2s, box-shadow 0.2s',
+                }}
+              />
+              <PhoneInTalkIcon sx={{ fontSize: 12 }} />
+              <Box
+                component="span"
+                sx={{
+                  maxWidth: 120,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: colors.text.secondary,
+                }}
+              >
+                {crewCall.target.displayName}
+              </Box>
+              <Box
+                component="span"
+                sx={{
+                  fontVariantNumeric: 'tabular-nums',
+                  color: callActivityColor,
+                  minWidth: 34,
+                  transition: 'color 0.2s',
+                }}
+              >
+                {formatCallDuration(crewCall.elapsedMs)}
+              </Box>
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
         {showWakeIndicator && voice && (
           <>
             <Box

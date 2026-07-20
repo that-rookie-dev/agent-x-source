@@ -400,10 +400,14 @@ export function useVoiceSession(
     setPermissionPrompt(null);
   }, [stopTimer]);
 
-  const respondToPermission = useCallback((choice: VoicePermissionChoice) => {
-    clientRef.current?.respondToPermission(choice);
+  const respondToPermission = useCallback((
+    choice: VoicePermissionChoice,
+    opts?: { reason?: 'timeout' | 'user' },
+  ) => {
+    const requestId = permissionPrompt?.requestId;
+    clientRef.current?.respondToPermission(choice, { ...opts, requestId });
     setPermissionPrompt(null);
-  }, []);
+  }, [permissionPrompt?.requestId]);
 
   const shouldDiscardCapture = useCallback((heldMs: number, listenedMs: number, peakAudio: number) => {
     const effectiveMs = Math.max(heldMs, listenedMs);

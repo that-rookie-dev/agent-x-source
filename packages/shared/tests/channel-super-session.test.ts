@@ -5,8 +5,10 @@ import {
   isChannelSessionId,
   isSuperSessionId,
   parseChannelBindingFromSessionId,
+  resolveAutomationSessionScope,
   resolveFleetToolSessionScope,
 } from '../src/utils/channel-session.js';
+import { crewVoiceSessionId } from '../src/utils/crew-voice-session.js';
 
 describe('channel super session utils', () => {
   it('treats legacy and per-channel ids as super sessions', () => {
@@ -38,5 +40,13 @@ describe('channel super session utils', () => {
     expect(resolveFleetToolSessionScope(CHANNEL_SESSION_ID)).toBeUndefined();
     expect(resolveFleetToolSessionScope(channelSessionIdForBinding('telegram'))).toBeUndefined();
     expect(resolveFleetToolSessionScope('session-1')).toBe('session-1');
+  });
+
+  it('maps crew voice sessions to the parent text session for automations', () => {
+    const textId = 'crew-text-abc';
+    const voiceId = crewVoiceSessionId(textId);
+    expect(resolveAutomationSessionScope(voiceId)).toBe(textId);
+    expect(resolveAutomationSessionScope(textId)).toBe(textId);
+    expect(resolveAutomationSessionScope(channelSessionIdForBinding('telegram'))).toBeUndefined();
   });
 });

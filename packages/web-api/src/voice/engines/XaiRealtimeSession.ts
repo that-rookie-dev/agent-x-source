@@ -10,7 +10,13 @@ import type {
   VoiceConfig,
   VoiceSessionMode,
 } from '@agentx/shared';
-import { getAgentFilesDir, getLogger, isCrewVoiceSessionId } from '@agentx/shared';
+import {
+  getAgentFilesDir,
+  getLogger,
+  isCrewVoiceSessionId,
+  VOICE_PERMISSION_TIMEOUT_MS,
+  VOICE_PERMISSION_TIMEOUT_INSTRUCTION,
+} from '@agentx/shared';
 import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCrewPrivateIdentityPrompt, getPersonaStore } from '@agentx/engine';
 import type { VoiceEngineSession, VoiceEngineState } from './types.js';
 import { getEngine } from '../../engine.js';
@@ -43,7 +49,6 @@ import {
 const XAI_REALTIME_URL = 'wss://api.x.ai/v1/realtime';
 const VOICE_SAMPLE_RATE = 16_000;
 const OUTPUT_SAMPLE_RATE = 24_000;
-const PERMISSION_TIMEOUT_MS = 60_000;
 
 interface ToolCallItem {
   call_id: string;
@@ -706,13 +711,13 @@ export class XaiRealtimeSession implements VoiceEngineSession {
           argsSummary: argsSummary ?? '',
           ...(commandPreview ? { commandPreview } : {}),
         });
-        // Auto-deny if the user does not respond in time so the realtime turn doesn't hang.
+        // Auto-cancel if the user does not respond — tool result must not look like success.
         setTimeout(() => {
           if (this.pendingPermissions.has(requestId)) {
             this.pendingPermissions.delete(requestId);
-            resolve('deny');
+            resolve({ type: 'instruct', instruction: VOICE_PERMISSION_TIMEOUT_INSTRUCTION });
           }
-        }, PERMISSION_TIMEOUT_MS);
+        }, VOICE_PERMISSION_TIMEOUT_MS);
       });
     });
   }
@@ -1309,13 +1314,25 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   private handlePermissionResponse(msg: Record<string, unknown>): void {
     const requestId = String(msg.requestId ?? '');
     const choice = String(msg.choice ?? '');
-    const pending = this.pendingPermissions.get(requestId);
+    const timedOut = msg.reason === 'timeout';
+    // Prefer explicit requestId; fall back to the only pending prompt (single in-flight).
+    let pending = requestId ? this.pendingPermissions.get(requestId) : undefined;
+    if (!pending && this.pendingPermissions.size === 1) {
+      pending = this.pendingPermissions.values().next().value;
+    }
     if (!pending) return;
     let result: PermissionHandlerResult = 'deny';
-    if (choice === 'allow_once' || choice === 'approve_all') result = 'allow_once';
-    else if (choice === 'allow_always') result = 'allow_always';
+    if (timedOut && choice === 'deny') {
+      result = { type: 'instruct', instruction: VOICE_PERMISSION_TIMEOUT_INSTRUCTION };
+    } else if (choice === 'allow_once' || choice === 'approve_all') {
+      result = 'allow_once';
+    } else if (choice === 'allow_always') {
+      result = 'allow_always';
+    }
     pending.resolve(result);
-    this.pendingPermissions.delete(requestId);
+    for (const [id, entry] of this.pendingPermissions) {
+      if (entry === pending) this.pendingPermissions.delete(id);
+    }
   }
 
   private handleVoiceToggle(msg: Record<string, unknown>): void {
