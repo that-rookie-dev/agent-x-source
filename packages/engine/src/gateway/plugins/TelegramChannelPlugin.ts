@@ -958,8 +958,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'remember': {
         const text = args.join(' ');
         if (!text) return '❌ Usage: /remember <something to remember>';
-        this.agent.sauce.recordMemory(text, 'user');
-        return `✅ Remembered: "${text}"`;
+        return `✅ Noted. Important facts are captured automatically from our conversation.`;
       }
 
       case 'tools': {

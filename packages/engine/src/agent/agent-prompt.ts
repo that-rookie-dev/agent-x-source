@@ -30,13 +30,11 @@ import {
   createTaskPanelSection,
   createSessionNarrativeSection,
   createTurnFeedbackSection,
-  createSoulSection,
   createInstructionsSection,
-  createNeuralSection,
   createMemoryContextSection,
   createSystemOverrideSection,
   type SectionContext,
-} from '../secret-sauce/prompt-assembly/index.js';
+} from '../prompt/assembly/index.js';
 
 /** Slice of Agent required by the prompt registration helpers. */
 export interface PromptRegistrationContext {
@@ -108,8 +106,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
         .register(createSessionNarrativeSection(secCtx))
         .register(createTurnFeedbackSection(secCtx))
         .register(createUserSection(secCtx))
-        .register(createSoulSection(secCtx))
-        .register(createNeuralSection(secCtx))
         .register(createMemoryContextSection(secCtx))
         .register(createInstructionsSection(secCtx.scopePath));
     }
@@ -141,8 +137,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createMultiCrewSection(secCtx))
       .register(createCrewRosterGuideSection())
       .register(createUserSection(secCtx))
-      .register(createSoulSection(secCtx))
-      .register(createNeuralSection(secCtx))
       .register(createMemoryContextSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
     if (systemOverride) {
@@ -187,8 +181,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createSessionNarrativeSection(secCtx))
       .register(createTurnFeedbackSection(secCtx))
       .register(createTaskPanelSection())
-      .register(createSoulSection(secCtx))
-      .register(createNeuralSection(secCtx))
       .register(createMemoryContextSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
   }

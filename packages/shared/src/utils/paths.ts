@@ -12,10 +12,6 @@ export function getDbPath(): string {
   return join(getDataDir(), 'db', 'agentx.db');
 }
 
-export function getSecretSauceDir(): string {
-  return join(getDataDir(), 'secret-sauce');
-}
-
 export function getLogDir(): string {
   return join(getDataDir(), 'logs');
 }

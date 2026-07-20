@@ -68,7 +68,6 @@ async function main() {
     ...process.env,
     AGENTX_POSTGRES_CONNECTION_STRING: connectionString,
     AGENTX_UI_DIR: join(process.cwd(), 'packages', 'web-ui', 'dist'),
-    AGENTX_NEURON_DIR: join(process.cwd(), 'packages', 'web-neuron', 'dist'),
     PORT: '3333',
     NODE_ENV: 'production',
   };

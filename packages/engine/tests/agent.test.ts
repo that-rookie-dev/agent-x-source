@@ -15,11 +15,9 @@ const {
   mockEventBus,
   mockTokenTracker,
   mockErrorShield,
-  mockSauce,
-  mockSecretSauceMgr,
-  mockMemoryExtractor,
   mockSubAgentMgr,
   mockTaskMgr,
+  mockExtractMemories,
 } = vi.hoisted(() => {
   const createBus = () => ({
     emit: vi.fn(),
@@ -57,46 +55,6 @@ const {
     wrapAsync: vi.fn(<T>(op: () => Promise<T>, fallback: T) => op().catch(() => fallback)),
   });
 
-  const createSauceMgr = () => ({
-    buildSystemContext: vi.fn(() => ({
-      soul: '[SOUL]\nAgent-X\n[/SOUL]',
-      crew: '[CREW]\nDefault assistant\n[/CREW]',
-      memories: '',
-      diary: '',
-      full: '[SOUL]\nAgent-X\n[/SOUL]\n\n[CREW]\nDefault assistant\n[/CREW]',
-    })),
-    recordMemory: vi.fn(),
-    recordDiary: vi.fn(),
-    summarizer: {
-      needsSummarization: vi.fn(() => false),
-      buildMemorySummarizationPrompt: vi.fn(() => null),
-      buildDiarySummarizationPrompt: vi.fn(() => null),
-      storeMemorySummary: vi.fn(),
-      storeDiarySummary: vi.fn(),
-    },
-    identity: {
-      recordInteraction: vi.fn(),
-      setName: vi.fn(),
-      buildContext: vi.fn(() => ''),
-    },
-    memories: {
-      getRecentMemories: vi.fn(() => []),
-      addMemory: vi.fn(),
-      buildContext: vi.fn(() => ({ global: '', crew: '' })),
-    },
-    diary: {
-      getRecent: vi.fn(() => []),
-      addEntry: vi.fn(),
-      buildContext: vi.fn(() => ''),
-    },
-    soul: { buildContext: vi.fn(() => '') },
-    crew: { getMultiCrewSystemPrompt: vi.fn(() => '[MULTI_CREW]\nAgent-X\n[/MULTI_CREW]'), listEnabled: vi.fn(() => []) },
-  });
-
-  const createMemExtractor = () => ({
-    extract: vi.fn(() => Promise.resolve([] as Array<{ content: string; category: string }>)),
-  });
-
   const createSubAgentMgr = () => ({
     configure: vi.fn(),
     cancelAll: vi.fn(),
@@ -122,11 +80,9 @@ const {
     mockEventBus: createBus(),
     mockTokenTracker: createTracker(),
     mockErrorShield: createErrorShield(),
-    mockSecretSauceMgr: createSauceMgr(),
-    mockSauce: createSauceMgr(),
-    mockMemoryExtractor: createMemExtractor(),
     mockSubAgentMgr: createSubAgentMgr(),
     mockTaskMgr: createTaskMgr(),
+    mockExtractMemories: vi.fn(),
   };
 });
 
@@ -155,13 +111,13 @@ vi.mock('../src/agent/ErrorShield.js', () => ({
   ErrorShield: class { constructor() { return mockErrorShield; } },
 }));
 
-vi.mock('../src/secret-sauce/index.js', () => ({
-  SecretSauceManager: class { constructor() { return mockSecretSauceMgr; } },
-}));
-
-vi.mock('../src/secret-sauce/MemoryExtractor.js', () => ({
-  MemoryExtractor: class { constructor() { return mockMemoryExtractor; } },
-}));
+vi.mock('../src/agent/agent-memory.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/agent/agent-memory.js')>();
+  return {
+    ...actual,
+    extractMemories: (...args: Parameters<typeof actual.extractMemories>) => mockExtractMemories(...args),
+  };
+});
 
 vi.mock('../src/tools/builtin/subagent.js', () => ({
   setSubAgentManagerInstance: vi.fn(),
@@ -466,7 +422,7 @@ describe('Agent', () => {
 
       // extractMemories is fire-and-forget; give it a microtask tick
       await vi.waitFor(() => {
-        expect(mockMemoryExtractor.extract).toHaveBeenCalled();
+        expect(mockExtractMemories).toHaveBeenCalled();
       });
     });
 
@@ -788,23 +744,9 @@ describe('Agent', () => {
 
   // ─── endSession ─────────────────────────────────────────────────────
   describe('endSession', () => {
-    it('records interaction count and diary entry', () => {
+    it('clears context tracker without throwing', () => {
       const agent = createTestAgent();
-      // Add some user messages so diary entry is meaningful
       agent.addToHistory({ role: 'user', content: 'hello' });
-      agent.addToHistory({ role: 'assistant', content: 'hi' });
-      agent.addToHistory({ role: 'user', content: 'how are you' });
-
-      agent.endSession();
-
-      expect(mockSecretSauceMgr.identity.recordInteraction).toHaveBeenCalled();
-      expect(mockSecretSauceMgr.recordDiary).toHaveBeenCalled();
-    });
-
-    it('does not throw on errors', () => {
-      mockSecretSauceMgr.recordDiary.mockImplementationOnce(() => { throw new Error('diary error'); });
-      const agent = createTestAgent();
-
       expect(() => agent.endSession()).not.toThrow();
     });
   });

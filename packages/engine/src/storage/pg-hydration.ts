@@ -4,7 +4,7 @@ import type {
   StorableMessage,
   StorableTokenLog,
 } from '@agentx/shared';
-import type { SessionEvent, Crew, AgentPersonaConfig } from '@agentx/shared';
+import type { SessionEvent, Crew } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import type { CacheState } from './pg-helpers.js';
 
@@ -66,19 +66,6 @@ export async function hydrateEssentialCache(ctx: HydrationContext): Promise<void
 
     const crews = await ctx.pool.query('SELECT * FROM crews ORDER BY created_at ASC');
     ctx.cache.crews = crews.rows.map((row: Record<string, unknown>) => ctx.crewFromRow(row));
-
-    const persona = await ctx.pool.query('SELECT * FROM agent_persona LIMIT 1');
-    if (persona.rows[0]) {
-      const p = persona.rows[0] as Record<string, unknown>;
-      ctx.cache.persona = {
-        name: p['name'] as string,
-        description: p['description'] as string,
-        communicationStyle: p['communication_style'] as string,
-        decisionMaking: p['decision_making'] as string,
-        domainContext: p['domain_context'] as string,
-        traits: (() => { try { return JSON.parse((p['traits'] as string) || '[]') as string[]; } catch (error) { logger.warn('PG_STORAGE', `Failed to parse persona traits: ${error instanceof Error ? error.message : String(error)}`); return []; } })(),
-      } as AgentPersonaConfig;
-    }
 
     logger.info('PG_HYDRATE', `Essential cache loaded (${ctx.cache.sessions.size} sessions, lazy message load enabled)`);
   } catch (error) {
@@ -234,19 +221,6 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
     for (const row of taskSnapshots.rows) {
       const r = row as Record<string, unknown>;
       ctx.cache.taskSnapshots.set(r['session_id'] as string, r);
-    }
-    const personaId = '00000000-0000-0000-0000-000000000001';
-    const persona = await ctx.pool.query('SELECT * FROM agent_persona WHERE id = $1', [personaId]);
-    if (persona.rows.length > 0) {
-      const r = persona.rows[0] as Record<string, unknown>;
-      ctx.cache.persona = {
-        name: (r['name'] as string) ?? '',
-        description: (r['description'] as string) ?? '',
-        communicationStyle: (r['communication_style'] as string) ?? 'direct',
-        decisionMaking: (r['decision_making'] as string) ?? 'balanced',
-        domainContext: (r['domain_context'] as string) ?? '',
-        traits: (() => { try { return JSON.parse((r['traits'] as string) ?? '[]') as string[]; } catch (error) { logger.warn('PG_STORAGE', `Failed to parse persona traits: ${error instanceof Error ? error.message : String(error)}`); return []; } })(),
-      } as AgentPersonaConfig;
     }
   } catch (error) {
     logger.error('PG_HYDRATE_FAILED', error);

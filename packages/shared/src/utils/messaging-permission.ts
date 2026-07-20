@@ -27,5 +27,6 @@ export function normalizePermissionHandlerResult(result: PermissionHandlerResult
 
 export function formatPermissionInstructedToolOutput(instruction: string): string {
   const text = instruction.trim();
-  return text ? `[USER INSTRUCTION] ${text}` : '[USER INSTRUCTION] (empty)';
+  const body = text || '(empty)';
+  return `[PERMISSION DENIED — ACTION NOT PERFORMED] ${body}`;
 }

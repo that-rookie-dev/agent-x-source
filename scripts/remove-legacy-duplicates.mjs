@@ -56,14 +56,9 @@ const DUPLICATES = [
   ['post', '/api/rag/search'],
   ['delete', '/api/rag/documents/:id'],
   ['post', '/api/rag/clear'],
-  // secret-sauce.ts
-  ['get', '/api/secret-sauce'],
-  ['get', '/api/secret-sauce/:file'],
-  ['put', '/api/secret-sauce/:file'],
   // system.ts
   ['get', '/api/system/capabilities'],
   ['post', '/api/system/app-visibility'],
-  ['get', '/api/system/ingestion-governor'],
   ['get', '/api/setup/status'],
   ['post', '/api/setup/complete'],
   ['get', '/api/config'],

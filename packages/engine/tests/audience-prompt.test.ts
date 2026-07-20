@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRulesSection, createPersonaToneSection } from '../src/secret-sauce/prompt-assembly/sections.js';
+import { createRulesSection, createPersonaToneSection } from '../src/prompt/assembly/sections.js';
 
 describe('createRulesSection audience tone', () => {
   it('default Agent-X rules reference dynamic persona tone', () => {

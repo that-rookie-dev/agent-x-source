@@ -1,11 +1,12 @@
 import type { Agent } from '@agentx/engine';
-import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
+import { applyWebSearchConfigFromAgentConfig, getPersonaStore, isWebSearchAvailableForChat } from '@agentx/engine';
 import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage, TurnAttachment } from '@agentx/shared';
 import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
+import { propagateTelegramConnectedToAgents } from './channel-session-bridge.js';
 
 const SESSION_HYDRATE_TIMEOUT_MS = 3_000;
 
@@ -91,10 +92,7 @@ YOUR RESPONSIBILITIES:
 
 export function refreshAgentPersona(agent: Agent): void {
   try {
-    const eng = getEngine();
-    const store = eng.sessionManager.getStorageAdapter();
-    if (!store?.getPersona) return;
-    const persona = store.getPersona();
+    const persona = getPersonaStore().get();
     const current = agent.getPersona();
     if (JSON.stringify(persona) === JSON.stringify(current)) return;
     agent.applyPersona(persona);
@@ -308,6 +306,13 @@ export function runAgentTurnAsync(
     agent.setClientSituation(clientSituation);
   }
 
+  // Keep CHANNEL_FOCUS telegram status fresh for the desktop Agent-X session.
+  // Without this, a stale "NOT CONNECTED" prompt makes the model refuse Telegram
+  // delivery even when the bridge is live.
+  try {
+    propagateTelegramConnectedToAgents(getEngine());
+  } catch { /* best-effort */ }
+
   void agent.sendMessage(fullText, {
     ...(instruction ? { instruction } : {}),
     ...(retry ? { retry: true } : {}),
@@ -463,15 +468,6 @@ export function recordTurnFeedback(input: {
         agent?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
       } catch { /* best-effort */ }
     }
-    try {
-      agent?.recordTrial?.(input.sessionId, {
-        category: 'user_feedback',
-        action: input.turnSummary || 'assistant_turn',
-        result: input.rating === 'positive' ? 'success' : 'failure',
-        reward: input.rating === 'positive' ? 1 : -1,
-        metadata: { messageId: input.messageId, crewId: input.crewId, contextKind: input.contextKind },
-      });
-    } catch { /* best-effort neural sync */ }
   }
 
   try {

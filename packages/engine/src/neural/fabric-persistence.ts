@@ -56,7 +56,7 @@ export async function reEmbedAll(
         updated++;
       }
     } catch (e) {
-      getLogger().warn('MEMORY_FABRIC_RE_EMBED', `Batch re-embed failed: ${e instanceof Error ? e.message : e}`);
+      getLogger().warn('CORTEX_FABRIC_RE_EMBED', `Batch re-embed failed: ${e instanceof Error ? e.message : e}`);
       failed += rows.length;
     }
   }
@@ -117,6 +117,7 @@ export async function getNodesBySource(
   const { rows: nodes } = await ctx.pool.query<MemoryNode>(
     `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
             n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+            n.unit_type AS "unitType", n.provenance,
             n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
             COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
      FROM memory_nodes n

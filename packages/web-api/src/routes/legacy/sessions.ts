@@ -36,7 +36,7 @@ import {
   createCheckpointSchema,
   sessionMessagesQuerySchema,
 } from '../../validation.js';
-import { ensureSubscribed, broadcastBrainActivity } from '../../ws.js';
+import { ensureSubscribed } from '../../ws.js';
 import { handleClarificationRespond } from '../../clarification-resume.js';
 import { loadSessionResumeState } from '../../session-resume-state.js';
 import {
@@ -426,13 +426,6 @@ export function createSessionsRouter(): Router {
       );
       createAgent(undefined, session);
       ensureSubscribed();
-      // Broadcast session creation to the neural frontend.
-      broadcastBrainActivity({
-        type: 'session_created',
-        sessionId: session.id,
-        title: session.title || `Session ${session.id.slice(0, 8)}`,
-        timestamp: new Date().toISOString(),
-      });
       res.json({ sessionId: session.id });
     } catch (e: unknown) {
       getLogger().error('POST_API_SESSIONS', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'create-failed' });

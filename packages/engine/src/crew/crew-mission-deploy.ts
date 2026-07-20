@@ -1,5 +1,5 @@
 import type { Crew, CrewCreateInput } from '@agentx/shared';
-import type { CrewManager } from '../secret-sauce/CrewManager.js';
+import type { CrewManager } from '../crew/CrewManager.js';
 import type { Agent } from '../agent/Agent.js';
 import type { CrewMatchCandidate } from '@agentx/shared';
 import type { CrewMember } from '../agent/CrewOrchestrator.js';

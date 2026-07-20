@@ -1,16 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import LinearProgress from '@mui/material/LinearProgress';
 import Typography from '@mui/material/Typography';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import { VOICE_PERMISSION_TIMEOUT_MS } from '@agentx/shared/browser';
 import { COMMS_MONO, commsTheme } from './voice-comms-theme';
 import type { VoicePermissionPrompt, VoicePermissionChoice } from '../../voice/VoiceSessionClient';
 
 import { colors, alphaColor } from '../../theme';
 
+export interface VoicePermissionRespondOptions {
+  reason?: 'timeout' | 'user';
+}
+
 export interface VoicePermissionCardProps {
   prompt: VoicePermissionPrompt;
-  onRespond: (choice: VoicePermissionChoice) => void;
+  onRespond: (choice: VoicePermissionChoice, opts?: VoicePermissionRespondOptions) => void;
+  /** Defaults to shared VOICE_PERMISSION_TIMEOUT_MS (10s). */
+  timeoutMs?: number;
 }
 
 function riskColor(risk: string): string {
@@ -23,19 +31,53 @@ function riskColor(risk: string): string {
  * Voice-native permission prompt card. Shown as a centered modal whenever the
  * active voice engine needs the user to approve a tool call.
  */
-export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardProps) {
+export function VoicePermissionCard({
+  prompt,
+  onRespond,
+  timeoutMs = VOICE_PERMISSION_TIMEOUT_MS,
+}: VoicePermissionCardProps) {
+  const respondedRef = useRef(false);
+  const [remainingMs, setRemainingMs] = useState(timeoutMs);
+
+  const respond = (choice: VoicePermissionChoice, opts?: VoicePermissionRespondOptions) => {
+    if (respondedRef.current) return;
+    respondedRef.current = true;
+    onRespond(choice, opts ?? { reason: 'user' });
+  };
+
+  useEffect(() => {
+    respondedRef.current = false;
+    setRemainingMs(timeoutMs);
+    const started = Date.now();
+    const tick = window.setInterval(() => {
+      const left = Math.max(0, timeoutMs - (Date.now() - started));
+      setRemainingMs(left);
+      if (left <= 0) {
+        window.clearInterval(tick);
+        respond('deny', { reason: 'timeout' });
+      }
+    }, 50);
+    return () => window.clearInterval(tick);
+    // Re-arm only when a new permission request arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- respond closes over latest onRespond via respond()
+  }, [prompt.requestId, timeoutMs]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); onRespond('allow_once'); }
-      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); onRespond('allow_always'); }
-      else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') { e.preventDefault(); onRespond('deny'); }
+      if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); respond('allow_once'); }
+      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); respond('allow_always'); }
+      else if (e.key === 'n' || e.key === 'N' || e.key === 'Escape') { e.preventDefault(); respond('deny'); }
     };
     window.addEventListener('keydown', handler, true);
     return () => window.removeEventListener('keydown', handler, true);
-  }, [onRespond]);
+    // respond is stable enough via respondedRef; rebind when request changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt.requestId]);
 
   const toolLabel = prompt.tool.replace(/_/g, ' ').toUpperCase();
   const accent = riskColor(prompt.riskLevel);
+  const progress = Math.max(0, Math.min(100, (remainingMs / timeoutMs) * 100));
+  const secondsLeft = Math.ceil(remainingMs / 1000);
 
   return (
     <Box sx={{
@@ -59,7 +101,7 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
         <WarningAmberIcon sx={{ color: accent, fontSize: 28 }} />
-        <Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ fontFamily: COMMS_MONO, fontSize: '0.65rem', letterSpacing: '2px', color: commsTheme.textDim }}>
             PERMISSION REQUEST
           </Typography>
@@ -67,6 +109,15 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
             {prompt.riskLevel.toUpperCase()} RISK
           </Typography>
         </Box>
+        <Typography sx={{
+          fontFamily: COMMS_MONO,
+          fontSize: '0.7rem',
+          fontWeight: 700,
+          color: secondsLeft <= 3 ? commsTheme.error : commsTheme.textSecondary,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {secondsLeft}s
+        </Typography>
       </Box>
 
       <Typography sx={{
@@ -112,6 +163,31 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
         </Box>
       )}
 
+      <Box sx={{ mb: 2 }}>
+        <LinearProgress
+          variant="determinate"
+          value={progress}
+          sx={{
+            height: 4,
+            borderRadius: 1,
+            bgcolor: alphaColor(accent, 0.15),
+            '& .MuiLinearProgress-bar': {
+              bgcolor: secondsLeft <= 3 ? commsTheme.error : accent,
+              transition: 'transform 0.05s linear',
+            },
+          }}
+        />
+        <Typography sx={{
+          mt: 0.75,
+          fontFamily: COMMS_MONO,
+          fontSize: '0.5rem',
+          letterSpacing: '0.08em',
+          color: commsTheme.textDim,
+        }}>
+          No response cancels this request — the action will not run.
+        </Typography>
+      </Box>
+
       <Typography sx={{
         fontFamily: COMMS_MONO,
         fontSize: '0.55rem',
@@ -122,9 +198,9 @@ export function VoicePermissionCard({ prompt, onRespond }: VoicePermissionCardPr
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 1.5 }}>
-        <PermButton label="ALLOW (Y)" color={commsTheme.relayReady} onClick={() => onRespond('allow_once')} />
-        <PermButton label="ALWAYS (A)" color={commsTheme.text} onClick={() => onRespond('allow_always')} />
-        <PermButton label="DENY (N)" color={commsTheme.error} onClick={() => onRespond('deny')} />
+        <PermButton label="ALLOW (Y)" color={commsTheme.relayReady} onClick={() => respond('allow_once')} />
+        <PermButton label="ALWAYS (A)" color={commsTheme.text} onClick={() => respond('allow_always')} />
+        <PermButton label="DENY (N)" color={commsTheme.error} onClick={() => respond('deny')} />
       </Box>
     </Box>
   );

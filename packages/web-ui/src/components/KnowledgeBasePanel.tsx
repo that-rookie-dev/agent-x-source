@@ -8,6 +8,7 @@ import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import { PanelHeader } from './PanelHeader';
 import { useKnowledgeBase } from '../hooks/useKnowledgeBase';
+import { knowledgeBase, neuralCortex } from '../api';
 import { colors, alphaColor, MONO } from '../theme';
 
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
@@ -100,6 +101,14 @@ function statusColor(status: string): string {
 
 function isActiveStatus(status: string): boolean {
   return status !== 'ready' && status !== 'failed';
+}
+
+function formatIngestStatus(source: KnowledgeSource, detail?: string): string {
+  if (source.status === 'ready') return detail ?? 'Intel package indexed and online.';
+  if (source.status === 'failed') return source.error ?? detail ?? 'Ingest failed.';
+  if (detail) return detail;
+  const stage = PIPELINE.find((p) => p.matches.includes(source.status))?.label ?? 'PROCESSING';
+  return `${stage} in progress…`;
 }
 
 // ─── Shared tactical primitives ───
@@ -304,6 +313,20 @@ function StagePipeline({ source }: { source: KnowledgeSource }) {
               >
                 {stage.label}
               </Typography>
+              {stage.key === 'queue' && source.status === 'pending' && source.queuePosition != null && (
+                <Typography
+                  sx={{
+                    fontSize: '0.48rem',
+                    color,
+                    fontFamily: MONO,
+                    letterSpacing: 0.5,
+                    textAlign: 'center',
+                    mt: 0.25,
+                  }}
+                >
+                  #{source.queuePosition}
+                </Typography>
+              )}
             </Box>
             {i < PIPELINE.length - 1 && (
               <Box
@@ -323,11 +346,13 @@ function StagePipeline({ source }: { source: KnowledgeSource }) {
 
 function DossierMonitor({
   source,
+  statusDetail,
   onClose,
   onReprocess,
   onDelete,
 }: {
   source: KnowledgeSource;
+  statusDetail?: string;
   onClose: () => void;
   onReprocess: () => void;
   onDelete: () => void;
@@ -336,6 +361,24 @@ function DossierMonitor({
   const failed = source.status === 'failed';
   const ready = source.status === 'ready';
   const accent = statusColor(source.status);
+  const [seedDetail, setSeedDetail] = useState<string | undefined>();
+
+  useEffect(() => {
+    setSeedDetail(undefined);
+    let cancelled = false;
+    void knowledgeBase
+      .events(source.id)
+      .then((events) => {
+        const latest = events.at(-1);
+        if (!cancelled && latest?.detail) setSeedDetail(latest.detail);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [source.id]);
+
+  const statusLine = formatIngestStatus(source, statusDetail ?? seedDetail);
 
   return (
     <Box
@@ -543,6 +586,50 @@ function DossierMonitor({
             </Box>
           </Box>
         )}
+
+        <Box>
+          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: MONO, letterSpacing: 1.5, mb: 0.5 }}>
+            INGEST STATUS
+          </Typography>
+          <Box
+            sx={{
+              p: 1,
+              border: `1px solid ${colors.border.default}`,
+              borderRadius: 0.5,
+              bgcolor: colors.bg.primary,
+              minHeight: 40,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            <Typography
+              sx={{
+                fontSize: '0.68rem',
+                color: failed ? colors.accent.red : ready ? colors.accent.green : colors.text.secondary,
+                fontFamily: MONO,
+                lineHeight: 1.45,
+                wordBreak: 'break-word',
+              }}
+            >
+              {active && (
+                <Box
+                  component="span"
+                  sx={{
+                    display: 'inline-block',
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    bgcolor: accent,
+                    mr: 0.75,
+                    verticalAlign: 'middle',
+                    animation: 'kbPulse 1s ease-in-out infinite',
+                  }}
+                />
+              )}
+              {statusLine}
+            </Typography>
+          </Box>
+        </Box>
       </Box>
     </Box>
   );
@@ -673,6 +760,7 @@ export function KnowledgeBasePanel() {
     sources,
     loading,
     error,
+    ingestDetails,
     refresh,
     upload,
     deleteSource,
@@ -680,6 +768,7 @@ export function KnowledgeBasePanel() {
   } = useKnowledgeBase();
   const [dragOver, setDragOver] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [cortexDegraded, setCortexDegraded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const vaultScrollRef = useRef<HTMLDivElement>(null);
@@ -753,6 +842,13 @@ export function KnowledgeBasePanel() {
       setSelectedId(null);
     }
   }, [selectedId, sources]);
+
+  useEffect(() => {
+    void neuralCortex
+      .status()
+      .then((status) => setCortexDegraded(status.degraded === true))
+      .catch(() => setCortexDegraded(false));
+  }, []);
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: colors.bg.primary }}>
@@ -833,6 +929,25 @@ export function KnowledgeBasePanel() {
           </Box>
         )}
 
+        {cortexDegraded && (
+          <Box
+            sx={{
+              mb: 1.5,
+              p: 1,
+              border: `1px solid ${alphaColor(colors.accent.orange, 0.35)}`,
+              borderRadius: 0.5,
+              bgcolor: alphaColor(colors.accent.orange, 0.06),
+            }}
+          >
+            <Typography sx={{ fontFamily: MONO, fontSize: '0.55rem', color: colors.accent.orange, letterSpacing: 1.5, mb: 0.25 }}>
+              NEURAL CORTEX DEGRADED
+            </Typography>
+            <Typography sx={{ fontFamily: MONO, fontSize: '0.65rem', color: colors.accent.orange, wordBreak: 'break-word' }}>
+              Semantic embeddings unavailable — running n-gram fallback. Knowledge Base search quality may be reduced until the embedding model is downloaded.
+            </Typography>
+          </Box>
+        )}
+
         <TacticalDropZone dragOver={dragOver} onClick={() => fileInputRef.current?.click()} />
         <input
           ref={fileInputRef}
@@ -851,6 +966,7 @@ export function KnowledgeBasePanel() {
             <SectionHeader label="SOURCE DOSSIER" />
             <DossierMonitor
               source={selectedSource}
+              statusDetail={ingestDetails[selectedSource.id]}
               onClose={() => setSelectedId(null)}
               onReprocess={() => void reprocess(selectedSource.id)}
               onDelete={() => {

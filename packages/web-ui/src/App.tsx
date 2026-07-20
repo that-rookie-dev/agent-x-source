@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -12,6 +12,10 @@ import { SetupWizard } from './pages/SetupWizard';
 import { Login } from './pages/Login';
 import { Console } from './pages/Console';
 import { DesktopStartupPermissions } from './components/DesktopStartupPermissions';
+import { CORTEX_VIZ_ENABLED } from './cortex/flags';
+
+// Lazy — keeps PixiJS out of the main bundle; only loads when the cortex window opens.
+const CortexPage = lazy(() => import('./cortex/CortexPage'));
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { authState } = useApp();
@@ -98,6 +102,21 @@ export function App() {
         <Route path="/console/:panel" element={<AuthGuard><Console /></AuthGuard>} />
         <Route path="/console/chat/:sessionId" element={<AuthGuard><Console /></AuthGuard>} />
         <Route path="/knowledge" element={<AuthGuard><Navigate to="/console/knowledge-base" replace /></AuthGuard>} />
+        <Route path="/cortex" element={
+          CORTEX_VIZ_ENABLED ? (
+            <AuthGuard>
+              <Suspense fallback={
+                <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: '#04050d' }}>
+                  <CircularProgress size={32} sx={{ color: '#a78bfa' }} />
+                </Box>
+              }>
+                <CortexPage />
+              </Suspense>
+            </AuthGuard>
+          ) : (
+            <Navigate to="/" replace />
+          )
+        } />
         <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </CrewCallProvider>

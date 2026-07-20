@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createChatMarkdownSection } from '../src/secret-sauce/prompt-assembly/sections.js';
+import { createChatMarkdownSection } from '../src/prompt/assembly/sections.js';
 
 describe('createChatMarkdownSection', () => {
   it('exports static chat markdown instructions', async () => {

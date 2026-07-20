@@ -4,6 +4,7 @@ import {
   getBuiltinPlugin,
   getActiveTelegramBridge,
   resolveTelegramOutboundChatId,
+  getPersonaStore,
 } from '@agentx/engine';
 import type { AgentXConfig, NotificationChannelsConfig, TelegramDiscoveredChat } from '@agentx/shared';
 import { parseAllowedUserIds } from '@agentx/shared';
@@ -307,6 +308,10 @@ export async function startTelegramInbound(token: string): Promise<void> {
       runningPlugin.setOwnerClaimHandler(claimOwner);
       runningPlugin.rewirePermissionHandling();
       getLogger().info('CHANNELS', 'Telegram inbound bridge already running — rewired agent + allowlist');
+      try {
+        const { propagateTelegramConnectedToAgents } = await import('../channel-session-bridge.js');
+        propagateTelegramConnectedToAgents(eng);
+      } catch { /* best-effort */ }
       return;
     }
   }
@@ -336,6 +341,10 @@ export async function startTelegramInbound(token: string): Promise<void> {
   } catch (e) {
     getLogger().warn('CHANNELS', `Telegram permission rewire failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+  try {
+    const { propagateTelegramConnectedToAgents } = await import('../channel-session-bridge.js');
+    propagateTelegramConnectedToAgents(eng);
+  } catch { /* best-effort */ }
   getLogger().info('CHANNELS', 'Telegram inbound bridge started');
 }
 
@@ -380,7 +389,7 @@ export async function sendTelegramGreeting(overrides?: {
   syncChannelSuperSessionContext(eng, 'telegram');
 
   const nonce = randomUUID().slice(0, 8);
-  const persona = eng.storageAdapter.getPersona?.();
+  const persona = getPersonaStore().get();
   const agentName = persona?.name ?? 'Agent-X';
   let greeting: string;
   try {

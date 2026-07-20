@@ -99,6 +99,10 @@ export {
   formatPermissionInstructedToolOutput,
 } from './utils/messaging-permission.js';
 export type { PermissionHandlerResult, PermissionInstructResult } from './utils/messaging-permission.js';
+export {
+  VOICE_PERMISSION_TIMEOUT_MS,
+  VOICE_PERMISSION_TIMEOUT_INSTRUCTION,
+} from './utils/voice-permission.js';
 
 export {
   CHART_P0_TYPES,
@@ -151,14 +155,14 @@ export type { DeriveMarkdownTitleInput } from './utils/markdown-title.js';
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 
 export {
-  NEURAL_BRAIN_MIN_RAM_GB,
+  NEURAL_CORTEX_BGE_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
   VOICE_WARMUP_MIN_RAM_GB,
   getSystemMemoryGB,
-  isNeuralBrainSupported,
   isLocalModelSupported,
   isVoiceWarmupSupported,
   buildPublicSystemCapabilities,
+  resolveNeuralCortexEmbeddingTier,
 } from './utils/system-capabilities.js';
 export type { PublicSystemCapabilities } from './utils/system-capabilities.js';
 
@@ -183,6 +187,7 @@ export {
   isChannelSessionId,
   isSuperSessionId,
   resolveFleetToolSessionScope,
+  resolveAutomationSessionScope,
 } from './utils/channel-session.js';
 export {
   CHANNEL_COVERED_MCP_INTEGRATION_IDS,
@@ -208,6 +213,13 @@ export {
   resolveMemoryFabricWriteSessionId,
   resolveMemoryFabricSearchSessionFilter,
 } from './utils/memory-fabric-scope.js';
+
+export {
+  crewParticipationMode,
+  allowsCrewInvolvement,
+  deniesAutonomousCrewTools,
+} from './utils/crew-session-policy.js';
+export type { CrewParticipationMode, CrewInvolvementVia } from './utils/crew-session-policy.js';
 
 export {
   generateAxId,

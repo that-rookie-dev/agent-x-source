@@ -71,11 +71,6 @@ export class DeferredStorageAdapter implements StorageAdapter {
   }
   deleteCrew(): void {}
   async flushWrites(): Promise<void> {}
-  getPersona() {
-    return null;
-  }
-  setPersona(): void {}
-
   clearAll(): void {}
   close(): void {}
 }

@@ -1,4 +1,5 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
+import { deniesAutonomousCrewTools } from '@agentx/shared';
 import type { Agent } from '../../agent/Agent.js';
 import type { CrewMember } from '../../agent/CrewOrchestrator.js';
 import { assessCrewNeed, isGeneralKnowledgeQuery } from '../../agent/crew-auto-compose.js';
@@ -33,6 +34,13 @@ export async function spawnCrewWorkers(
 
   if (!task) {
     return { success: false, output: 'task is required', error: 'MISSING_PARAMS' };
+  }
+  if (deniesAutonomousCrewTools(context.contextKind, context.sessionId)) {
+    return {
+      success: false,
+      output: 'Crew tools are disabled in this session. Use @mention or the crew suggestion picker in a group session, or open a private chat with a specialist.',
+      error: 'CREW_SESSION_POLICY',
+    };
   }
   if (!agentInstance) {
     return { success: false, output: 'Crew mission orchestrator not available', error: 'NOT_CONFIGURED' };

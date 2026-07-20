@@ -5,208 +5,7 @@ import { validateWebSocketConnection } from './auth.js';
 import { registerWebSocketRoute } from './ws-upgrade-router.js';
 import { getLogger, stripToolNoise, appendStreamText, repairStreamTextGlitches, type MessagePart, attachDeepSearchPartsFromTools, attachChartPartsFromTools, deepSearchBundleFromMetadata, upsertDeepSearchPart } from '@agentx/shared';
 import type { DeepSearchProgress, EngineEvent, EventHandler, Message, MessageMetadata, NormalizedAttachment } from '@agentx/shared';
-import { MemoryFabric, MemoryIngestionService as MemoryService, TtlCache } from '@agentx/engine';
-import { buildDistillationGenerator, buildGraphRagGenerator } from './distillation-generator.js';
-
-let localEmbedder: import('@agentx/engine').OnnxEmbeddingProvider | null = null;
-async function getEmbedder() {
-  if (localEmbedder) return localEmbedder;
-  try {
-    const { OnnxEmbeddingProvider } = await import('@agentx/engine');
-    localEmbedder = new OnnxEmbeddingProvider();
-    return localEmbedder;
-  } catch (e) {
-    getLogger().warn('EMBEDDING', `Failed to initialize embedder: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
-let memoryService: MemoryService | null = null;
-let memoryServiceConfigHash: string | null = null;
-
-function getLocalModelConfigHash(): string {
-  try {
-    const cfg = getEngine().configManager.load();
-    return JSON.stringify({
-      localModel: cfg.localModel,
-      activeProvider: cfg.provider.activeProvider,
-      activeModel: cfg.provider.activeModel,
-    });
-  } catch {
-    return '';
-  }
-}
-
-async function getMemoryService(): Promise<MemoryService | null> {
-  const fabric = getMemoryFabric();
-  if (!fabric) return null;
-  const pool = fabric.getPool();
-  if (!pool) return null;
-
-  const currentHash = getLocalModelConfigHash();
-  if (memoryService && memoryServiceConfigHash === currentHash) {
-    return memoryService;
-  }
-
-  const embedder = await getEmbedder();
-  const generate = await buildGraphRagGenerator() ?? await buildDistillationGenerator();
-  getLogger().info('GRAPHRAG', `getMemoryService: generate=${generate ? 'OK' : 'NULL'}, embedder=${embedder ? 'OK' : 'NULL'}`);
-  memoryService = new MemoryService(pool, embedder, generate ?? undefined);
-  // Broadcast neuron_fired events to the neural frontend in real-time.
-  memoryService.onNeuronFired = (nodeId: string) => {
-    broadcastBrainActivity({
-      type: 'neuron_fired',
-      nodeId,
-      timestamp: new Date().toISOString(),
-    });
-  };
-  memoryServiceConfigHash = currentHash;
-  return memoryService;
-}
-
-interface DistillJob {
-  sessionId: string;
-  text: string;
-  sourceId: string;
-  hubId: string;
-}
-
-const distillationQueue: DistillJob[] = [];
-const MAX_DISTILLATION_QUEUE = 50;
-let distillationRunning = false;
-
-async function processDistillationQueue(): Promise<void> {
-  if (distillationRunning) return;
-  distillationRunning = true;
-  try {
-    const service = await getMemoryService();
-    if (!service) {
-      getLogger().warn('DISTILLATION', 'processDistillationQueue: getMemoryService returned null, clearing queue');
-      distillationQueue.length = 0;
-      return;
-    }
-    getLogger().info('DISTILLATION', `processDistillationQueue: service ready, hasGenerate=${service.extractor.hasGenerate()}, queue=${distillationQueue.length}`);
-    while (distillationQueue.length > 0) {
-      const job = distillationQueue.shift();
-      if (!job) continue;
-      try {
-        // Broadcast distillation start event
-        broadcastBrainActivity({
-          type: 'distillation_started',
-          sessionId: job.sessionId,
-          timestamp: new Date().toISOString(),
-        });
-
-        const result = await service.ingest({
-          text: job.text,
-          extract: true,
-          embed: true,
-          category: 'semantic',
-          sessionId: job.sessionId,
-          sourceId: job.sourceId,
-        });
-        getLogger().info('DISTILLATION', `Session ${job.sessionId.slice(0,8)}: extracted ${result.nodes.length} nodes, ${result.edges.length} edges from ${job.text.length} chars`);
-        for (const node of result.nodes) {
-          broadcastBrainActivity({
-            type: 'neuron_created',
-            nodeId: node.id,
-            label: node.label,
-            category: node.category,
-            content: node.content,
-            sessionId: node.sessionId ?? job.sessionId,
-            x: node.x ?? null,
-            y: node.y ?? null,
-            timestamp: new Date().toISOString(),
-          });
-        }
-        for (const edge of result.edges) {
-          broadcastBrainActivity({
-            type: 'synapse_bound',
-            edgeId: edge.id,
-            sourceNodeId: edge.sourceNodeId,
-            targetNodeId: edge.targetNodeId,
-            relationshipType: edge.relationshipType,
-            weight: edge.weight,
-            timestamp: new Date().toISOString(),
-          });
-        }
-
-        // Link orphan nodes (no edges) to the session hub so they are
-        // discoverable in graph traversal and visualization. Without this,
-        // extracted nodes that aren't part of any edge become permanently
-        // isolated — the graph has no way to reach them.
-        const connectedNodeIds = new Set<string>();
-        for (const edge of result.edges) {
-          connectedNodeIds.add(edge.sourceNodeId);
-          connectedNodeIds.add(edge.targetNodeId);
-        }
-        for (const node of result.nodes) {
-          if (connectedNodeIds.has(node.id)) continue;
-          // This node has no edges — anchor it to the hub with a weak weight
-          // so it's discoverable but doesn't dominate visualization.
-          try {
-            const anchor = await service.bindEdge({
-              sourceNodeId: job.hubId,
-              targetNodeId: node.id,
-              relationshipType: 'RELATED_TO',
-              weight: 0.1,
-            });
-            broadcastBrainActivity({
-              type: 'synapse_bound',
-              edgeId: anchor.id,
-              sourceNodeId: anchor.sourceNodeId,
-              targetNodeId: anchor.targetNodeId,
-              relationshipType: anchor.relationshipType,
-              weight: anchor.weight,
-              timestamp: new Date().toISOString(),
-            });
-          } catch { /* best-effort */ }
-        }
-
-        // Broadcast distillation complete event
-        broadcastBrainActivity({
-          type: 'distillation_complete',
-          sessionId: job.sessionId,
-          nodesCreated: result.nodes.length,
-          edgesCreated: result.edges.length,
-          timestamp: new Date().toISOString(),
-        });
-
-        // Broadcast cluster layout update so the frontend refetches positions
-        // and discovers any new nodes/edges from the distillation.
-        if (result.nodes.length > 0 || result.edges.length > 0) {
-          broadcastBrainActivity({
-            type: 'cluster_layout_updated',
-            epoch: Date.now(),
-            count: result.nodes.length,
-            timestamp: new Date().toISOString(),
-          });
-        }
-      } catch (e) {
-        getLogger().warn('DISTILLATION', e instanceof Error ? e.message : String(e));
-        // Broadcast distillation error event
-        broadcastBrainActivity({
-          type: 'distillation_error',
-          sessionId: job.sessionId,
-          error: e instanceof Error ? e.message : String(e),
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-  } catch (e) {
-    getLogger().error('DISTILLATION', `Memory service unavailable: ${e instanceof Error ? e.message : String(e)}`);
-    // Clear queue if service is completely unavailable
-    distillationQueue.length = 0;
-  } finally {
-    distillationRunning = false;
-  }
-}
-
-function enqueueDistillation(job: DistillJob): void {
-  if (distillationQueue.length >= MAX_DISTILLATION_QUEUE) return;
-  distillationQueue.push(job);
-  void processDistillationQueue();
-}
+import { MemoryFabric } from '@agentx/engine';
 
 interface PartRecord {
   type: string;
@@ -340,104 +139,8 @@ function getMemoryFabric(): MemoryFabric | null {
   return new MemoryFabric(pool);
 }
 
-const sessionHubCache = new TtlCache<{ sourceId: string; hubId: string }>(24 * 60 * 60 * 1000, 500);
-
-async function getSessionHub(sessionId: string, fabric: MemoryFabric): Promise<{ sourceId: string; hubId: string }> {
-  const cached = sessionHubCache.get(sessionId);
-  if (cached) return cached;
-
-  // Check if a hub already exists in the DB (survives server restarts).
-  const existingNodes = await fabric.findNodesBySessionAndCategory(sessionId, 'episodic');
-  if (existingNodes.length > 0) {
-    const existing = existingNodes[0]!;
-    // Find the source for this hub.
-    let sourceId = existing.sourceId;
-    if (!sourceId) {
-      const source = await fabric.createSource(`Session ${sessionId}`, 'chat_session', sessionColor(sessionId));
-      sourceId = source.id;
-    }
-    const value = { sourceId, hubId: existing.id };
-    sessionHubCache.set(sessionId, value);
-    return value;
-  }
-
-  const source = await fabric.createSource(`Session ${sessionId}`, 'chat_session', sessionColor(sessionId));
-  const hub = await fabric.createNode({
-    label: `Session ${sessionId}`,
-    category: 'episodic',
-    content: `Conversation session ${sessionId}`,
-    sourceId: source.id,
-    sessionId,
-  });
-  broadcastBrainActivity({
-    type: 'neuron_created',
-    nodeId: hub.id,
-    label: hub.label,
-    category: hub.category,
-    content: hub.content,
-    sessionId,
-    x: hub.x ?? null,
-    y: hub.y ?? null,
-    timestamp: new Date().toISOString(),
-  });
-  const value = { sourceId: source.id, hubId: hub.id };
-  sessionHubCache.set(sessionId, value);
-  return value;
-}
-
-function sessionColor(sessionId: string): string {
-  const colors = ['#ff4d4d', '#4da6ff', '#ffd24d', '#4dff88', '#d24dff', '#ff8c4d', '#4dffea', '#ff4da6'];
-  let hash = 0;
-  for (let i = 0; i < sessionId.length; i++) hash = ((hash << 5) - hash) + sessionId.charCodeAt(i);
-  return colors[Math.abs(hash) % colors.length] ?? '#ffffff';
-}
-
-// Pending user message per session — when the assistant response arrives, we
-// pair them so the LLM extraction prompt sees the full Q&A context.
-const pendingUserMessages = new Map<string, string>();
-
-async function ingestConversationMemory(sessionId: string, role: 'user' | 'assistant', text: string): Promise<void> {
-  getLogger().info('MEMORY_INGEST', `ingestConversationMemory: session=${sessionId.slice(0,8)}, role=${role}, textLen=${text.length}`);
-  // Broadcast message activity to the neural frontend for live chat visualization.
-  broadcastBrainActivity({
-    type: 'message_activity',
-    sessionId,
-    role,
-    textLength: text.length,
-    timestamp: new Date().toISOString(),
-  });
-
-  const fabric = getMemoryFabric();
-  if (!fabric) return;
-  try {
-    const hub = await getSessionHub(sessionId, fabric);
-
-    if (role === 'user') {
-      // Stash the user message — it will be paired with the assistant response.
-      pendingUserMessages.set(sessionId, text);
-      // Don't ingest the user message alone — it will be paired with the
-      // assistant response for full context extraction. Solo ingestion of
-      // short user messages like "continue" or "yes" produces garbage nodes.
-      return;
-    }
-
-    // Assistant response — pair with the pending user message for full context.
-    const userMsg = pendingUserMessages.get(sessionId);
-    pendingUserMessages.delete(sessionId);
-
-    const combinedText = userMsg
-      ? `user: ${userMsg}\n\nassistant: ${text}`
-      : `assistant: ${text}`;
-
-    enqueueDistillation({
-      sessionId,
-      text: combinedText,
-      sourceId: hub.sourceId,
-      hubId: hub.hubId,
-    });
-  } catch (e) {
-    getLogger().warn('MEMORY_INGEST', e instanceof Error ? e.message : String(e));
-  }
+async function ingestConversationMemory(_sessionId: string, _role: 'user' | 'assistant', _text: string): Promise<void> {
+  /* Chat memory is handled by ChatTurnMemoryIngester in the Agent — WS distillation removed. */
 }
 
 export function setupWebSocket(server: Server): void {
@@ -682,36 +385,6 @@ export function broadcast(data: Record<string, unknown>): void {
       client.send(payload);
     }
   });
-}
-
-export type BrainActivityEvent =
-  | { type: 'neuron_created'; nodeId: string; label: string; category: string; content: string; sessionId?: string | null; x: number | null; y: number | null; sourceColor?: string; timestamp: string }
-  | { type: 'synapse_bound'; edgeId: string; sourceNodeId: string; targetNodeId: string; relationshipType: string; weight: number; timestamp: string }
-  | { type: 'neuron_fired'; nodeId: string; timestamp: string }
-  | { type: 'neuron_decayed'; nodeId: string; status: string; timestamp: string }
-  | { type: 'cluster_layout_updated'; epoch: number; count: number; timestamp: string }
-  | { type: 'distillation_started'; sessionId: string; timestamp: string }
-  | { type: 'distillation_complete'; sessionId: string; nodesCreated: number; edgesCreated: number; timestamp: string }
-  | { type: 'distillation_error'; sessionId: string; error: string; timestamp: string }
-  | { type: 'session_created'; sessionId: string; title: string; timestamp: string }
-  | { type: 'message_activity'; sessionId: string; role: 'user' | 'assistant'; textLength: number; timestamp: string };
-
-let brainActivityBatch: BrainActivityEvent[] = [];
-let brainActivityFlushTimer: ReturnType<typeof setTimeout> | null = null;
-const BRAIN_ACTIVITY_COALESCE_MS = 100;
-
-export function broadcastBrainActivity(event: BrainActivityEvent): void {
-  brainActivityBatch.push(event);
-  if (!brainActivityFlushTimer) {
-    brainActivityFlushTimer = setTimeout(() => {
-      const events = brainActivityBatch;
-      brainActivityBatch = [];
-      brainActivityFlushTimer = null;
-      if (events.length > 0) {
-        broadcast({ type: 'brain_activity_batch', events });
-      }
-    }, BRAIN_ACTIVITY_COALESCE_MS);
-  }
 }
 
 export function unsubscribeAgent(): void {
@@ -1045,11 +718,6 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
 }
 
 export function shutdownWebSocket(): void {
-  if (brainActivityFlushTimer) {
-    clearTimeout(brainActivityFlushTimer);
-    brainActivityFlushTimer = null;
-  }
-  brainActivityBatch = [];
   if (wss) {
     for (const client of wss.clients) {
       client.terminate();
@@ -1068,7 +736,7 @@ export function ensureSubscribed(): void {
   subscribeToAgent(agent);
 }
 
-export function broadcastKnowledgeSourceStatus(payload: {
+export function broadcastKnowledgeBaseSourceStatus(payload: {
   sourceId: string;
   status: string;
   progress: number;
@@ -1076,24 +744,45 @@ export function broadcastKnowledgeSourceStatus(payload: {
   error?: string;
 }): void {
   broadcast({
-    type: 'knowledge_source_status',
+    type: 'knowledge_base_source_status',
     ...payload,
     timestamp: new Date().toISOString(),
   });
 }
 
+export function broadcastKnowledgeBaseSourceReady(payload: { sourceId: string }): void {
+  broadcast({
+    type: 'knowledge_base_source_ready',
+    ...payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+export function broadcastKnowledgeBaseSourceFailed(payload: { sourceId: string; error: string }): void {
+  broadcast({
+    type: 'knowledge_base_source_failed',
+    ...payload,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** @deprecated Use broadcastKnowledgeBaseSourceStatus */
+export function broadcastKnowledgeSourceStatus(payload: {
+  sourceId: string;
+  status: string;
+  progress: number;
+  detail?: string;
+  error?: string;
+}): void {
+  broadcastKnowledgeBaseSourceStatus(payload);
+}
+
+/** @deprecated Use broadcastKnowledgeBaseSourceReady */
 export function broadcastKnowledgeSourceReady(payload: { sourceId: string }): void {
-  broadcast({
-    type: 'knowledge_source_ready',
-    ...payload,
-    timestamp: new Date().toISOString(),
-  });
+  broadcastKnowledgeBaseSourceReady(payload);
 }
 
+/** @deprecated Use broadcastKnowledgeBaseSourceFailed */
 export function broadcastKnowledgeSourceFailed(payload: { sourceId: string; error: string }): void {
-  broadcast({
-    type: 'knowledge_source_failed',
-    ...payload,
-    timestamp: new Date().toISOString(),
-  });
+  broadcastKnowledgeBaseSourceFailed(payload);
 }

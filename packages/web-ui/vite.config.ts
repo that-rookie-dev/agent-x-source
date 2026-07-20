@@ -48,6 +48,10 @@ export default defineConfig({
           if (id.includes('node_modules/recharts') || id.includes('node_modules/d3-')) {
             return 'charts';
           }
+          // Only referenced by the lazy-loaded /cortex page — keep out of the main vendor bundle.
+          if (id.includes('node_modules/pixi.js') || id.includes('node_modules/@pixi/')) {
+            return 'pixi';
+          }
           if (id.includes('node_modules/@mui/')) {
             return 'mui';
           }

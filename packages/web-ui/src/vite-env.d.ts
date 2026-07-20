@@ -6,7 +6,8 @@ interface AgentXDesktopBridge {
   isDesktop: boolean;
   totalMemoryGB: number;
   localModelSupported: boolean;
-  neuralBrainSupported: boolean;
+  cortexReady: boolean;
+  cortexDegraded: boolean;
   styleTtsSupported: boolean;
   voiceWarmupSupported: boolean;
   minimize: () => void;

@@ -11,7 +11,7 @@ import {
   type Session,
   type SessionResumeState,
 } from '@agentx/shared';
-import { setChannelInboundAgentResolver, type Agent } from '@agentx/engine';
+import { setChannelInboundAgentResolver, getNotificationChannelStatus, type Agent } from '@agentx/engine';
 import { getTelegramInboundStatus, getTelegramRuntimeHints } from './channels-sync.js';
 import { ensureChannelAgent, getEngine, syncChannelSuperSessionContext } from './engine.js';
 
@@ -128,14 +128,25 @@ export function resolveBoundSessionForChannel(
   return resolveUiSessionForChannel(eng);
 }
 
-export function isTelegramChannelOperational(_eng: ReturnType<typeof getEngine>): boolean {
+export function isTelegramChannelOperational(eng: ReturnType<typeof getEngine>): boolean {
   const status = getTelegramInboundStatus();
-  return Boolean(status.inboundReady && status.bridgeRunning);
+  if (status.inboundReady && status.bridgeRunning) return true;
+  // Outbound-ready (token + linked chat) is enough for scheduled pings / send tools,
+  // even if the inbound bridge flag briefly lags after restart.
+  try {
+    const cfg = eng.configManager.load();
+    const notify = getNotificationChannelStatus(cfg, getTelegramRuntimeHints());
+    return Boolean(notify.telegram.configured && notify.telegram.enabled);
+  } catch {
+    return false;
+  }
 }
 
 export function propagateTelegramConnectedToAgents(eng: ReturnType<typeof getEngine>): void {
   const operational = isTelegramChannelOperational(eng);
-  const chatIdRaw = eng.configManager.load().channels?.telegram?.chatId;
+  const chatIdRaw = eng.configManager.load().channels?.telegram?.chatId
+    ?? getTelegramRuntimeHints().telegramChatId
+    ?? null;
   const chatId = chatIdRaw ? Number(chatIdRaw) : null;
   const agents: Agent[] = [];
   const seen = new Set<Agent>();

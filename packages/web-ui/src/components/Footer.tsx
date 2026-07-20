@@ -1,14 +1,33 @@
 import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
-import { colors } from '../theme';
-import { health } from '../api';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import { alphaColor, colors } from '../theme';
+import { health, getAuthToken } from '../api';
 import { cachedApiCall } from '../perf/api-cache';
-import { useCapabilitiesReady } from '../hooks/useSystemCapabilities';
 import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
-import { useAppCore } from '../store/AppContext';
+import { PARTICLE_PHASE_COLORS, type ParticlePhase } from './voice/VoiceParticleField';
+import { useCrewCallOptional } from './crew-call';
+import { formatCallDuration } from './crew-call/crew-call-theme';
+import { CORTEX_VIZ_ENABLED } from '../cortex/flags';
 
-const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
+function particlePhaseCss(phase: ParticlePhase): string {
+  const { r, g, b } = PARTICLE_PHASE_COLORS[phase];
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** Open the Neural Cortex visualization in its own window, handing the auth token over via URL hash. */
+function openCortexWindow(): void {
+  if (!CORTEX_VIZ_ENABLED) return;
+  const token = getAuthToken();
+  const url = `${window.location.origin}/cortex${token ? `#tk=${encodeURIComponent(token)}` : ''}`;
+  if (window.agentx?.openInternalWindow) {
+    void window.agentx.openInternalWindow(url);
+  } else {
+    window.open(url, 'agentx-cortex', 'width=1400,height=900');
+  }
+}
 
 function getZoomShortcutHint(): string {
   if (typeof navigator === 'undefined') return 'zoom Ctrl +/− · Ctrl 0';
@@ -25,13 +44,14 @@ export interface FooterProps {
 export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
-  const capabilitiesReady = useCapabilitiesReady();
-  const { config: appConfig } = useAppCore();
   const voice = useVoiceOptional();
+  const crewCall = useCrewCallOptional();
   const commsCtx = useVoiceCommsOptional();
   const comms = commsCtx?.comms;
   const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+  const showMinimizedCall = Boolean(crewCall?.minimized && crewCall.phase !== 'idle' && crewCall.target);
+  const callActivityColor = particlePhaseCss(crewCall?.particlePhase ?? 'paused');
 
   // Derive voice status text from the dashboard comms session so the user can
   // see the exact voice state (listening/thinking/speaking) from any page.
@@ -53,10 +73,6 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
     if (voiceStatusText === 'connecting') return colors.accent.orange;
     return colors.text.secondary;
   })();
-
-  // Neural brain is shown when it's enabled in config (regardless of hardware
-  // support — the user may have opted in on a low-RAM system).
-  const neuralBrainDisabled = appConfig ? appConfig.neuralBrain !== true : true;
 
   const footerMicColor = !voice
     ? colors.text.dim
@@ -84,15 +100,6 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
       .catch(() => {});
   }, []);
 
-  const handleBrainClick = () => {
-    const agentx = (window as Window & { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
-    if (agentx?.openInternalWindow) {
-      agentx.openInternalWindow(NEURON_URL);
-    } else {
-      window.open(NEURON_URL, '_blank', 'noopener,noreferrer');
-    }
-  };
-
   return (
     <Box sx={{
       flexShrink: 0, borderTop: `1px solid ${colors.border.default}`,
@@ -100,33 +107,6 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
       fontFamily: "'JetBrains Mono', monospace", fontSize: '0.52rem', color: colors.text.dim,
     }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, ml: -0.5 }}>
-        {capabilitiesReady && !neuralBrainDisabled && (
-          <>
-            <Box
-              component="span"
-              onClick={handleBrainClick}
-              sx={{
-                display: 'inline-flex', alignItems: 'center', cursor: 'pointer',
-                color: colors.text.dim, '&:hover': { color: colors.accent.blue },
-                transition: 'color 0.15s',
-              }}
-              title="Open Neural Brain"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-                <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-                <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
-                <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
-                <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
-                <path d="M3.477 10.896a4 4 0 0 1 .585-.178" />
-                <path d="M19.938 10.719a4 4 0 0 1 .586.178" />
-                <path d="M6.5 17.599a3 3 0 0 0-1.375.399" />
-                <path d="M17.5 17.599a3 3 0 0 0 1.375.399" />
-              </svg>
-            </Box>
-            <span style={{ color: colors.border.default }}>/</span>
-          </>
-        )}
         <span>🇮🇳 Made in India</span>
         <span style={{ color: colors.border.default }}>/</span>
         <span>
@@ -147,6 +127,76 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         </span>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        {showMinimizedCall && crewCall?.target && (
+          <>
+            <Box
+              component="button"
+              type="button"
+              onClick={() => crewCall.expandCall()}
+              title={`${crewCall.activityLabel} — return to call`}
+              sx={{
+                appearance: 'none',
+                border: `1px solid ${alphaColor(callActivityColor, 0.55)}`,
+                bgcolor: alphaColor(callActivityColor, 0.1),
+                borderRadius: '999px',
+                px: 1,
+                py: 0.15,
+                m: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.6,
+                cursor: 'pointer',
+                color: callActivityColor,
+                fontFamily: 'inherit',
+                fontSize: 'inherit',
+                letterSpacing: '0.04em',
+                lineHeight: 1.2,
+                transition: 'color 0.2s, border-color 0.2s, background-color 0.2s, box-shadow 0.2s',
+                boxShadow: `0 0 8px ${alphaColor(callActivityColor, 0.28)}`,
+                '&:hover': {
+                  bgcolor: alphaColor(callActivityColor, 0.18),
+                },
+              }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  bgcolor: callActivityColor,
+                  boxShadow: `0 0 6px ${callActivityColor}`,
+                  transition: 'background-color 0.2s, box-shadow 0.2s',
+                }}
+              />
+              <PhoneInTalkIcon sx={{ fontSize: 12 }} />
+              <Box
+                component="span"
+                sx={{
+                  maxWidth: 120,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: colors.text.secondary,
+                }}
+              >
+                {crewCall.target.displayName}
+              </Box>
+              <Box
+                component="span"
+                sx={{
+                  fontVariantNumeric: 'tabular-nums',
+                  color: callActivityColor,
+                  minWidth: 34,
+                  transition: 'color 0.2s',
+                }}
+              >
+                {formatCallDuration(crewCall.elapsedMs)}
+              </Box>
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
         {showWakeIndicator && voice && (
           <>
             <Box
@@ -225,6 +275,26 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                   {voiceStatusText}
                 </Box>
               )}
+            </Box>
+            <span style={{ color: colors.border.default }}>/</span>
+          </>
+        )}
+        {CORTEX_VIZ_ENABLED && (
+          <>
+            <Box
+              component="span"
+              onClick={openCortexWindow}
+              title="Neural Cortex — watch your agent's brain grow"
+              sx={{
+                display: 'inline-flex', alignItems: 'center', gap: 0.5,
+                cursor: 'pointer', userSelect: 'none', letterSpacing: '0.5px',
+                color: colors.text.dim,
+                transition: 'color 0.15s',
+                '&:hover': { color: colors.accent.purple },
+              }}
+            >
+              <PsychologyIcon sx={{ fontSize: 13 }} />
+              cortex
             </Box>
             <span style={{ color: colors.border.default }}>/</span>
           </>

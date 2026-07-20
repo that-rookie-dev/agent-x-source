@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Crew, CrewCreateInput } from '@agentx/shared';
-import type { CrewManager } from '../src/secret-sauce/CrewManager.js';
+import type { CrewManager } from '../src/crew/CrewManager.js';
 import type { CrewMember } from '../src/agent/CrewOrchestrator.js';
 import {
   ensureHubCrewOnRoster,

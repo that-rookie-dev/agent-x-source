@@ -37,72 +37,16 @@ export async function simpleComplete(ctx: SimpleCompleteContext, prompt: string)
 
 export interface SessionLifecycleContext {
   contextTracker: { clear(): void };
-  secretSauce: {
-    identity: { recordInteraction(): void };
-    recordDiary(summary: string, importance: number, highlights: string[], tags: string[]): void;
-    memories: { getRecentMemories(n: number): unknown[] };
-    diary: { getRecent(n: number): unknown[] };
-    summarizer: {
-      buildMemorySummarizationPrompt(memories: unknown[]): string | null;
-      storeMemorySummary(content: string): void;
-      buildDiarySummarizationPrompt(diary: unknown[]): string | null;
-      storeDiarySummary(content: string): void;
-    };
-  };
-  messages: Array<{ role: string; content: string | unknown }>;
-  simpleComplete(prompt: string): Promise<string>;
 }
 
 /**
- * End the session — records diary entry and updates identity.
+ * End the session — clear ephemeral turn context.
  */
 export function endSession(ctx: SessionLifecycleContext): void {
   try {
     ctx.contextTracker.clear();
-    ctx.secretSauce.identity.recordInteraction();
-
-    const userMsgs = ctx.messages.filter((m) => m.role === 'user');
-    const assistantMsgs = ctx.messages.filter((m) => m.role === 'assistant');
-
-    if (userMsgs.length > 0) {
-      const highlights = userMsgs.slice(0, 3).map((m) =>
-        typeof m.content === 'string' ? m.content.slice(0, 60) : 'tool interaction'
-      );
-      const summary = `Session with ${userMsgs.length} user messages and ${assistantMsgs.length} responses.`;
-      ctx.secretSauce.recordDiary(summary, 1, highlights, []);
-    }
   } catch {
-    // Silent failure — diary is non-critical
-  }
-}
-
-/**
- * Run background summarization of memories and diary.
- * Non-blocking — failures are silently ignored.
- */
-export async function runSummarization(ctx: SessionLifecycleContext): Promise<void> {
-  try {
-    const summarizer = ctx.secretSauce.summarizer;
-
-    const recentMemories = ctx.secretSauce.memories.getRecentMemories(50);
-    if (recentMemories.length > 5) {
-      const memPrompt = summarizer.buildMemorySummarizationPrompt(recentMemories);
-      if (memPrompt) {
-        const content = await ctx.simpleComplete(memPrompt);
-        if (content) summarizer.storeMemorySummary(content);
-      }
-    }
-
-    const recentDiary = ctx.secretSauce.diary.getRecent(14);
-    if (recentDiary.length > 3) {
-      const diaryPrompt = summarizer.buildDiarySummarizationPrompt(recentDiary);
-      if (diaryPrompt) {
-        const content = await ctx.simpleComplete(diaryPrompt);
-        if (content) summarizer.storeDiarySummary(content);
-      }
-    }
-  } catch {
-    // Non-critical — silent failure
+    // Silent failure — non-critical
   }
 }
 
@@ -111,7 +55,6 @@ export interface HealthContext {
   tokenTracker: { totalCost: number; tokensUsed: number };
   toolExecutor: unknown;
   _responseTimes: number[];
-  _experienceEngine: { getAverageConfidence(): number } | null;
   subAgents: { getConcurrencyStats(): { running: number; pending: number } };
   _sessionStartTime: number;
   _llmCallCount: number;
@@ -132,7 +75,6 @@ export function getHealth(ctx: HealthContext): Record<string, unknown> {
     ? (ctx.toolExecutor as { getCircuitBreakerStatus(): Array<{ tool: string; failures: number; blacklisted: boolean; remainingMs: number }> }).getCircuitBreakerStatus()
     : [] as Array<{ tool: string; failures: number; blacklisted: boolean; remainingMs: number }>;
   const avgResp = ctx._responseTimes.length ? Math.round(ctx._responseTimes.reduce((a, b) => a + b, 0) / ctx._responseTimes.length) : 0;
-  const neuralAvg = ctx._experienceEngine?.getAverageConfidence() ?? 0;
   const subStats = ctx.subAgents.getConcurrencyStats();
   const toolStats = ctx.toolExecutor instanceof Object && 'getToolConcurrencyStats' in ctx.toolExecutor
     ? (ctx.toolExecutor as { getToolConcurrencyStats(): unknown }).getToolConcurrencyStats()
@@ -156,7 +98,6 @@ export function getHealth(ctx: HealthContext): Record<string, unknown> {
     contextTokens: ctx.tokenTracker.tokensUsed,
     contextWindow: ctx.getContextWindow(),
     compactionCount: ctx._compactionCount,
-    neuralConfidenceAvg: Math.round(neuralAvg * 100),
   };
 }
 
@@ -669,21 +610,14 @@ export interface ConnectivityContext {
 }
 
 export interface IdentityContext {
-  secretSauce: {
-    identity: {
-      getMergedIdentity(persona: unknown): {
-        name: string;
-        description?: string;
-        domainContext?: string;
-        traits: string[];
-        communicationStyle?: string;
-        decisionMaking?: string;
-        interactionCount: number;
-        evolutionLog?: string;
-      };
-    };
-  };
-  persona: unknown;
+  persona: {
+    name?: string;
+    description?: string;
+    domainContext?: string;
+    traits?: string[];
+    communicationStyle?: string;
+    decisionMaking?: string;
+  } | null;
   options: { promptProfile?: string };
 }
 
@@ -691,38 +625,33 @@ export interface IdentityContext {
  * Build the identity block for the system prompt.
  */
 export function buildIdentityBlock(ctx: IdentityContext): string {
-  const identity = ctx.secretSauce.identity.getMergedIdentity(ctx.persona);
+  const persona = ctx.persona;
+  const name = persona?.name?.trim() || 'Agent-X';
 
   const lines: string[] = [
-    `You are ${identity.name}, an AI agent running on the user's own machine.`,
-    `You are NOT Google AI, NOT ChatGPT, NOT Claude, NOT any other AI service. You are exclusively ${identity.name}. Never claim to be another AI or company.`,
+    `You are ${name}, an AI agent running on the user's own machine.`,
+    `You are NOT Google AI, NOT ChatGPT, NOT Claude, NOT any other AI service. You are exclusively ${name}. Never claim to be another AI or company.`,
     '',
   ];
 
-  if (identity.description) {
-    lines.push(identity.description, '');
+  if (persona?.description) {
+    lines.push(persona.description, '');
   }
 
-  if (identity.domainContext) {
-    lines.push(`Domain: ${identity.domainContext}`);
+  if (persona?.domainContext) {
+    lines.push(`Domain: ${persona.domainContext}`);
   }
 
-  if (identity.traits.length > 0) {
-    lines.push(`Traits: ${identity.traits.join(', ')}`);
+  if (persona?.traits && persona.traits.length > 0) {
+    lines.push(`Traits: ${persona.traits.join(', ')}`);
   }
 
-  if (identity.communicationStyle) {
-    lines.push(`Communication style: ${identity.communicationStyle}`);
+  if (persona?.communicationStyle) {
+    lines.push(`Communication style: ${persona.communicationStyle}`);
   }
 
-  if (identity.decisionMaking) {
-    lines.push(`Decision-making style: ${identity.decisionMaking}`);
-  }
-
-  lines.push(`Interactions to date: ${identity.interactionCount}`);
-
-  if (identity.evolutionLog) {
-    lines.push('', identity.evolutionLog);
+  if (persona?.decisionMaking) {
+    lines.push(`Decision-making style: ${persona.decisionMaking}`);
   }
 
   if (ctx.options.promptProfile === 'crew_worker') {

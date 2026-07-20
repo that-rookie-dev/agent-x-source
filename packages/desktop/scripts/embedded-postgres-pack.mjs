@@ -275,7 +275,7 @@ export function syncDarwinEmbeddedBinaries(nodeModulesRoot) {
   );
 }
 
-/** Copy pgvector/AGE artifacts built on arm64 into the Intel macOS tree. */
+/** Copy pgvector artifacts built on arm64 into the Intel macOS tree. */
 export function syncDarwinEmbeddedExtensions(desktopNodeModules) {
   repairEmbeddedPostgresBinaries(
     desktopNodeModules,

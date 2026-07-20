@@ -3,16 +3,16 @@
  *
  * A single node/edge store for all Agent-X memory: knowledge, episodic sessions,
  * tools, personas, and web data. Uses PostgreSQL + pgvector for semantic search
- * and recursive CTEs for graph traversal (AGE optional).
+ * and recursive CTEs for graph traversal.
  */
 import { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
 import { MemoryMigrationRunner } from './MemoryMigrationRunner.js';
+import { getGlobalBrainEventStreamer } from './BrainEventStreamer.js';
 import { PiiRedactor } from './PiiRedactor.js';
 import { SecureVault } from './SecureVault.js';
 import {
   graphWalk as graphWalkImpl,
-  runGraphWalkParityTest as runGraphWalkParityTestImpl,
   walkGraph as walkGraphImpl,
 } from './fabric-graph-walk.js';
 import {
@@ -26,13 +26,6 @@ import {
   getNodesInCommunities as getNodesInCommunitiesImpl,
   getViewport as getViewportImpl,
 } from './fabric-layout.js';
-import {
-  stageWebPayload as stageWebPayloadImpl,
-  getPendingWebStaging as getPendingWebStagingImpl,
-  markWebStagingDistilled as markWebStagingDistilledImpl,
-  markWebStagingDone as markWebStagingDoneImpl,
-  cleanupExpiredWebStaging as cleanupExpiredWebStagingImpl,
-} from './fabric-web-staging.js';
 import {
   createNode as createNodeImpl,
   bindEdge as bindEdgeImpl,
@@ -134,6 +127,8 @@ export interface MemoryNode extends Omit<MemoryNodeInput, 'charSpan' | 'provenan
   updatedAt: Date;
   accessCount: number;
   lastAccessedAt: Date | null;
+  /** Louvain community assigned by the server-side layout pass (null before first layout). */
+  communityId?: string | null;
   /**
    * Provenance: character span in the source text. On write this is `[start, end]`;
    * on read from PostgreSQL the INT4RANGE column comes back as a string like `"[0,10]"`.
@@ -212,7 +207,7 @@ export function setMemoryFabricInstance(fabric: MemoryFabric | null): void {
   _fabricInstance = fabric;
 }
 
-/** Get the global MemoryFabric singleton (used by tools like memory_fabric_search). */
+/** Get the global MemoryFabric singleton (used by cortex memory tools). */
 export function getMemoryFabricInstance(): MemoryFabric | null {
   return _fabricInstance;
 }
@@ -289,22 +284,19 @@ export class MemoryFabric {
     return this.vault?.list(options) ?? [];
   }
 
-  async migrate(): Promise<{ applied: number; currentVersion: number; ageAvailable: boolean }> {
+  async migrate(): Promise<{ applied: number; currentVersion: number }> {
     const runner = new MemoryMigrationRunner(this.pool);
     const { applied, currentVersion } = await runner.ensureSchema();
-    const { available: ageAvailable } = await runner.detectAge();
-    return { applied, currentVersion, ageAvailable };
+    return { applied, currentVersion };
   }
 
   /**
    * Comprehensive self-healing pass:
    * - re-run versioned migrations,
-   * - ensure required extensions (vector, age) exist,
-   * - ensure AGE graph exists (with relational fallback on failure),
    * - verify every required table and recreate missing indexes.
    * Safe to call on every startup and periodic health pass.
    */
-  async heal(onProgress?: (line: string) => void): Promise<{ schemaRepaired: boolean; ageAvailable: boolean; ageError?: string }> {
+  async heal(onProgress?: (line: string) => void): Promise<{ schemaRepaired: boolean }> {
     const runner = new MemoryMigrationRunner(this.pool);
     const { applied, currentVersion } = await runner.ensureSchema();
     if (onProgress) {
@@ -314,65 +306,14 @@ export class MemoryFabric {
         onProgress(`Applied ${applied} neural memory migration(s) — now at v${currentVersion}.`);
       }
     }
-    let { available: ageAvailable, error: ageError } = await runner.detectAge();
 
-    // If AGE is available as an extension but not installed yet (e.g. the database
-    // was migrated before AGE was built), create it now. This makes the migration
-    // idempotent with respect to AGE availability.
-    if (!ageAvailable && !ageError) {
-      try {
-        const { rows } = await this.pool.query<{ available: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') AS available`
-        );
-        if (rows[0]?.available) {
-          await this.pool.query('CREATE EXTENSION IF NOT EXISTS age');
-          const { available } = await runner.detectAge();
-          ageAvailable = available;
-        }
-      } catch (installErr) {
-        ageError = installErr instanceof Error ? installErr.message : String(installErr);
-        getLogger().warn('MEMORY_FABRIC_HEAL', `AGE extension install failed: ${ageError}`);
-      }
-    }
-
-    if (onProgress) {
-      if (ageAvailable) {
-        onProgress('Apache AGE graph extension found.');
-      } else if (ageError) {
-        onProgress(`Apache AGE not available (optional): ${ageError}`);
-      } else {
-        onProgress('Apache AGE not installed (optional — SQL graph fallback active).');
-      }
-    }
-
-    let graphRepaired = false;
-    if (ageAvailable) {
-      try {
-        await this.pool.query('SET search_path = ag_catalog, public');
-        await this.pool.query(`
-          DO $$
-          BEGIN
-            PERFORM * FROM ag_catalog.ag_graph WHERE name = 'memory_graph';
-            IF NOT FOUND THEN
-              PERFORM ag_catalog.create_graph('memory_graph');
-            END IF;
-          END$$;
-        `);
-        await this.pool.query('SET search_path = public');
-        graphRepaired = true;
-        onProgress?.('AGE memory graph verified.');
-      } catch (graphErr) {
-        getLogger().warn('MEMORY_FABRIC_HEAL', `AGE graph repair failed: ${graphErr instanceof Error ? graphErr.message : graphErr}`);
-        await this.pool.query('SET search_path = public').catch(() => {});
-      }
-    }
     const missingIndexes = await this.verifyIndexes();
     if (missingIndexes.length > 0) {
-      getLogger().warn('MEMORY_FABRIC_HEAL', `Rebuilding missing indexes: ${missingIndexes.join(', ')}`);
+      getLogger().warn('CORTEX_FABRIC_HEAL', `Rebuilding missing indexes: ${missingIndexes.join(', ')}`);
       onProgress?.(`Rebuilding ${missingIndexes.length} missing neural memory index(es)…`);
     }
-    const schemaRepaired = applied > 0 || graphRepaired || missingIndexes.length > 0;
-    return { schemaRepaired, ageAvailable, ageError };
+    const schemaRepaired = applied > 0 || missingIndexes.length > 0;
+    return { schemaRepaired };
   }
 
   private async verifyIndexes(): Promise<string[]> {
@@ -389,8 +330,6 @@ export class MemoryFabric {
       'idx_memory_edges_source',
       'idx_memory_edges_target',
       'idx_memory_edges_type',
-      'idx_web_staging_domain',
-      'idx_web_staging_status',
       'idx_benchmark_scorecards_model',
       'idx_benchmark_scorecards_finished_at',
     ];
@@ -433,15 +372,33 @@ export class MemoryFabric {
   }
 
   async createNode(input: MemoryNodeInput): Promise<MemoryNode> {
-    return createNodeImpl(this.nodeCrudCtx(), input);
+    const node = await createNodeImpl(this.nodeCrudCtx(), input);
+    getGlobalBrainEventStreamer().emitNodeCreated({
+      nodeId: node.id,
+      label: node.label,
+      category: node.category,
+      x: node.x ?? null,
+      y: node.y ?? null,
+      sourceId: node.sourceId ?? null,
+      sessionId: node.sessionId ?? null,
+    });
+    return node;
   }
 
   async bindEdge(input: MemoryEdgeInput): Promise<MemoryEdge> {
-    return bindEdgeImpl(this.nodeCrudCtx(), input);
+    const edge = await bindEdgeImpl(this.nodeCrudCtx(), input);
+    getGlobalBrainEventStreamer().emitSynapseConnected({
+      sourceId: edge.sourceNodeId,
+      targetId: edge.targetNodeId,
+      relationshipType: edge.relationshipType,
+      weight: edge.weight,
+    });
+    return edge;
   }
 
   async fireNeuron(nodeId: string): Promise<void> {
-    return fireNeuronImpl(this.nodeCrudCtx(), nodeId);
+    await fireNeuronImpl(this.nodeCrudCtx(), nodeId);
+    getGlobalBrainEventStreamer().emitNeuronActivated({ nodeIds: [nodeId] });
   }
 
   /**
@@ -473,17 +430,6 @@ export class MemoryFabric {
 
   async graphWalk(options: GraphWalkOptions): Promise<GraphWalkResult> {
     return graphWalkImpl({ pool: this.pool }, options);
-  }
-
-  /**
-   * Dual-path parity test: compare Apache AGE Cypher traversal against the
-   * relational recursive-CTE implementation for the same start nodes.
-   * Returns a mismatch report; empty diffs mean the paths agree.
-   */
-  async runGraphWalkParityTest(
-    options: GraphWalkOptions,
-  ): Promise<{ ageAvailable: boolean; ageResult: GraphWalkResult; cteResult: GraphWalkResult; nodeDiff: string[]; edgeDiff: string[]; passed: boolean }> {
-    return runGraphWalkParityTestImpl({ pool: this.pool }, options);
   }
 
   async assembleContext(
@@ -524,10 +470,7 @@ export class MemoryFabric {
     return findDuplicateImpl(this.searchCtx(), embedding, threshold, category);
   }
 
-  /**
-   * Graph walk using Apache AGE when available, otherwise a recursive CTE.
-   * Returns reachable nodes and the traversed edges.
-   */
+  /** Graph walk over memory_edges using a recursive SQL CTE. */
   async walkGraph(options: GraphWalkOptions): Promise<GraphWalkResult> {
     return walkGraphImpl({ pool: this.pool }, options);
   }
@@ -551,7 +494,7 @@ export class MemoryFabric {
     const where = filters.join(' AND ');
     const { rows: nodes } = await this.pool.query<MemoryNode>(
       `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId", n.community_id AS "communityId",
               n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
               COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
        FROM memory_nodes n
@@ -573,6 +516,68 @@ export class MemoryFabric {
     return { nodes, edges };
   }
 
+  /** Hydrate a set of node ids into full nodes (with activity + community). */
+  async getNodesByIds(ids: string[]): Promise<MemoryNode[]> {
+    if (ids.length === 0) return [];
+    const { rows } = await this.pool.query<MemoryNode>(
+      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId", n.community_id AS "communityId",
+              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+              COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.id = ANY($1::uuid[]) AND n.status = 'active'`,
+      [ids],
+    );
+    return rows;
+  }
+
+  /**
+   * Aggregate stats for the Neural Cortex visualization HUD:
+   * counts, per-category breakdown, layout epoch, and 30-day growth series.
+   */
+  async getCortexMeta(): Promise<{
+    nodeCount: number;
+    edgeCount: number;
+    communityCount: number;
+    layoutEpoch: number;
+    categories: Array<{ category: string; count: number }>;
+    growth: Array<{ day: string; count: number }>;
+    lastNodeAt: string | null;
+  }> {
+    // Sequential queries — embedded PostgreSQL runs with max_connections=10,
+    // so a parallel fan-out here can exhaust the server's connection budget.
+    const { rows: statsRows } = await this.pool.query<{
+      nodeCount: number; edgeCount: number; communityCount: number; lastNodeAt: string | null;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::int FROM memory_nodes WHERE status = 'active') AS "nodeCount",
+         (SELECT COUNT(*)::int FROM memory_edges) AS "edgeCount",
+         (SELECT COUNT(DISTINCT community_id)::int FROM memory_nodes WHERE community_id IS NOT NULL AND status = 'active') AS "communityCount",
+         (SELECT MAX(created_at)::text FROM memory_nodes WHERE status = 'active') AS "lastNodeAt"`,
+    );
+    const { rows: categories } = await this.pool.query<{ category: string; count: number }>(
+      `SELECT category, COUNT(*)::int AS count FROM memory_nodes WHERE status = 'active' GROUP BY category ORDER BY count DESC`,
+    );
+    const { rows: growth } = await this.pool.query<{ day: string; count: number }>(
+      `SELECT TO_CHAR(created_at::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS count
+       FROM memory_nodes
+       WHERE status = 'active' AND created_at >= NOW() - INTERVAL '30 days'
+       GROUP BY created_at::date
+       ORDER BY created_at::date`,
+    );
+    const epoch = await this.getLayoutEpoch();
+    return {
+      nodeCount: statsRows[0]?.nodeCount ?? 0,
+      edgeCount: statsRows[0]?.edgeCount ?? 0,
+      communityCount: statsRows[0]?.communityCount ?? 0,
+      layoutEpoch: epoch,
+      categories,
+      growth,
+      lastNodeAt: statsRows[0]?.lastNodeAt ?? null,
+    };
+  }
+
   /**
    * Server-side Louvain community detection + ForceAtlas2 layout.
    * Updates node x/y coordinates and bumps the layout epoch.
@@ -588,7 +593,7 @@ export class MemoryFabric {
 
   /**
    * Get all distinct community IDs with their member counts.
-   * Used by the CommunitySummarizer to decide which communities need summarization.
+   * Used by community summarization batch jobs to decide which communities need summarization.
    */
   async getCommunities(): Promise<{ communityId: string; memberCount: number }[]> {
     return getCommunitiesImpl({ pool: this.pool, getGraphSnapshot: (o) => this.getGraphSnapshot(o), getNodeCount: () => this.getNodeCount() });
@@ -629,26 +634,6 @@ export class MemoryFabric {
       `SELECT COUNT(*)::int AS count FROM memory_nodes WHERE status = 'active'`
     );
     return rows[0]?.count ?? 0;
-  }
-
-  async stageWebPayload(url: string, domain: string, kind: string, rawPayload: unknown, sourceId?: string, ttlDays = 7): Promise<string> {
-    return stageWebPayloadImpl({ pool: this.pool }, url, domain, kind, rawPayload, sourceId, ttlDays);
-  }
-
-  async getPendingWebStaging(limit = 10): Promise<Array<{ id: string; url: string; domain: string; kind: string; rawPayload: unknown }>> {
-    return getPendingWebStagingImpl({ pool: this.pool }, limit);
-  }
-
-  async markWebStagingDistilled(id: string, distilledContent: string): Promise<void> {
-    return markWebStagingDistilledImpl({ pool: this.pool }, id, distilledContent);
-  }
-
-  async markWebStagingDone(id: string): Promise<void> {
-    return markWebStagingDoneImpl({ pool: this.pool }, id);
-  }
-
-  async cleanupExpiredWebStaging(): Promise<{ deleted: number }> {
-    return cleanupExpiredWebStagingImpl({ pool: this.pool });
   }
 
   /**

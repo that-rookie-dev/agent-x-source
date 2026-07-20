@@ -524,7 +524,7 @@ async function downloadModel(model: any): Promise<void> {
       progress: 100,
     });
 
-    // Save configuration so the local model is used for distillation, extraction, and consolidation.
+    // Save configuration so the local model is used for extraction and consolidation.
     try {
       const eng = getEngine();
       const cfg = eng.configManager.load();
@@ -533,11 +533,8 @@ async function downloadModel(model: any): Promise<void> {
       updated = {
         ...updated,
         featureRouting: {
-          memoryDistillation: 'local',
           memoryExtraction: 'local',
           memoryConsolidation: 'local',
-          graphRagExtraction: 'local',
-          graphRagSummarization: 'local',
           ...(updated.featureRouting || {}),
         },
       };

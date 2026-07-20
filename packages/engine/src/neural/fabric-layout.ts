@@ -30,6 +30,49 @@ export interface LayoutContext {
   getNodeCount: () => Promise<number>;
 }
 
+/**
+ * ForceAtlas2 often leaves a hollow ring. Remap radii toward a filled-disk
+ * distribution while keeping each node's angle (and thus local neighborhoods).
+ * `strength` blends original FA2 radius with the filled-disk target.
+ */
+function refillAsDisk(
+  positions: Record<string, { x: number; y: number }>,
+  strength = 0.8,
+): void {
+  const ids = Object.keys(positions);
+  if (ids.length < 3) return;
+  let cx = 0;
+  let cy = 0;
+  for (const id of ids) {
+    const p = positions[id]!;
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= ids.length;
+  cy /= ids.length;
+
+  const polar = ids.map((id) => {
+    const p = positions[id]!;
+    const dx = p.x - cx;
+    const dy = p.y - cy;
+    return { id, r: Math.hypot(dx, dy), angle: Math.atan2(dy, dx) };
+  });
+  polar.sort((a, b) => a.r - b.r);
+  const rMax = polar[polar.length - 1]!.r;
+  if (rMax < 1e-6) return;
+
+  const n = polar.length;
+  for (let i = 0; i < n; i++) {
+    const item = polar[i]!;
+    // Area-uniform disk: equal expected density from center to rim.
+    const diskR = rMax * Math.sqrt((i + 0.5) / n);
+    const rNew = item.r * (1 - strength) + diskR * strength;
+    const p = positions[item.id]!;
+    p.x = cx + Math.cos(item.angle) * rNew;
+    p.y = cy + Math.sin(item.angle) * rNew;
+  }
+}
+
 export async function updateLayout(
   ctx: LayoutContext,
   nodeId: string,
@@ -124,29 +167,42 @@ export async function computeLouvainLayout(ctx: LayoutContext): Promise<{ epoch:
         label: n.label,
         category: n.category,
         sessionId: n.sessionId,
+        // Matches the client's max render radius so adjustSizes keeps
+        // neighboring neurons from overlapping on screen.
+        size: 10,
         x: centerX + Math.cos(angle) * radius,
         y: centerY + Math.sin(angle) * radius,
       });
     }
   }
 
-  // Nodes without a session are scattered around the center.
+  // Seed without a session as a soft Gaussian cloud — avoids the artificial
+  // ring that a uniform circular init tends to leave after force layout.
   for (let i = 0; i < noSessionNodes.length; i++) {
     const n = noSessionNodes[i];
     if (!n) continue;
-    const angle = (i / Math.max(noSessionNodes.length, 1)) * 2 * Math.PI;
-    const radius = 15 + Math.random() * 50;
+    const u1 = Math.max(1e-6, Math.random());
+    const u2 = Math.random();
+    const r = Math.sqrt(-2 * Math.log(u1)) * 28;
+    const theta = u2 * 2 * Math.PI;
     graph.addNode(n.id, {
       label: n.label,
       category: n.category,
       sessionId: n.sessionId,
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius,
+      size: 10,
+      x: Math.cos(theta) * r,
+      y: Math.sin(theta) * r,
     });
   }
 
   for (const e of edges) {
-    if (graph.hasNode(e.sourceNodeId) && graph.hasNode(e.targetNodeId)) {
+    if (!graph.hasNode(e.sourceNodeId) || !graph.hasNode(e.targetNodeId)) continue;
+    // Node pairs can share multiple relationship types; graphology is a simple
+    // graph, so merge parallel edges by accumulating their weight.
+    const existing = graph.edge(e.sourceNodeId, e.targetNodeId) ?? graph.edge(e.targetNodeId, e.sourceNodeId);
+    if (existing != null) {
+      graph.setEdgeAttribute(existing, 'weight', (graph.getEdgeAttribute(existing, 'weight') as number) + e.weight);
+    } else {
       graph.addEdge(e.sourceNodeId, e.targetNodeId, { weight: e.weight });
     }
   }
@@ -155,17 +211,24 @@ export async function computeLouvainLayout(ctx: LayoutContext): Promise<{ epoch:
   const communities = new Set<string>();
   graph.forEachNode((_node: string, attrs: { community?: string | number }) => communities.add(String(attrs.community)));
 
+  // Organic "brain" mass. adjustSizes is off on purpose — with hundreds/thousands
+  // of nodes it packs into a hollow ring. Gravity + mild repulsion keep a filled core.
   const positions = forceAtlas2(graph, {
     iterations: 200,
     settings: {
-      gravity: 0.15,
-      scalingRatio: 1.2,
+      gravity: 1.0,
+      scalingRatio: 2.0,
+      linLogMode: false,
+      outboundAttractionDistribution: false,
       strongGravityMode: true,
-      slowDown: 1.5,
+      slowDown: 1.4,
       barnesHutOptimize: true,
-      adjustSizes: true,
+      adjustSizes: false,
     },
   });
+
+  // Remap the classic FA2 hollow ring into a filled nebula mass.
+  refillAsDisk(positions, 0.82);
 
   const client = await ctx.pool.connect();
   try {
@@ -190,7 +253,7 @@ export async function computeLouvainLayout(ctx: LayoutContext): Promise<{ epoch:
 
 /**
  * Get all distinct community IDs with their member counts.
- * Used by the CommunitySummarizer to decide which communities need summarization.
+ * Used by community summarization batch jobs to decide which communities need summarization.
  */
 export async function getCommunities(ctx: LayoutContext): Promise<{ communityId: string; memberCount: number }[]> {
   const { rows } = await ctx.pool.query<{ communityId: string; memberCount: number }>(
@@ -279,7 +342,7 @@ export async function getViewport(
 
   const { rows: nodes } = await ctx.pool.query<MemoryNode>(
     `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId", n.community_id AS "communityId",
             n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
             COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
      FROM memory_nodes n

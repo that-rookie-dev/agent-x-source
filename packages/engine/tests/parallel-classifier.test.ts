@@ -60,10 +60,10 @@ describe('ParallelClassifier', () => {
     );
   });
 
-  it('classifies folder_list and memory_search as SAFE', () => {
+  it('classifies folder_list and cortex_memory_search as SAFE', () => {
     const result = classifier.classify([
       makeTool('folder_list'),
-      makeTool('memory_search'),
+      makeTool('cortex_memory_search'),
       makeTool('http_get'),
     ]);
 

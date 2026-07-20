@@ -205,7 +205,7 @@ export class PromptEngine {
       return `[${label}]\n${body}`;
     });
 
-    return `[RELEVANT_DOCUMENTS]\nThe following knowledge-base / indexed excerpts may help answer the user's query. Prefer body text over table-of-contents lines. For more depth, call knowledge_search with a precise query.\n\n${parts.join('\n\n')}\n[/RELEVANT_DOCUMENTS]`;
+    return `[RELEVANT_DOCUMENTS]\nThe following knowledge-base / indexed excerpts may help answer the user's query. Prefer body text over table-of-contents lines. For more depth, call knowledge_base_search with a precise query.\n\n${parts.join('\n\n')}\n[/RELEVANT_DOCUMENTS]`;
   }
 
   /**

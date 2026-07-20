@@ -33,7 +33,7 @@ export interface ValidatableNode {
 function isEpisodicHub(node: ValidatableNode): boolean {
   // Explicit tag from the creator (unitType='hub' for session hubs).
   if (node.unitType === 'hub') return true;
-  // Heuristic: hubs created by ws.ts / DocumentIngester use these patterns.
+  // Heuristic: hubs created during document ingest use these patterns.
   if (/^Session hub/i.test(node.label)) return true;
   if (/^#\s*Session/i.test(node.content)) return true;
   return false;
@@ -150,8 +150,7 @@ export function isValidMemoryNode(node: ValidatableNode): boolean {
 /**
  * Filter a batch of nodes + edges, dropping invalid nodes and any edges that
  * referenced them. This is the helper called at each extraction→persistence
- * boundary in `MemoryService.ingest`, `DocumentIngester.ingest`, and
- * `NeuralBrainIngestionPipeline.insertIntoDatabase`.
+ * boundary in `MemoryService.ingest` and `DocumentIngestPipeline.process`.
  */
 export function validateAndFilter<
   T extends ValidatableNode & { id?: string },

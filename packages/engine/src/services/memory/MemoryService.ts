@@ -15,8 +15,7 @@ import {
   type ContextAssemblyResult,
 } from '../../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider, getEmbedderInstance, setEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
-import { GraphRagRetriever, type GraphRagResult } from '../../neural/GraphRagRetriever.js';
-import { DocumentIngester, type DocumentIngestInput, type DocumentIngestResult } from '../../neural/DocumentIngester.js';
+import { vectorMemoryPrefetch } from '../../neural/VectorMemoryPrefetch.js';
 import type { GenerateFn } from '../../neural/MemoryExtractor.js';
 import { MemoryService as NeuralMemoryService, type IngestInput, type IngestResult } from '../../neural/MemoryService.js';
 import { ChatTurnMemoryIngester } from '../../neural/ChatTurnMemoryIngester.js';
@@ -47,9 +46,7 @@ export interface MemoryServiceOptions {
 /**
  * Service facade for memory/RAG/embedding operations.
  *
- * Owns MemoryFabric, GraphRagRetriever, the embedding provider, and the
- * document/chat ingesters. Callers (Agent, web-api) no longer reach directly
- * into MemoryFabric; they use this service.
+ * Owns MemoryFabric, the embedding provider, and the document/chat ingesters.
  */
 export class MemoryService implements IMemoryService {
   readonly name = 'MemoryService';
@@ -57,7 +54,6 @@ export class MemoryService implements IMemoryService {
   private pool: Pool;
   private fabric: MemoryFabric;
   private embedder: EmbeddingProvider;
-  private retriever: GraphRagRetriever;
   private neuralService: NeuralMemoryService;
   private chatTurnIngester: ChatTurnMemoryIngester;
   private userChatIngester: UserChatMemoryIngester | null = null;
@@ -87,7 +83,6 @@ export class MemoryService implements IMemoryService {
     this.model = options.model;
     this.generateFn = options.generate ?? this.buildGenerateFn();
 
-    this.retriever = new GraphRagRetriever(this.fabric, this.embedder);
     this.cacheService = new MemoryCacheService({ ...options.cacheOptions, cache: options.cache });
     this.neuralService = new NeuralMemoryService(this.pool, this.embedder, this.generateFn ?? null);
     this.chatTurnIngester = new ChatTurnMemoryIngester(this.fabric, this.embedder);
@@ -131,12 +126,8 @@ export class MemoryService implements IMemoryService {
       const {
         messages,
         contextKind,
-        agentId,
         compact = false,
-        globalLimit,
-        localLimit,
         vectorLimit,
-        graphDepth,
         minRelevance,
       } = options ?? {};
 
@@ -157,31 +148,28 @@ export class MemoryService implements IMemoryService {
         () => this.embedder.embed(reformulated),
       );
 
-      const result = await this.retriever.retrieve(reformulated, {
+      const prefetch = await vectorMemoryPrefetch(this.fabric, this.embedder, reformulated, {
         sessionId,
         isSuperSession: isSuper,
-        agentId,
-        globalLimit,
-        localLimit,
-        vectorLimit,
-        graphDepth,
-        minRelevance,
-        embedding,
+        vectorLimit: vectorLimit ?? 8,
+        userProfileLimit: isSuper ? 8 : 0,
+        episodicLimit: 5,
+        minRelevance: minRelevance ?? 0.35,
       });
 
       const chunkNodes = await this.searchSourceDocChunks(embedding, sessionId, isSuper, minRelevance);
-      const allNodeIds = new Set(result.all.map((n) => n.id));
+      const allNodeIds = new Set(prefetch.all.map((n) => n.id));
       for (const cn of chunkNodes) {
         if (!allNodeIds.has(cn.id)) {
-          result.vector.push(cn);
-          result.all.push(cn);
+          prefetch.vector.push(cn);
+          prefetch.all.push(cn);
           allNodeIds.add(cn.id);
         }
       }
 
-      this.lastContextNodeIds = result.all.map((n) => n.id).filter((id): id is string => !!id);
+      this.lastContextNodeIds = prefetch.all.map((n) => n.id).filter((id): id is string => !!id);
 
-      return this.formatGraphRagResult(result, compact);
+      return this.formatVectorPrefetch(prefetch, compact);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       getLogger().warn('MEMORY_SERVICE', `assembleContext failed: ${msg}`);
@@ -236,14 +224,6 @@ export class MemoryService implements IMemoryService {
     return this.neuralService.ingest(input);
   }
 
-  async ingestDocument(input: DocumentIngestInput): Promise<DocumentIngestResult> {
-    const ingester = new DocumentIngester(this.fabric, input.generate ?? this.generateFn);
-    return ingester.ingest({
-      ...input,
-      embed: input.embed ?? ((text: string) => this.embedder.embed(text)),
-    });
-  }
-
   async ingestChatTurn(
     sessionId: string,
     userMessage: string,
@@ -287,24 +267,12 @@ export class MemoryService implements IMemoryService {
       agentId,
       tag,
       sessionId,
-      useGraphRag,
       minRelevance,
     } = options ?? {};
 
     const effectiveEmbedding =
       embedding ??
       (await this.cacheService.getOrComputeEmbedding(query, () => this.embedder.embed(query)));
-
-    if (useGraphRag) {
-      const result = await this.retriever.retrieve(query, {
-        sessionId,
-        agentId,
-        vectorLimit: limit,
-        minRelevance,
-        embedding: effectiveEmbedding,
-      });
-      return result.all;
-    }
 
     const key = this.buildVectorSearchKey(effectiveEmbedding, { category, agentId, tag, sessionId, limit, minRelevance });
     return this.cacheService.getOrComputeVectorSearch(key, async () => {
@@ -358,7 +326,6 @@ export class MemoryService implements IMemoryService {
       const raw = await this.fabric.vectorSearch(embedding, {
         limit: 5,
         category: 'source_doc',
-        ...(isSuper ? {} : { sessionId }),
       });
       const threshold = minRelevance ?? 0.25;
       return raw.filter((n) => {
@@ -368,7 +335,10 @@ export class MemoryService implements IMemoryService {
     }) as Promise<MemoryNode[]>;
   }
 
-  private formatGraphRagResult(result: GraphRagResult, compact: boolean): MemoryContextState {
+  private formatVectorPrefetch(
+    result: Awaited<ReturnType<typeof vectorMemoryPrefetch>>,
+    compact: boolean,
+  ): MemoryContextState {
     const MAX_CHARS = compact ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
 
     const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
@@ -383,32 +353,21 @@ export class MemoryService implements IMemoryService {
       return lines.join('\n');
     };
 
-    const communityText =
-      result.global.length > 0
-        ? result.global
-            .map((n) => `${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 300)}`)
-            .join('\n')
-        : undefined;
-    const communityChars = communityText?.length ?? 0;
-    const remainingAfterCommunity = Math.max(0, MAX_CHARS - communityChars);
+    const userProfileText = fmt(result.userProfile, Math.floor(MAX_CHARS * 0.35));
+    const episodicText = fmt(result.episodic, Math.floor(MAX_CHARS * 0.25));
+    const semanticText = fmt(result.vector, Math.floor(MAX_CHARS * 0.4));
 
-    const userProfileText = fmt(result.userProfile, Math.floor(remainingAfterCommunity * 0.35));
-    const episodicText = fmt(result.episodic, Math.floor(remainingAfterCommunity * 0.25));
-    const semanticText = fmt(result.vector, Math.floor(remainingAfterCommunity * 0.25));
-    const graphText = fmt([...result.local, ...result.graph], Math.floor(remainingAfterCommunity * 0.15));
-
-    if (semanticText || communityText || episodicText || graphText || userProfileText) {
+    if (semanticText || episodicText || userProfileText) {
       getLogger().info(
         'MEMORY_SERVICE',
-        `assembleContext: ${result.all.length} nodes (community=${result.global.length}, userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, graph=${result.local.length + result.graph.length})`,
+        `assembleContext: ${result.all.length} nodes (userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length})`,
       );
     }
 
     return {
-      community: communityText,
       episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
       semantic: semanticText,
-      graph: graphText,
+      graph: '',
     };
   }
 

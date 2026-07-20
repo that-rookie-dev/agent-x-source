@@ -1,5 +1,5 @@
 import type { CommandInterface, CommandContext, CommandResult } from '../CommandInterface.js';
-import { CrewManager } from '../../secret-sauce/CrewManager.js';
+import { CrewManager } from '../../crew/CrewManager.js';
 
 export const crewCommand: CommandInterface = {
   name: 'crew',

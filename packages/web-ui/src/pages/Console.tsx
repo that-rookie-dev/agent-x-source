@@ -30,14 +30,13 @@ const SettingsPanel = lazy(() => import('../components/SettingsPanel').then(m =>
 const AutomationPanel = lazy(() => import('../components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
 const OrchestratorPanel = lazy(() => import('../components/OrchestratorPanel').then(m => ({ default: m.OrchestratorPanel })));
 const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ default: m.CrewsPanel })));
-const SoulPanel = lazy(() => import('../components/SoulPanel').then(m => ({ default: m.SoulPanel })));
 const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
 const MarkdownPanel = lazy(() => import('../components/MarkdownPanel').then(m => ({ default: m.MarkdownPanel })));
 const KnowledgeBasePanel = lazy(() => import('../components/KnowledgeBasePanel').then(m => ({ default: m.KnowledgeBasePanel })));
 const CallsPanel = lazy(() => import('../components/calls').then(m => ({ default: m.CallsPanel })));
 
-export type PanelId = 'dashboard' | 'chat' | 'calls' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown' | 'knowledge-base';
+export type PanelId = 'dashboard' | 'chat' | 'calls' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'orchestrator' | 'crews' | 'mcp-store' | 'notifications' | 'markdown' | 'knowledge-base';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -206,7 +205,6 @@ export function Console() {
                 {activePanel === 'automation' && <AutomationPanel />}
                 {activePanel === 'orchestrator' && <OrchestratorPanel />}
                 {activePanel === 'crews' && <CrewsPanel />}
-                {activePanel === 'soul' && <SoulPanel />}
                 {activePanel === 'mcp-store' && <McpStorePage />}
                 {activePanel === 'notifications' && <NotificationsPanel />}
                 {activePanel === 'markdown' && <MarkdownPanel />}

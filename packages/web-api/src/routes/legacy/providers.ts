@@ -10,7 +10,6 @@ import { getLogger } from '@agentx/shared';
 import { getEngine, destroyAgent, createAgent } from '../../engine.js';
 import { ProviderFactory } from '@agentx/engine';
 import { REDACTED_SECRET, redactProvidersForClient } from '../../config-redaction.js';
-import { refreshIngestionWorkerGenerator } from '../../ingestion-worker-ref.js';
 import { ensureSubscribed } from '../../ws.js';
 
 
@@ -321,8 +320,6 @@ export function createProvidersRouter(): Router {
       }
 
       eng.configManager.removeProviderProfile(providerId, profileId);
-      // Rebuild ingestion worker generator in case provider config changed
-      void refreshIngestionWorkerGenerator();
       res.json({ ok: true });
     } catch (e: unknown) {
       getLogger().error('DELETE_API_PROVIDER_PROFILE', e instanceof Error ? e : String(e));

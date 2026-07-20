@@ -60,7 +60,7 @@ jobs:
       - name: Build core packages
         run: |
           pnpm install --frozen-lockfile || pnpm install
-          pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-neuron --filter @agentx/runtime --filter @agentx/web-ui run build
+          pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/runtime --filter @agentx/web-ui run build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,11 +75,10 @@ jobs:
             packages/shared/dist
             packages/engine/dist
             packages/web-api/dist
-            packages/web-neuron/dist
             packages/runtime/dist
           retention-days: 1
 
-  # Build pgvector + AGE once per platform arch; desktop + server jobs download instead of recompiling.
+  # Build pgvector once per platform arch; desktop + server jobs download instead of recompiling.
   build-pg-extensions:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
@@ -127,7 +126,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: packages/runtime/.pgvector-build
-          key: pg-ext-artifact-${{ matrix.suffix }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs', 'packages/runtime/scripts/setup-age.mjs') }}
+          key: pg-ext-artifact-${{ matrix.suffix }}-${{ hashFiles('packages/runtime/scripts/setup-pgvector.mjs') }}
           restore-keys: |
             pg-ext-artifact-${{ matrix.suffix }}-
 

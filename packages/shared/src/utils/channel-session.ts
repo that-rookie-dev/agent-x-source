@@ -1,4 +1,5 @@
 import type { ChannelBindingId } from './channel-session-binding.js';
+import { textSessionIdFromVoiceSessionId } from './crew-voice-session.js';
 
 /** Prefix for all messaging-channel transcript sessions. */
 export const CHANNEL_SESSION_ID = '__channel__';
@@ -39,4 +40,17 @@ export function isSuperSessionId(sessionId: string | null | undefined): boolean 
 /** When a super session calls fleet tools, omit session filter so all resources are visible. */
 export function resolveFleetToolSessionScope(sessionId: string): string | undefined {
   return isSuperSessionId(sessionId) ? undefined : sessionId;
+}
+
+/**
+ * Session filter for automation list/cancel/register.
+ * - Super sessions (Telegram/Slack/…) → undefined (fleet-wide).
+ * - Crew voice calls (`voice:{textId}`) → parent text session so call + chat share tasks.
+ * - Everything else → the session itself.
+ */
+export function resolveAutomationSessionScope(sessionId: string): string | undefined {
+  if (isSuperSessionId(sessionId)) return undefined;
+  const textId = textSessionIdFromVoiceSessionId(sessionId);
+  if (textId) return textId;
+  return sessionId;
 }

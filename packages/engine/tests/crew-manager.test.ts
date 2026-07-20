@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { CrewManager } from '../src/secret-sauce/CrewManager.js';
+import { CrewManager } from '../src/crew/CrewManager.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

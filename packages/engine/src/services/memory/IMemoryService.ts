@@ -1,5 +1,4 @@
 import type { MemoryNode, MemoryNodeCategory, MemoryFabric } from '../../neural/MemoryFabric.js';
-import type { DocumentIngestInput, DocumentIngestResult } from '../../neural/DocumentIngester.js';
 import type { IngestInput, IngestResult } from '../../neural/MemoryService.js';
 
 export interface MemoryContextState {
@@ -45,8 +44,6 @@ export interface SearchOptions {
   agentId?: string;
   tag?: string;
   sessionId?: string | null;
-  /** When true, perform a full GraphRAG retrieve instead of pure vector search. */
-  useGraphRag?: boolean;
   /** Minimum cosine similarity for vector matches. */
   minRelevance?: number;
 }
@@ -61,10 +58,10 @@ export interface IMemoryService {
     options?: AssembleContextOptions,
   ): Promise<MemoryContextState>;
 
-  /** Ingest a document/RAG source into the memory fabric. */
-  ingestDocument(input: DocumentIngestInput): Promise<DocumentIngestResult>;
+  /** Ingest arbitrary text into the fabric (LLM extraction optional). */
+  ingest(input: IngestInput): Promise<IngestResult>;
 
-  /** Ingest a chat turn (and user profile, if super session) into memory. */
+  /** Ingest a chat turn into cortex memory. */
   ingestChatTurn(
     sessionId: string,
     userMessage: string,
@@ -72,15 +69,7 @@ export interface IMemoryService {
     options?: ChatTurnIngestOptions,
   ): Promise<void>;
 
-  /** Generic text ingestion with optional extraction/embedding. */
-  ingest(input: IngestInput): Promise<IngestResult>;
-
-  /** Vector (or GraphRAG) search over memory. */
   search(query: string, options?: SearchOptions): Promise<MemoryNode[]>;
 
-  /** Reinforce a set of context node IDs. */
-  reinforce(nodeIds: string[]): Promise<void>;
-
-  /** Return the underlying MemoryFabric for low-level operations. */
   getFabric(): MemoryFabric;
 }

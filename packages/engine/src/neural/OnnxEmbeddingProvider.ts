@@ -18,7 +18,6 @@
 import { totalmem } from 'os';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { NEURAL_BRAIN_MIN_RAM_GB } from '@agentx/shared';
 import { LocalEmbeddingProvider } from './LocalEmbeddingProvider.js';
 import { getOnnxThreadConfig, setOnnxThreadConfig } from '../runtime/onnx-thread-config.js';
 
@@ -163,29 +162,18 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
 
   private async loadModel(): Promise<LoadedModel> {
     const ramGb = this.getRamGb();
-    if (ramGb < NEURAL_BRAIN_MIN_RAM_GB) {
+    const { resolveNeuralCortexEmbeddingTier } = await import('@agentx/shared');
+    const tier = resolveNeuralCortexEmbeddingTier(ramGb);
+
+    if (tier === 'minilm') {
+      const minilm = await this.tryLoadModel(MINILM_MODEL_ID, 'q4', MINILM_DIMENSION, 'minilm');
+      if (minilm) return minilm;
       return { tier: 'ngram', pipeline: null, nativeDim: MINILM_DIMENSION };
     }
 
-    const preferBgeM3 = ramGb >= BGE_M3_RAM_THRESHOLD_GB;
+    const bge = await this.tryLoadModel(BGE_M3_MODEL_ID, 'int8', BGE_M3_DIMENSION, 'bge-m3');
+    if (bge) return bge;
 
-    // Try BGE-M3 first on capable machines.
-    if (preferBgeM3) {
-      const bge = await this.tryLoadModel(BGE_M3_MODEL_ID, 'int8', BGE_M3_DIMENSION, 'bge-m3');
-      if (bge) return bge;
-    }
-
-    // Try MiniLM as the lightweight fallback.
-    const minilm = await this.tryLoadModel(MINILM_MODEL_ID, 'q4', MINILM_DIMENSION, 'minilm');
-    if (minilm) return minilm;
-
-    // If BGE-M3 wasn't tried yet (low RAM), try it as a last resort before n-gram.
-    if (!preferBgeM3) {
-      const bge = await this.tryLoadModel(BGE_M3_MODEL_ID, 'int8', BGE_M3_DIMENSION, 'bge-m3');
-      if (bge) return bge;
-    }
-
-    // Last resort: n-gram hash (no model files needed).
     return { tier: 'ngram', pipeline: null, nativeDim: MINILM_DIMENSION };
   }
 

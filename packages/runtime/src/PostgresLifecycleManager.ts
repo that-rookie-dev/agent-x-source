@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { tmpdir, totalmem } from 'node:os';
 import { platform, arch } from 'node:os';
 import { Pool } from 'pg';
-import { buildEmbeddedPostgresChildEnv, isNeuralBrainSupported, getLogger } from '@agentx/shared';
+import { buildEmbeddedPostgresChildEnv, getLogger } from '@agentx/shared';
 
 const logger = {
   info: (code: string, message: string) => getLogger().info(code, message),
@@ -320,19 +320,9 @@ export class PostgresLifecycleManager {
       '-c', 'unix_socket_directories=',
     ];
 
-    const binaryDir = dirname(bin.postgres);
-    const libDir = join(binaryDir, '..', 'lib', 'postgresql');
-    const ext = platform() === 'win32' ? '.dll' : platform() === 'darwin' ? '.dylib' : '.so';
-    if (isNeuralBrainSupported(ramGb) && existsSync(join(libDir, `age${ext}`))) {
-      args.push('-c', 'shared_preload_libraries=age');
-      this.options.onLog('Apache AGE preloading enabled');
-    } else if (!isNeuralBrainSupported(ramGb)) {
-      this.options.onLog('Apache AGE skipped — neural brain requires 16 GB+ RAM');
-    }
-
     const child = spawn(bin.postgres, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: this.getProcessEnv(binaryDir),
+      env: this.getProcessEnv(dirname(bin.postgres)),
       detached: false,
     });
 
@@ -420,17 +410,6 @@ export class PostgresLifecycleManager {
       this.options.onLog('pgvector extension ready');
     } catch (e) {
       throw new Error(`pgvector extension failed: ${e instanceof Error ? e.message : e}. The bundled embedded PostgreSQL requires pgvector to be built and installed.`);
-    }
-
-    try {
-      const { rows } = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') AS available`);
-      if (rows[0]?.available) {
-        this.options.onLog('AGE extension available');
-      } else {
-        this.options.onWarn?.('AGE extension not available; using relational CTE graph engine');
-      }
-    } catch (e) {
-      this.options.onWarn?.(`AGE extension check skipped: ${e instanceof Error ? e.message : e}`);
     }
 
     await pool.end();

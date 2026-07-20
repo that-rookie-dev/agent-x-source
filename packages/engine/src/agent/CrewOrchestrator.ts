@@ -9,7 +9,6 @@ import type { TokenTracker } from '../session/TokenTracker.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolService } from '../services/tool/ToolService.js';
-import type { MemoryService } from '../services/memory/MemoryService.js';
 import { streamText, stepCountIs, tool, jsonSchema } from 'ai';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { FiberSet } from '../concurrency/FiberSet.js';
@@ -17,7 +16,7 @@ import type { SessionManager } from '../session/SessionManager.js';
 import { resolveCrewToolIds } from './crew-tools.js';
 import { autoComposeCrewMembers, assessCrewNeed } from './crew-auto-compose.js';
 import { buildCrewVoiceBlock, buildCrewScopeBlock, buildCrewToneLine } from './crew-persona.js';
-import { CHAT_MARKDOWN_PROMPT } from '../secret-sauce/prompt-assembly/sections.js';
+import { CHAT_MARKDOWN_PROMPT } from '../prompt/assembly/sections.js';
 
 const STOP_WORDS = new Set(['and', 'the', 'of', 'in', 'for', 'to', 'a', 'an', 'is', 'on', 'at', 'by', 'with', 'or', 'as', 'be', 'it', 'no', 'not', 'but', 'from', 'has', 'had', 'was', 'are', 'were', 'been', 'can', 'will', 'may', 'shall', 'should', 'would', 'could']);
 
@@ -95,7 +94,6 @@ export class CrewOrchestrator {
   private activeModel: string = '';
   private toolRegistry?: ToolRegistry;
   private toolExecutor?: ToolExecutor | ToolService;
-  private memoryService?: MemoryService;
   private config?: AgentXConfig;
   private sessionId: string = 'crew';
   private waitForClarification?: (questionnaire: QuestionnairePayload) => Promise<string>;
@@ -124,10 +122,6 @@ export class CrewOrchestrator {
   setTools(registry: ToolRegistry, executor: ToolExecutor | ToolService): void {
     this.toolRegistry = registry;
     this.toolExecutor = executor;
-  }
-
-  setMemoryService(memoryService: MemoryService | null | undefined): void {
-    this.memoryService = memoryService ?? undefined;
   }
 
   setClarificationHandler(handler: (questionnaire: QuestionnairePayload) => Promise<string>): void {
@@ -242,26 +236,8 @@ export class CrewOrchestrator {
     return null;
   }
 
-  private async extractCrewMemories(userMessage: string, crewResponse: string, crewId: string): Promise<void> {
-    try {
-      // MemoryService seam is wired, but the legacy crew MemoryManager categories
-      // do not map to MemoryNodeCategory, so we keep the legacy fallback for now.
-      if (this.memoryService) {
-        // no-op
-      }
-      const { MemoryExtractor } = await import('../secret-sauce/MemoryExtractor.js');
-      const extractor = new MemoryExtractor(this.provider, this.activeModel);
-      const memories = await extractor.extract(userMessage, crewResponse);
-      if (memories.length > 0) {
-        const { MemoryManager } = await import('../secret-sauce/MemoryManager.js');
-        const mm = new MemoryManager(`crew:${crewId}`);
-        for (const mem of memories) {
-          mm.addMemory(mem.content, mem.category);
-        }
-      }
-    } catch {
-      // best-effort
-    }
+  private async extractCrewMemories(_userMessage: string, _crewResponse: string, _crewId: string): Promise<void> {
+    // Crew-scoped JSON memories removed in Phase D; Memory Fabric handles chat distillation.
   }
 
   private async callCrew(

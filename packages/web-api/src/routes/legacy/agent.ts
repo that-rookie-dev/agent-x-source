@@ -1,29 +1,36 @@
 /**
- * Agent route group (persona, mode escalation, turn state, vitals, autonomy).
+ * Agent route group (persona, mode escalation, turn state, autonomy).
  *
  * Extracted from legacy.ts. Registers handlers on a dedicated Router and
  * exports createAgentRouter() for mounting by the legacy aggregator.
  */
 import { Router } from 'express';
+import type { AgentPersonaConfig } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
-import { getEngine, awaitEngineStorageReady, getVitals, getAutonomyStatus } from '../../engine.js';
+import { getPersonaStore } from '@agentx/engine';
+import { getEngine, awaitEngineStorageReady, getAutonomyStatus } from '../../engine.js';
 import { EnhancedToolExecutor } from '@agentx/engine';
 import { turnRegistry } from '../../turn-registry.js';
+
+function normalizePersonaBody(body: Record<string, unknown>): AgentPersonaConfig {
+  return {
+    name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'Agent-X',
+    description: typeof body.description === 'string' ? body.description : '',
+    communicationStyle: (body.communicationStyle as AgentPersonaConfig['communicationStyle']) ?? 'direct',
+    decisionMaking: (body.decisionMaking as AgentPersonaConfig['decisionMaking']) ?? 'balanced',
+    domainContext: typeof body.domainContext === 'string' ? body.domainContext : 'general',
+    traits: Array.isArray(body.traits) ? body.traits.filter((t): t is string => typeof t === 'string') : [],
+  };
+}
 
 export function createAgentRouter(): Router {
   const r = Router();
 
   r.get('/api/agent/persona', (_req, res) => {
-    const eng = getEngine();
     try {
-      const store = eng.sessionManager.getStorageAdapter();
-      if (store && typeof store.getPersona === 'function') {
-        const persona = store.getPersona();
-        res.json(persona ?? {});
-      } else {
-        res.json({});
-      }
+      res.json(getPersonaStore().get());
     } catch (e) {
+      getLogger().error('GET_API_AGENT_PERSONA', e instanceof Error ? e : String(e));
       res.json({});
     }
   });
@@ -32,32 +39,10 @@ export function createAgentRouter(): Router {
     const eng = getEngine();
     try {
       await awaitEngineStorageReady();
-      const store = eng.sessionManager.getStorageAdapter();
-      if (store && typeof store.setPersona === 'function') {
-        store.setPersona({
-          name: req.body.name ?? 'Agent-X',
-          description: req.body.description ?? '',
-          communicationStyle: req.body.communicationStyle ?? 'direct',
-          decisionMaking: req.body.decisionMaking ?? 'balanced',
-          domainContext: req.body.domainContext ?? 'general',
-          traits: req.body.traits ?? [],
-        });
-      }
-      // If there's a running agent, update its persona in-memory
+      const personaData = normalizePersonaBody(req.body ?? {});
+      getPersonaStore().save(personaData);
       if (eng.agent) {
-        const personaData = {
-          name: req.body.name ?? 'Agent-X',
-          description: req.body.description ?? '',
-          communicationStyle: req.body.communicationStyle ?? 'direct',
-          decisionMaking: req.body.decisionMaking ?? 'balanced',
-          domainContext: req.body.domainContext ?? 'general',
-          traits: req.body.traits ?? [],
-        };
         eng.agent.applyPersona(personaData);
-        // Re-seed identity manager so evolution overlay is in sync
-        try { eng.agent.applyPersona(personaData); } catch (e) {
-          try { eng.agent.applyPersona(personaData); } catch { /* ignore */ }
-        }
       }
       res.json({ ok: true });
     } catch (err) {
@@ -115,16 +100,6 @@ export function createAgentRouter(): Router {
       processing: agent.lifecycle.isProcessing(),
       bypassPermissions: agent.bypassPermissions,
     });
-  });
-
-  r.get('/api/agent/vitals', async (_req, res) => {
-    try {
-      const vitals = await getVitals();
-      res.json(vitals);
-    } catch (e) {
-      getLogger().error('GET_API_AGENT_VITALS', e instanceof Error ? e : String(e));
-      res.status(500).json({ status: 'uninitialized', error: e instanceof Error ? e.message : 'vitals-error' });
-    }
   });
 
   r.get('/api/agent/autonomy-status', (_req, res) => {

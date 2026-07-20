@@ -1,6 +1,6 @@
 /**
  * One-shot backfill: embed historical user/assistant pairs from persisted sessions
- * into chat_memory nodes so memory_search works for conversations before ingestion shipped.
+ * into chat_memory nodes so cortex_memory_search works for conversations before ingestion shipped.
  */
 import type { Pool } from 'pg';
 import type { EmbeddingProvider, SessionContextKind } from '@agentx/shared';

@@ -44,6 +44,42 @@ export interface ToolExecutionEntry {
 
 const MAX_HISTORY = 200;
 
+/** Ensure every tool returns an honest, well-formed result — never fire-and-forget. */
+function normalizeToolResult(toolId: string, result: unknown): ToolResult {
+  if (!result || typeof result !== 'object') {
+    return {
+      success: false,
+      output: `Tool "${toolId}" returned no result. Action was NOT performed.`,
+      error: 'INVALID_RESULT',
+    };
+  }
+  const r = result as Partial<ToolResult>;
+  if (typeof r.success !== 'boolean') {
+    return {
+      success: false,
+      output: `Tool "${toolId}" returned an invalid result. Action was NOT performed.`,
+      error: 'INVALID_RESULT',
+    };
+  }
+  const output = typeof r.output === 'string'
+    ? r.output
+    : (r.output == null ? '' : String(r.output));
+  if (r.success) {
+    return {
+      success: true,
+      output: output.trim() || `Tool "${toolId}" completed successfully.`,
+      ...(r.error ? { error: r.error } : {}),
+      ...(r.metadata ? { metadata: r.metadata } : {}),
+    };
+  }
+  return {
+    success: false,
+    output: output.trim() || `Tool "${toolId}" failed. Action was NOT performed.`,
+    error: r.error ?? 'EXECUTION_ERROR',
+    ...(r.metadata ? { metadata: r.metadata } : {}),
+  };
+}
+
 export class ToolExecutor implements ToolPermissionHost {
   private registry: ToolRegistry;
   private permissionManager: PermissionManager;
@@ -412,7 +448,10 @@ export class ToolExecutor implements ToolPermissionHost {
       }
       return {
         success: false,
-        output: permissionResult.error === 'MODE_RESTRICTED' ? `"${toolId}" is not available.` : 'Permission denied',
+        output: permissionResult.error === 'MODE_RESTRICTED'
+          ? `"${toolId}" is not available. Action was NOT performed.`
+          : `Permission denied for "${toolId}". Action was NOT performed. `
+            + 'Approve it in the permission prompt (or enable bypass permissions), then retry.',
         error: permissionResult.error ?? 'PERMISSION_DENIED',
       };
     }
@@ -496,11 +535,12 @@ export class ToolExecutor implements ToolPermissionHost {
         }, context.timeout);
       });
 
-      const result = await Promise.race([
+      const rawResult = await Promise.race([
         handler(args, context),
         timeoutPromise,
       ]);
-      
+      const result = normalizeToolResult(toolId, rawResult);
+
       const elapsed = Date.now() - startTime;
       const entry: ToolExecutionEntry = { toolId, args, result, timestamp: startTime, elapsed, sessionId };
       this.executionHistory.push(entry);
@@ -512,7 +552,7 @@ export class ToolExecutor implements ToolPermissionHost {
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
 
       if (options?.signal?.aborted) {
-        return { success: false, output: 'Tool execution cancelled', error: 'ABORTED' };
+        return { success: false, output: 'Tool execution cancelled. Action was NOT performed.', error: 'ABORTED' };
       }
 
       return result;

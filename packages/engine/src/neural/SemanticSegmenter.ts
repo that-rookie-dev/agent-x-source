@@ -1,5 +1,5 @@
 /**
- * SemanticSegmenter — Stage 2 of the StructuredMemoryPipeline.
+ * SemanticSegmenter — segments text into TextUnits for memory extraction.
  *
  * Type-aware segmentation: picks the right segmenter based on content type and
  * produces TextUnits (analysis windows) with full provenance. TextUnits are NOT

@@ -506,8 +506,11 @@ ipcMain.on('system:totalMemoryGB', (event) => {
 ipcMain.on('system:localModelSupported', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 32;
 });
-ipcMain.on('system:neuralBrainSupported', (event) => {
+ipcMain.on('system:cortexReady', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 16;
+});
+ipcMain.on('system:cortexDegraded', (event) => {
+  event.returnValue = totalmem() / (1024 ** 3) < 16;
 });
 ipcMain.on('system:styleTtsSupported', (event) => {
   event.returnValue = totalmem() / (1024 ** 3) >= 16;

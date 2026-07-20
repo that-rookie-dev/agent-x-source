@@ -29,6 +29,8 @@ export * from './client-situation.js';
 export * from './markdown-document.js';
 export * from './channel-render.js';
 export * from './knowledge.js';
+export * from './neural-cortex.js';
+export * from './knowledge-base-events.js';
 export * from './attachments.js';
 export type { TurnAttachment, NormalizedAttachment } from './communication.js';
 export type { StoredAttachment, AttachmentPreview, AttachmentReference } from './attachments.js';

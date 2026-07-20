@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCrewPrivateIdentityPrompt, buildCrewPrivateFastReplyPrompt } from '../src/agent/CrewOrchestrator.js';
-import { createCrewPrivateConductSection, createRulesSection } from '../src/secret-sauce/prompt-assembly/sections.js';
+import { createCrewPrivateConductSection, createRulesSection } from '../src/prompt/assembly/sections.js';
 import type { Crew } from '@agentx/shared';
 
 describe('buildCrewPrivateIdentityPrompt', () => {

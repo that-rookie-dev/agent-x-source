@@ -10,7 +10,6 @@ vi.mock('../src/engine.js', () => ({
   clearEngine: vi.fn(),
   getOrCreateAgent: vi.fn(),
   ensureChannelAgent: vi.fn(),
-  getVitals: vi.fn().mockResolvedValue({}),
   getAutonomyStatus: vi.fn().mockReturnValue({}),
   awaitEngineStorageReady: vi.fn().mockResolvedValue(undefined),
   applyRuntimeSettings: vi.fn(),
@@ -56,7 +55,6 @@ vi.mock('../src/ws.js', () => ({
   setupWebSocket: vi.fn(),
   ensureSubscribed: vi.fn(),
   persistMessageDirect: vi.fn(),
-  broadcastBrainActivity: vi.fn(),
 }));
 
 vi.mock('../src/voice-ws.js', () => ({
@@ -87,20 +85,6 @@ vi.mock('../src/chat-helpers.js', () => ({
 vi.mock('../src/message-enrich.js', () => ({
   enrichSessionMessagesForUi: vi.fn((msgs: unknown) => msgs),
   mergeNormalizedMessageForApi: vi.fn(),
-}));
-
-vi.mock('../src/ingestion-worker-ref.js', () => ({
-  setIngestionWorkerRef: vi.fn(),
-  refreshIngestionWorkerGenerator: vi.fn(),
-}));
-
-vi.mock('../src/ingestion-governor.js', () => ({
-  bindIngestionWorker: vi.fn(),
-  setIngestionAppVisible: vi.fn(),
-  setIngestionNeuralBrainEnabled: vi.fn(),
-  refreshIngestionRagSourceCount: vi.fn(),
-  evaluateIngestionWorker: vi.fn(),
-  getIngestionGovernorState: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../src/validation.js', () => ({
@@ -161,10 +145,6 @@ vi.mock('../src/agent-x-core.js', () => ({
   postAgentXCoreSession: vi.fn(),
 }));
 
-vi.mock('../src/memory-api.js', () => ({
-  memoryRouter: express.Router(),
-}));
-
 vi.mock('../src/routes/jobs.js', () => ({
   router: () => express.Router(),
 }));
@@ -203,10 +183,6 @@ vi.mock('../src/markdown-api.js', () => ({
 vi.mock('../src/agent-x-overview-bridge.js', () => ({
   initAgentXOverviewBridge: vi.fn(),
   shutdownAgentXOverviewBridge: vi.fn(),
-}));
-
-vi.mock('../src/distillation-generator.js', () => ({
-  buildGraphRagSummarizer: vi.fn(),
 }));
 
 vi.mock('../src/pg-lifecycle-bridge.js', () => ({

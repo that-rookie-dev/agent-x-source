@@ -1,34 +1,57 @@
 import { useEffect, useState } from 'react';
 import {
-  isNeuralBrainSupported,
   isVoiceWarmupSupported,
+  resolveNeuralCortexEmbeddingTier,
 } from '@agentx/shared/browser';
 import { cachedApiCall } from '../perf/api-cache';
 
 interface SystemCapabilitiesResponse {
   totalMemoryGB?: number;
   localModelSupported?: boolean;
-  neuralBrainSupported?: boolean;
+  neuralCortexEmbeddingTier?: 'bge-m3' | 'minilm';
+  cortexReady?: boolean;
+  cortexDegraded?: boolean;
   voiceWarmupSupported?: boolean;
 }
 
 export interface SystemCapabilities {
   totalMemoryGB: number;
   localModelSupported: boolean;
-  neuralBrainSupported: boolean;
+  neuralCortexEmbeddingTier: 'bge-m3' | 'minilm';
+  cortexReady: boolean;
+  cortexDegraded: boolean;
   voiceWarmupSupported: boolean;
+}
+
+function buildCapsFromMemory(totalMemoryGB: number, data?: SystemCapabilitiesResponse): SystemCapabilities {
+  const tier = data?.neuralCortexEmbeddingTier ?? resolveNeuralCortexEmbeddingTier(totalMemoryGB);
+  const cortexReady = typeof data?.cortexReady === 'boolean'
+    ? data.cortexReady
+    : tier === 'bge-m3';
+  const cortexDegraded = typeof data?.cortexDegraded === 'boolean'
+    ? data.cortexDegraded
+    : tier === 'minilm';
+  return {
+    totalMemoryGB,
+    localModelSupported: data?.localModelSupported === true,
+    neuralCortexEmbeddingTier: tier,
+    cortexReady,
+    cortexDegraded,
+    voiceWarmupSupported: typeof data?.voiceWarmupSupported === 'boolean'
+      ? data.voiceWarmupSupported
+      : isVoiceWarmupSupported(totalMemoryGB),
+  };
 }
 
 export function useSystemCapabilities(): SystemCapabilities | null {
   const [caps, setCaps] = useState<SystemCapabilities | null>(() => {
     if (typeof window !== 'undefined' && window.agentx?.localModelSupported !== undefined) {
       const totalMemoryGB = window.agentx.totalMemoryGB ?? 0;
-      return {
-        totalMemoryGB,
+      return buildCapsFromMemory(totalMemoryGB, {
         localModelSupported: window.agentx.localModelSupported,
-        neuralBrainSupported: window.agentx.neuralBrainSupported ?? isNeuralBrainSupported(totalMemoryGB),
-        voiceWarmupSupported: window.agentx.voiceWarmupSupported ?? isVoiceWarmupSupported(totalMemoryGB),
-      };
+        cortexReady: window.agentx.cortexReady,
+        cortexDegraded: window.agentx.cortexDegraded,
+      });
     }
     return null;
   });
@@ -39,22 +62,15 @@ export function useSystemCapabilities(): SystemCapabilities | null {
     cachedApiCall('system-capabilities', () => fetch('/api/system/capabilities').then((r) => r.json() as Promise<SystemCapabilitiesResponse>), 60_000)
       .then((data) => {
         const totalMemoryGB = typeof data.totalMemoryGB === 'number' ? data.totalMemoryGB : 0;
-        setCaps({
-          totalMemoryGB,
-          localModelSupported: data.localModelSupported === true,
-          neuralBrainSupported: typeof data.neuralBrainSupported === 'boolean'
-            ? data.neuralBrainSupported
-            : isNeuralBrainSupported(totalMemoryGB),
-          voiceWarmupSupported: typeof data.voiceWarmupSupported === 'boolean'
-            ? data.voiceWarmupSupported
-            : isVoiceWarmupSupported(totalMemoryGB),
-        });
+        setCaps(buildCapsFromMemory(totalMemoryGB, data));
       })
       .catch(() => {
         setCaps({
           totalMemoryGB: 0,
           localModelSupported: false,
-          neuralBrainSupported: false,
+          neuralCortexEmbeddingTier: 'minilm',
+          cortexReady: false,
+          cortexDegraded: true,
           voiceWarmupSupported: false,
         });
       });
@@ -75,12 +91,12 @@ export function useCapabilitiesReady(): boolean {
   return caps !== null;
 }
 
-export function useNeuralBrainSupported(): boolean {
+export function useCortexReady(): boolean {
   const caps = useSystemCapabilities();
-  if (typeof window !== 'undefined' && window.agentx?.neuralBrainSupported !== undefined) {
-    return window.agentx.neuralBrainSupported;
+  if (typeof window !== 'undefined' && window.agentx?.cortexReady !== undefined) {
+    return window.agentx.cortexReady;
   }
-  return caps?.neuralBrainSupported ?? false;
+  return caps?.cortexReady ?? false;
 }
 
 export function useVoiceWarmupSupported(): boolean {

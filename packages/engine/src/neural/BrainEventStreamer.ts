@@ -1,37 +1,42 @@
 /**
- * Brain Event Streaming Protocol
- * 
- * Implements the visualization event streaming protocol from NEURAL_BRAIN_STRUCTURING.md:
- * - NODE_CREATED: When a neuron is committed to the database
- * - SYNAPSE_CONNECTED: When an edge is forged between nodes
- * - NEURON_ACTIVATED: When nodes are queried/traversed during RAG
+ * Brain Event Streaming
+ *
+ * Coalesced event bus for the Neural Cortex visualization:
+ * - NODE_CREATED:      a neuron was committed to the fabric
+ * - SYNAPSE_CONNECTED: an edge was forged between neurons
+ * - NEURON_ACTIVATED:  neurons were touched during recall (RAG / search)
+ *
+ * Events are batched (default 100ms window) so bursts — e.g. a document ingest
+ * creating dozens of nodes, or a graph walk touching many neurons — reach the
+ * client as a handful of flushes instead of a stampede.
  */
+import type { MemoryNodeCategory, MemoryEdgeType } from './MemoryFabric.js';
 
 export interface NodeCreatedEvent {
   event: 'NODE_CREATED';
-  node_id: string;
-  cluster_id: string;
-  type: 'Concept' | 'Attribute' | 'Operation' | 'State' | 'Session';
+  nodeId: string;
   label: string;
-  content?: string;
-  x?: number | null;
-  y?: number | null;
-  sourceColor?: string;
+  category: MemoryNodeCategory;
+  x: number | null;
+  y: number | null;
+  communityId?: string | null;
+  sourceId?: string | null;
+  sessionId?: string | null;
   timestamp: string;
 }
 
 export interface SynapseConnectedEvent {
   event: 'SYNAPSE_CONNECTED';
-  source_id: string;
-  target_id: string;
-  edge_type: 'PARENT_OF' | 'DEPENDS_ON' | 'MODIFIES' | 'RESONATES_WITH';
+  sourceId: string;
+  targetId: string;
+  relationshipType: MemoryEdgeType;
   weight: number;
   timestamp: string;
 }
 
 export interface NeuronActivatedEvent {
   event: 'NEURON_ACTIVATED';
-  node_ids: string[];
+  nodeIds: string[];
   intensity: number;
   timestamp: string;
 }
@@ -39,16 +44,20 @@ export interface NeuronActivatedEvent {
 export type BrainEvent = NodeCreatedEvent | SynapseConnectedEvent | NeuronActivatedEvent;
 
 export interface BrainEventListener {
-  (event: BrainEvent): void | Promise<void>;
+  (events: BrainEvent[]): void;
 }
 
 /**
- * Event bus for brain visualization events
+ * Event bus for brain visualization events. Listeners receive coalesced
+ * batches, never individual events.
  */
 export class BrainEventStreamer {
   private listeners: Set<BrainEventListener> = new Set();
   private eventQueue: BrainEvent[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Activated node ids accumulated within the current coalescing window. */
+  private pendingActivations: Set<string> = new Set();
+  private pendingActivationIntensity = 0;
   private readonly coalesceMs: number;
   private readonly maxBatchSize: number;
 
@@ -57,133 +66,91 @@ export class BrainEventStreamer {
     this.maxBatchSize = options.maxBatchSize ?? 100;
   }
 
-  /**
-   * Register an event listener
-   */
+  /** Register a batch listener. Returns an unsubscribe function. */
   on(listener: BrainEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  /**
-   * Emit a NODE_CREATED event
-   */
-  emitNodeCreated(params: {
-    nodeId: string;
-    clusterId: string;
-    type: 'Concept' | 'Attribute' | 'Operation' | 'State' | 'Session';
-    label: string;
-    content?: string;
-    x?: number | null;
-    y?: number | null;
-    sourceColor?: string;
-  }): void {
-    const event: NodeCreatedEvent = {
-      event: 'NODE_CREATED',
-      node_id: params.nodeId,
-      cluster_id: params.clusterId,
-      type: params.type,
-      label: params.label,
-      content: params.content,
-      x: params.x,
-      y: params.y,
-      sourceColor: params.sourceColor,
-      timestamp: new Date().toISOString(),
-    };
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
 
-    this.enqueue(event);
+  emitNodeCreated(params: Omit<NodeCreatedEvent, 'event' | 'timestamp'>): void {
+    if (this.listeners.size === 0) return;
+    this.enqueue({ event: 'NODE_CREATED', ...params, timestamp: new Date().toISOString() });
+  }
+
+  emitSynapseConnected(params: Omit<SynapseConnectedEvent, 'event' | 'timestamp'>): void {
+    if (this.listeners.size === 0) return;
+    this.enqueue({ event: 'SYNAPSE_CONNECTED', ...params, timestamp: new Date().toISOString() });
   }
 
   /**
-   * Emit a SYNAPSE_CONNECTED event
+   * Activations are merged within a coalescing window: a recall pass that
+   * fires 20 neurons produces a single NEURON_ACTIVATED event.
    */
-  emitSynapseConnected(params: {
-    sourceId: string;
-    targetId: string;
-    edgeType: 'PARENT_OF' | 'DEPENDS_ON' | 'MODIFIES' | 'RESONATES_WITH';
-    weight: number;
-  }): void {
-    const event: SynapseConnectedEvent = {
-      event: 'SYNAPSE_CONNECTED',
-      source_id: params.sourceId,
-      target_id: params.targetId,
-      edge_type: params.edgeType,
-      weight: params.weight,
-      timestamp: new Date().toISOString(),
-    };
-
-    this.enqueue(event);
+  emitNeuronActivated(params: { nodeIds: string[]; intensity?: number }): void {
+    if (this.listeners.size === 0 || params.nodeIds.length === 0) return;
+    for (const id of params.nodeIds) this.pendingActivations.add(id);
+    this.pendingActivationIntensity = Math.max(this.pendingActivationIntensity, params.intensity ?? 1.0);
+    this.scheduleFlush();
   }
 
-  /**
-   * Emit a NEURON_ACTIVATED event
-   */
-  emitNeuronActivated(params: {
-    nodeIds: string[];
-    intensity?: number;
-  }): void {
-    const event: NeuronActivatedEvent = {
-      event: 'NEURON_ACTIVATED',
-      node_ids: params.nodeIds,
-      intensity: params.intensity ?? 1.0,
-      timestamp: new Date().toISOString(),
-    };
-
-    this.enqueue(event);
-  }
-
-  /**
-   * Enqueue an event for batched delivery
-   */
   private enqueue(event: BrainEvent): void {
     this.eventQueue.push(event);
-
-    // Flush immediately if batch size exceeded
     if (this.eventQueue.length >= this.maxBatchSize) {
       this.flush();
       return;
     }
+    this.scheduleFlush();
+  }
 
-    // Schedule a flush if not already scheduled
+  private scheduleFlush(): void {
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => this.flush(), this.coalesceMs);
+      // Never keep the process alive just for visualization events.
+      this.flushTimer.unref?.();
     }
   }
 
-  /**
-   * Flush queued events to all listeners
-   */
   private flush(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    if (this.eventQueue.length === 0) return;
-
-    const events = [...this.eventQueue];
+    const events = this.eventQueue;
     this.eventQueue = [];
 
-    // Broadcast to all listeners
-    this.listeners.forEach(listener => {
+    if (this.pendingActivations.size > 0) {
+      events.push({
+        event: 'NEURON_ACTIVATED',
+        nodeIds: Array.from(this.pendingActivations),
+        intensity: this.pendingActivationIntensity || 1.0,
+        timestamp: new Date().toISOString(),
+      });
+      this.pendingActivations.clear();
+      this.pendingActivationIntensity = 0;
+    }
+
+    if (events.length === 0) return;
+
+    for (const listener of this.listeners) {
       try {
-        events.forEach(event => listener(event));
+        listener(events);
       } catch (err) {
         console.error('Brain event listener error:', err);
       }
-    });
+    }
   }
 
-  /**
-   * Force immediate flush of all queued events
-   */
+  /** Force immediate flush of all queued events. */
   forceFlush(): void {
     this.flush();
   }
 
-  /**
-   * Clear all listeners
-   */
+  /** Clear all listeners and pending state. */
   clear(): void {
     this.listeners.clear();
     if (this.flushTimer) {
@@ -191,12 +158,12 @@ export class BrainEventStreamer {
       this.flushTimer = null;
     }
     this.eventQueue = [];
+    this.pendingActivations.clear();
+    this.pendingActivationIntensity = 0;
   }
 }
 
-/**
- * Global singleton instance
- */
+// ── Global singleton ─────────────────────────────────────────────────
 let globalStreamer: BrainEventStreamer | null = null;
 
 export function getGlobalBrainEventStreamer(): BrainEventStreamer {

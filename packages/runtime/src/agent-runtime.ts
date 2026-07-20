@@ -36,7 +36,6 @@ export interface AgentRuntimeOptions {
 export interface AgentRuntimePaths {
   webApiPath: string;
   webUiDir: string;
-  webNeuronDir: string;
   pythonPath: string;
   pythonDir: string;
   ffmpegPath: string;
@@ -62,7 +61,6 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
     return {
       webApiPath: join(root, 'packages', 'web-api', 'dist', 'index.js'),
       webUiDir: join(root, 'packages', 'web-ui', 'dist'),
-      webNeuronDir: join(root, 'packages', 'web-neuron', 'dist'),
       pythonPath: process.env['AGENTX_PYTHON_PATH'] || 'python3',
       pythonDir: '',
       ffmpegPath: process.env['AGENTX_FFMPEG_PATH']
@@ -92,7 +90,6 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
   return {
     webApiPath: join(resourcesPath, 'web-api', 'index.js'),
     webUiDir: join(resourcesPath, 'web-ui'),
-    webNeuronDir: join(resourcesPath, 'web-neuron'),
     pythonPath,
     pythonDir,
     ffmpegPath,
@@ -511,7 +508,6 @@ export class AgentRuntime {
     );
 
     process.env['AGENTX_UI_DIR'] = paths.webUiDir;
-    process.env['AGENTX_NEURON_DIR'] = paths.webNeuronDir;
     if (existsSync(paths.voiceSidecarDir)) {
       process.env['AGENTX_VOICE_SIDECAR_DIR'] = paths.voiceSidecarDir;
     }
