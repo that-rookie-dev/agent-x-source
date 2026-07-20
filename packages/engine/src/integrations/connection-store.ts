@@ -64,6 +64,9 @@ export class IntegrationConnectionStore {
       accountLabel: input.accountLabel,
       toolCount: existing?.toolCount ?? 0,
       enabled: input.enabled ?? true,
+      toolBenchmarks: existing?.toolBenchmarks,
+      lastBenchmarkAt: existing?.lastBenchmarkAt,
+      benchmarkSummary: existing?.benchmarkSummary,
       stdio: input.stdio,
       remote: input.remote,
     };

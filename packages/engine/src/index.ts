@@ -4,11 +4,18 @@ export { ConfigManager } from './config/index.js';
 export * from './tools/platform.js';
 export { SessionManager } from './session/SessionManager.js';
 export { hostCrewSnapshotPatch, hostCrewSnapshotFromInput } from './session/session-field-utils.js';
+export type { SessionListKpis } from './session/session-field-utils.js';
 export { TokenTracker } from './session/TokenTracker.js';
-export { CrashRecovery } from './session/CrashRecovery.js';
+
 export { GitManager } from './session/GitManager.js';
 export { FileWatcher } from './session/FileWatcher.js';
 export { BackgroundQueue } from './session/BackgroundQueue.js';
+export { InMemoryQueue } from './queue/InMemoryQueue.js';
+export { PgBossQueue } from './queue/PgBossQueue.js';
+export { JOB_NAMES } from './queue/job-names.js';
+export { registerNoOpJobWorkers } from './queue/workers/index.js';
+export { registerToolWorkers, createToolWorker } from './queue/workers/index.js';
+export { registerMemoryWorkers, createMemoryWorker } from './queue/workers/index.js';
 export { ModelRouter } from './session/ModelRouter.js';
 export { RecipeEngine } from './session/RecipeEngine.js';
 export { SessionLogger } from './session/SessionLogger.js';
@@ -23,14 +30,18 @@ export { BUNDLED_SKILLS, getBundledSkills, findBundledSkill } from './agent/Bund
 export type { GeneratedSkill } from './agent/SkillGenerator.js';
 export { ReflectionLoop } from './agent/ReflectionLoop.js';
 export type { ReflectionResult } from './agent/ReflectionLoop.js';
-export { Agent } from './agent/Agent.js';
+export { Agent, AgentFacade } from './agent/Agent.js';
 export type { AgentOptions } from './agent/Agent.js';
 export type { CheckpointAction, FailureRecord, TaskExecutorResult, TaskPlan, TaskStep } from './agent/TaskExecutor.js';
 export type { PartPersistFn } from './agent/AiSdkStreamHandler.js';
+export { createAiSdkModel } from './agent/AiSdkBridge.js';
+export { summarizePermissionArgs } from './agent/agent-helpers.js';
 export { ResponseFormatter } from './agent/ResponseFormatter.js';
 export type { FormattedSegment } from './agent/ResponseFormatter.js';
 export { SubAgentManager } from './agent/SubAgentManager.js';
 export type { SubAgentTask } from './agent/SubAgentManager.js';
+export { SubAgentService, getSubAgentServiceInstance, setSubAgentServiceInstance } from './agent/SubAgentService.js';
+export type { SubAgentRecord } from './agent/SubAgentService.js';
 export { SubAgentCache } from './agent/SubAgentCache.js';
 export { SmartSubAgent } from './agent/SmartSubAgent.js';
 export type { SmartSubAgentOptions, SmartSubAgentResult } from './agent/SmartSubAgent.js';
@@ -39,9 +50,32 @@ export type { MessageClass, ExecutionPath, DecisionResult } from './agent/Decisi
 export { PromptEngine } from './prompt/PromptEngine.js';
 export type { IntentResult, PromptBudget } from './prompt/PromptEngine.js';
 export { AgentEventBus } from './EventBus.js';
-export { CanvasStore, setCanvasStoreInstance, getCanvasStoreInstance } from './canvas/CanvasStore.js';
-export { compileCanvasTsx, wrapMarkdownInCanvasTsx } from './canvas/CanvasCompiler.js';
-export { validateCanvasSource } from './canvas/CanvasValidator.js';
+export type { EventBus, EngineEvent, EventHandler, SessionEvent } from './events/EventBus.js';
+export type { AgentEvent } from './events/AgentEvent.js';
+
+export type { ServiceContext } from './services/ServiceContext.js';
+export { createServiceContext, getChannelServiceInstance, setChannelServiceInstance } from './services/ServiceContext.js';
+
+export { ToolService } from './services/tool/ToolService.js';
+export { ToolCacheService } from './services/tool/ToolCacheService.js';
+export { ToolPermissionService } from './services/tool/ToolPermissionService.js';
+export type { IToolService, ToolCall } from './services/tool/IToolService.js';
+export type { PermissionResult, ToolPermissionHost } from './services/tool/ToolPermissionService.js';
+export type { IJobQueue, IJob, JobEnqueueOptions, JobContext, JobHandler } from './queue/IJobQueue.js';
+export type { JobWorker } from './queue/workers/index.js';
+export type { ICache } from './cache/ICache.js';
+export { LocalCache } from './cache/LocalCache.js';
+export { RedisCache } from './cache/RedisCache.js';
+export type { RedisCacheOptions } from './cache/RedisCache.js';
+export { configureHttpKeepAlive, getHttpAgent, getHttpsAgent } from './utils/http-agents.js';
+export {
+  MarkdownDocumentStore,
+  setMarkdownDocumentStoreInstance,
+  getMarkdownDocumentStoreInstance,
+} from './markdown/MarkdownDocumentStore.js';
+// Attachments
+export { AttachmentService, getAttachmentService } from './attachments/index.js';
+
 export { ProviderFactory } from './providers/index.js';
 export type { ProviderInterface } from './providers/index.js';
 export { OpenAIProvider } from './providers/OpenAIProvider.js';
@@ -100,8 +134,13 @@ export type { TopologyMetrics, AssembleOptions, AssembledGraph } from './neural/
 export { StructuredMemoryPipeline } from './neural/StructuredMemoryPipeline.js';
 export type { PipelineInput, StructuredPipelineResult } from './neural/StructuredMemoryPipeline.js';
 export { deterministicNodeId, normalizeForHash } from './neural/DeterministicId.js';
-export { MemoryService } from './neural/MemoryService.js';
+export { MemoryService as MemoryIngestionService } from './neural/MemoryService.js';
 export type { IngestInput, IngestResult } from './neural/MemoryService.js';
+export { MemoryService } from './services/memory/MemoryService.js';
+export type { MemoryServiceOptions } from './services/memory/MemoryService.js';
+export { MemoryCacheService } from './services/memory/MemoryCacheService.js';
+export type { MemoryCacheServiceOptions } from './services/memory/MemoryCacheService.js';
+export type { IMemoryService, MemoryContextState, AssembleContextOptions, ChatTurnIngestOptions, SearchOptions } from './services/memory/IMemoryService.js';
 export { DocumentIngester } from './neural/DocumentIngester.js';
 export type { DocumentIngestInput, DocumentIngestResult, IngestProgressEvent, IngestProgressFn } from './neural/DocumentIngester.js';
 export { RagDocument } from './neural/RagDocument.js';
@@ -117,7 +156,6 @@ export { MODEL_CATALOG, getModelById, getModelsByTier, getCompatibleModels, getR
 export type { ModelOption, ModelCapability } from './neural/ModelCatalog.js';
 export { UnifiedLocalModelProvider, createUnifiedModelProvider } from './neural/UnifiedLocalModelProvider.js';
 export type { UnifiedModelConfig } from './neural/UnifiedLocalModelProvider.js';
-export type { PlasticityOptions, PlasticityResult } from './neural/SynapticPlasticity.js';
 export { MemoryPipeline } from './neural/MemoryPipeline.js';
 export type { PipelineOptions, PipelineResult, DistillFn } from './neural/MemoryPipeline.js';
 export { WebCrawler } from './neural/WebCrawler.js';
@@ -188,6 +226,9 @@ export {
   CRITICAL_DB_TABLES,
 } from './db/database-healer.js';
 export type { DatabaseHealResult, CriticalTablesAudit } from './db/database-healer.js';
+export { runMigrations } from './db/MigrationRunner.js';
+export type { MigrationResult, AppliedMigration } from './db/MigrationRunner.js';
+export { MIGRATION_FILES } from './db/migration-registry.js';
 export {
   recruitCandidatesForMission,
   ensureHubCrewOnRoster,
@@ -225,6 +266,7 @@ export type { AutomationBridge } from './automation/automation-bridge.js';
 export { setAgentXOverviewBridge, getAgentXOverviewBridge } from './agent/agent-x-overview-bridge.js';
 export type { AgentXOverviewBridge, AgentXOverviewView } from './agent/agent-x-overview-bridge.js';
 export { setChannelSuperSessionSync, syncChannelSuperSessionContext } from './channels/channel-super-session-sync.js';
+export { setChannelInboundAgentResolver, resolveChannelInboundAgent } from './channels/channel-inbound-router.js';
 export {
   buildAutomationNotifyQuestionnaire,
   getNotificationChannelStatus,
@@ -250,7 +292,7 @@ export { DefaultTelemetryBus } from './telemetry/index.js';
 export type { TelemetryBus, TelemetryEvent, TelemetryConfig } from '@agentx/shared';
 
 // Phase 0: Storage adapter
-export { PostgresStorageAdapter } from './storage/index.js';
+export { PostgresStorageAdapter, SessionPermissionStore } from './storage/index.js';
 export type { PostgresConfig } from './storage/PostgresStorageAdapter.js';
 export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog, StorablePermission } from '@agentx/shared';
 
@@ -376,7 +418,7 @@ export { TelemetryEmitter } from './communication/telemetry/TelemetryEmitter.js'
 export type { TurnMetrics, TelemetryEmitterConfig } from './communication/telemetry/TelemetryEmitter.js';
 
 // === GATEWAY & CHANNEL PLUGINS ===
-export { Gateway, ChannelRegistry, FocusManager } from './gateway/index.js';
+export { Gateway, ChannelRegistry as GatewayChannelRegistry, FocusManager } from './gateway/index.js';
 export { TelegramChannelPlugin, WebSocketChannelPlugin } from './gateway/index.js';
 export type { ChannelPlugin, ChannelRegistryEntry, GatewayConfig, FocusState, FocusChangeEvent, FocusListener, ChannelMessage, ChannelAttachment, GatewayResponse } from './gateway/index.js';
 
@@ -393,7 +435,38 @@ export { Semaphore } from './concurrency/Semaphore.js';
 export { Mutex } from './concurrency/Mutex.js';
 export { Fiber } from './concurrency/Fiber.js';
 export { FiberSet } from './concurrency/FiberSet.js';
+export { ConcurrencyLimiter } from './concurrency/ConcurrencyLimiter.js';
+export { WorkerPool, setupWorkerListener } from './workers/WorkerPool.js';
+export type { WorkerTask, WorkerPoolOptions, WorkerHandle } from './workers/WorkerPool.js';
+
 export { setOnnxThreadConfig, getOnnxThreadConfig } from './runtime/onnx-thread-config.js';
 export { assertSafeFetchUrl, isUrlSafeForFetch } from './search/url-utils.js';
 export { TtlCache } from './storage/cache/TtlCache.js';
 export * from './voice/index.js';
+
+// Phase 8: Channel service
+
+export { ChannelService } from './services/channel/ChannelService.js';
+export { ChannelRegistry } from './services/channel/ChannelRegistry.js';
+export { ChannelRegistry as ChannelBridgeRegistry } from './services/channel/ChannelRegistry.js';
+export { InboundQueue } from './services/channel/InboundQueue.js';
+export { ChannelWorker } from './services/channel/ChannelWorker.js';
+export type { ChannelServiceConfig } from './services/channel/ChannelService.js';
+export type { ChannelId, OutboundMessage, InboundPayload, ChannelStatus, IChannelService } from './services/channel/IChannelService.js';
+export type { IChannelBridge, OnInboundCallback } from './services/channel/IChannelBridge.js';
+export { DiscordBridgeAdapter } from './services/channel/adapters/DiscordBridgeAdapter.js';
+export { SlackBridgeAdapter } from './services/channel/adapters/SlackBridgeAdapter.js';
+export { EmailBridgeAdapter } from './services/channel/adapters/EmailBridgeAdapter.js';
+export { TelegramBridgeAdapter } from './services/channel/adapters/TelegramBridgeAdapter.js';
+export { getPerfTracker } from './benchmark/index.js';
+
+// System metrics, location, and weather
+export { SystemMetricsService, getSystemMetricsService, resetSystemMetricsService } from './system/SystemMetricsService.js';
+export type { SystemMetricsSnapshot } from './system/SystemMetricsService.js';
+export { WeatherService, getWeatherService, resetWeatherService } from './system/WeatherService.js';
+export type { WeatherResponse, WeatherConditions } from './system/WeatherService.js';
+export { KnowledgeBaseManager } from './knowledge/index.js';
+export {
+  getKnowledgeBaseManager,
+  setKnowledgeBaseManager,
+} from './knowledge/index.js';

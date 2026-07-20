@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { EngineEvent, CompletionMessage, AgentXConfig } from '@agentx/shared';
+import { generateId, getLogger } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
-import { generateId } from '@agentx/shared';
 import type { Agent } from './Agent.js';
 import { SmartSubAgent } from './SmartSubAgent.js';
 import { SubAgentCache } from './SubAgentCache.js';
@@ -14,6 +14,9 @@ import { Deferred } from '../concurrency/Deferred.js';
 import { Semaphore } from '../concurrency/Semaphore.js';
 import type { SubAgentType } from './subagent-types.js';
 import { SUBAGENT_TYPES } from './subagent-types.js';
+import { getSubAgentServiceInstance, type SubAgentService } from './SubAgentService.js';
+import { getChannelServiceInstance } from '../services/ServiceContext.js';
+import type { ChannelId, OutboundMessage } from '../services/channel/IChannelService.js';
 
 /** Default concurrent sub-agent slots (virtual fibers; queue when full). */
 const DEFAULT_MAX_CONCURRENT = 8;
@@ -30,6 +33,15 @@ export interface SubAgentTask {
   abortController?: AbortController;
   workDir?: string;
   deniedTools?: string[];
+  parentSessionId?: string;
+  childSessionId?: string;
+  background?: boolean;
+  consumed?: boolean;
+  // Inbound channel context — captured at spawn time so background sub-agents can
+  // reply on the same thread even after the parent turn has ended.
+  inboundChannel?: string;
+  inboundThreadId?: string;
+  inboundMessageId?: string;
   // Resource monitoring
   resourceUsage?: {
     cpuTime?: number; // milliseconds
@@ -55,6 +67,8 @@ export class SubAgentManager {
   private runningCount = 0;
   private idleDeferred: Deferred<void> | null = null;
   private taskCompletions: Map<string, Deferred<void>> = new Map();
+  private service: SubAgentService = getSubAgentServiceInstance();
+  private parentSessionId: string | null = null;
   /** Virtual concurrency pool — queues when at capacity instead of failing. */
   private concurrencyPool = new Semaphore(DEFAULT_MAX_CONCURRENT);
 
@@ -67,6 +81,10 @@ export class SubAgentManager {
    */
   setParentAgent(agent: Agent): void {
     this.parentAgent = agent;
+    this.parentSessionId = agent.sessionId ?? null;
+    if (this.parentSessionId) {
+      this.service.registerSessionEventBus(this.parentSessionId, this.eventBus);
+    }
   }
 
   setCache(cache: SubAgentCache): void {
@@ -143,7 +161,7 @@ export class SubAgentManager {
    * Spawn a sub-agent that will actually execute an LLM completion in the background.
    * When at maxConcurrent, the task is queued (virtual concurrency) — never rejected.
    */
-  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string): SubAgentTask {
+  spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string, background = false, channelContext?: { channel?: string; threadId?: string; messageId?: string }): SubAgentTask {
     let effectiveTools = tools;
     let deniedTools: string[] | undefined;
     if (typeId) {
@@ -169,8 +187,16 @@ export class SubAgentManager {
         startTime: Date.now() - (cached.resourceUsage.cpuTime ?? 0),
         endTime: Date.now(),
         resourceUsage: { ...cached.resourceUsage },
+        parentSessionId: this.parentSessionId ?? undefined,
+        childSessionId: generateId(),
+        background,
+        consumed: !background,
+        inboundChannel: channelContext?.channel,
+        inboundThreadId: channelContext?.threadId,
+        inboundMessageId: channelContext?.messageId,
       };
       this.completedAgents.set(task.id, task);
+      this.service.registerTask(task);
       return task;
     }
 
@@ -187,11 +213,19 @@ export class SubAgentManager {
       abortController: new AbortController(),
       workDir,
       deniedTools,
+      parentSessionId: this.parentSessionId ?? undefined,
+      childSessionId: generateId(),
+      background,
+      consumed: !background,
+      inboundChannel: channelContext?.channel,
+      inboundThreadId: channelContext?.threadId,
+      inboundMessageId: channelContext?.messageId,
     };
 
     this.agents.set(task.id, task);
     this.runningCount++;
     this.taskCompletions.set(task.id, new Deferred<void>());
+    this.service.registerTask(task);
 
     this.eventBus.emit({
       type: 'agent_spawned',
@@ -236,7 +270,12 @@ export class SubAgentManager {
   private async execute(task: SubAgentTask): Promise<void> {
     task.status = 'running';
     task.startTime = Date.now();
+    this.service.taskStarted(task.id, task.startTime);
+    this.service.recordHeartbeat(task.id);
     const startMemory = process.memoryUsage().heapUsed;
+
+    // Keep the global service aware that this task is alive while it runs.
+    const heartbeatInterval = setInterval(() => this.service.recordHeartbeat(task.id), 5_000);
 
     this.eventBus.emit({
       type: 'agent_progress',
@@ -254,6 +293,9 @@ export class SubAgentManager {
           tools: task.tools.length > 0 ? task.tools : undefined,
           timeout: task.timeout,
           sessionId: task.id,
+          inboundChannel: task.inboundChannel,
+          inboundThreadId: task.inboundThreadId,
+          inboundMessageId: task.inboundMessageId,
         });
 
         // Set up timeout
@@ -334,6 +376,8 @@ export class SubAgentManager {
       }
     } catch (error) {
       this.fail(task.id, error instanceof Error ? error.message : 'Sub-agent execution failed');
+    } finally {
+      clearInterval(heartbeatInterval);
     }
   }
 
@@ -344,10 +388,76 @@ export class SubAgentManager {
   spawnParallel(tasks: Array<{ instruction: string; tools?: string[] }>, maxConcurrent = DEFAULT_MAX_CONCURRENT): SubAgentTask[] {
     const spawned: SubAgentTask[] = [];
     for (const t of tasks) {
-      const task = this.spawn(t.instruction, t.tools ?? [], 60_000, maxConcurrent);
+      const task = this.spawn(t.instruction, t.tools ?? [], 60_000, maxConcurrent, undefined, false);
       if (task) spawned.push(task);
     }
     return spawned;
+  }
+
+  /**
+   * Persist the background task result as an assistant message in the PARENT
+   * session's store. This ensures the result is visible in the UI when the
+   * user returns to the session, even if the agent was destroyed and recreated.
+   */
+  private async persistBackgroundResultToParent(task: SubAgentTask, result: string, elapsedMs: number, tokensUsed: number): Promise<void> {
+    if (!this.parentAgent || !this.parentSessionId) return;
+    try {
+      const sessionManager = (this.parentAgent as unknown as { sessionManager?: { getStorageAdapter?: () => { insertMessage?: (msg: Record<string, unknown>) => void; ensureSessionHydrated?: (sessionId: string) => Promise<void> } } }).sessionManager;
+      const store = sessionManager?.getStorageAdapter?.();
+      if (!store?.insertMessage) return;
+      if (store.ensureSessionHydrated) {
+        await store.ensureSessionHydrated(this.parentSessionId);
+      }
+      const content = `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.childSessionId ?? task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${result}`;
+      store.insertMessage({
+        sessionId: this.parentSessionId,
+        role: 'assistant',
+        content,
+        metadata: {
+          backgroundTaskId: task.id,
+          childSessionId: task.childSessionId ?? task.id,
+          backgroundTask: true,
+          tokensUsed,
+          elapsedMs,
+        },
+      });
+    } catch {
+      // best-effort — the result is also stored in SubAgentService for in-memory ingestion
+    }
+  }
+
+  /**
+   * Send the background sub-agent's result back to the originating messaging
+   * channel thread so the user is notified without waiting in the parent turn.
+   */
+  private async notifyChannelOnCompletion(task: SubAgentTask, result: string, elapsedMs: number): Promise<void> {
+    if (!task.inboundChannel) return;
+    const supported: ChannelId[] = ['telegram', 'discord', 'slack', 'email'];
+    if (!supported.includes(task.inboundChannel as ChannelId)) return;
+
+    const channelService = getChannelServiceInstance();
+    if (!channelService) return;
+
+    const channel = task.inboundChannel as ChannelId;
+    const snippet = result.length > 3500 ? `${result.slice(0, 3400)}\n\n…(truncated, ${result.length - 3400} more chars)` : result;
+    const header = `✅ Background task complete (${Math.round(elapsedMs / 1000)}s)`;
+    const message: OutboundMessage = {
+      text: `${header}\n\n${snippet}`,
+      threadId: task.inboundThreadId,
+    };
+    if (channel === 'email') {
+      message.to = task.inboundThreadId;
+      message.subject = 'Agent-X background task complete';
+    }
+    if (task.inboundMessageId && (channel === 'slack' || channel === 'email')) {
+      message.replyTo = task.inboundMessageId;
+    }
+
+    try {
+      await channelService.send(channel, message);
+    } catch (err) {
+      getLogger('SubAgentManager').warn('background-notify', `Failed to send completion to ${channel}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   complete(agentId: string, result: string): void {
@@ -361,12 +471,28 @@ export class SubAgentManager {
       // Store in cache
       const cacheKey = this.cache.deriveKey(task.instruction, task.tools, this.systemPromptHash);
       this.cache.set(cacheKey, result, task.resourceUsage ?? {});
+      this.service.taskCompleted(agentId, result, task.resourceUsage);
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
         summary: result.slice(0, 200),
         elapsed,
       } as EngineEvent);
+      if (task.background) {
+        const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
+        // Persist the background task result to the PARENT session's store so
+        // it is visible in the UI when the user returns, even if the agent was
+        // destroyed and recreated (ingestBackgroundResultsForSession handles
+        // in-memory ingestion, but DB persistence ensures it survives restarts).
+        this.persistBackgroundResultToParent(task, result, elapsed, tokensUsed).catch((err) => {
+          getLogger('SubAgentManager').warn('background-persist', `Failed to persist background result for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+        // Send the full result to the originating channel thread (thread-aware reply).
+        // The notification system handles fan-out to all OTHER surfaces.
+        this.notifyChannelOnCompletion(task, result, elapsed).catch((err) => {
+          getLogger('SubAgentManager').warn('background-notify', `Channel notification failed for task ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
       this.finalizeTask(agentId);
     }
   }
@@ -378,6 +504,7 @@ export class SubAgentManager {
       task.result = error;
       task.endTime = Date.now();
       if (task.workDir) this.cleanupWorkDir(task.workDir);
+      this.service.taskFailed(agentId, error);
       this.eventBus.emit({
         type: 'agent_complete',
         agentId,
@@ -416,6 +543,7 @@ export class SubAgentManager {
       task.status = 'cancelled';
       task.endTime = Date.now();
       task.abortController?.abort();
+      this.service.taskCancelled(agentId);
     }
   }
 
@@ -426,33 +554,42 @@ export class SubAgentManager {
         task.status = 'cancelled';
         task.endTime = Date.now();
         task.abortController?.abort();
+        this.service.taskCancelled(task.id);
       }
     }
   }
 
-  promoteResult(subAgentId: string, result: string): void {
-    const task = this.agents.get(subAgentId);
-    if (!task) return;
+  /**
+   * Pull any completed background sub-agent results for a session into the
+   * current parent agent's history. This lets background tasks outlive the
+   * Agent instance that spawned them and report back after navigation.
+   */
+  ingestBackgroundResultsForSession(sessionId: string): void {
+    const results = this.service.consumeResults(sessionId);
+    if (!this.parentAgent || results.length === 0) return;
 
-    const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
-    const elapsedMs = (task.endTime ?? Date.now()) - (task.startTime ?? Date.now());
-
-    const syntheticMessage = {
-      role: 'assistant' as const,
-      content: `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${result}`,
-    };
-
-    if (this.parentAgent) {
+    for (const task of results) {
+      const tokensUsed = (task.resourceUsage?.tokenUsage?.input ?? 0) + (task.resourceUsage?.tokenUsage?.output ?? 0);
+      const elapsedMs = (task.endTime ?? Date.now()) - (task.startTime ?? Date.now());
+      const output = task.result ?? '';
+      const syntheticMessage = {
+        role: 'assistant' as const,
+        content: `[task_result]\ntaskId: ${task.id}\nchildSessionId: ${task.childSessionId ?? task.id}\ntokensUsed: ${tokensUsed}\nelapsedMs: ${elapsedMs}\n[/task_result]\n${output}`,
+      };
       (this.parentAgent as unknown as { addToHistory(msg: { role: 'user' | 'assistant'; content: string }): void }).addToHistory(syntheticMessage);
+      // Emit a background_task_complete event on the current agent's event bus
+      // so the WS subscriber can stream the result to the UI in real-time.
+      this.eventBus.emit({
+        type: 'background_task_complete',
+        taskId: task.id,
+        childSessionId: task.childSessionId ?? task.id,
+        tokensUsed,
+        elapsedMs,
+        summary: output.slice(0, 200),
+        instruction: task.instruction.slice(0, 300),
+        success: true,
+      } as EngineEvent);
     }
-
-    this.eventBus.emit({
-      type: 'background_task_complete',
-      taskId: task.id,
-      childSessionId: task.id,
-      tokensUsed,
-      elapsedMs,
-    } as EngineEvent);
   }
 
   getRunning(): SubAgentTask[] {

@@ -1,6 +1,6 @@
 // Centralized API client for all web-api endpoints
 
-import type { ClientSituation } from '@agentx/shared';
+import type { ClientSituation, TurnAttachment, AttachmentReference, AttachmentPreview, KnowledgeSource, KnowledgeSearchResult, KnowledgeSearchRequest, KnowledgeSourceListResponse } from '@agentx/shared';
 import { AGENTX_AUTH_TOKEN_KEY } from './utils/client-storage';
 import { notifyVoiceConfigUpdated } from './voice/support';
 
@@ -212,34 +212,79 @@ export interface CrewChatSessionInfo {
   updatedAt?: string;
 }
 
+type CrewChatRecruitBody = {
+  id?: string;
+  name: string;
+  title?: string;
+  callsign?: string;
+  systemPrompt: string;
+  description?: string;
+  tone?: string;
+  expertise?: string[];
+  traits?: string[];
+  tools?: string[];
+  source?: string;
+  catalogId?: string;
+  categoryId?: string;
+  color?: string;
+};
+
 export const crewChat = {
   /** Create or return the crew-private session; open via `/console/chat/{sessionId}`. */
   startSession: (body: {
     crewId?: string;
     scopePath?: string;
-    recruit?: {
-      id?: string;
-      name: string;
-      title?: string;
-      callsign?: string;
-      systemPrompt: string;
-      description?: string;
-      tone?: string;
-      expertise?: string[];
-      traits?: string[];
-      tools?: string[];
-      source?: string;
-      catalogId?: string;
-      categoryId?: string;
-      color?: string;
-    };
+    recruit?: CrewChatRecruitBody;
   }) => request<{
     sessionId: string;
     created: boolean;
     crew: CrewChatCrewInfo;
     session: CrewChatSessionInfo;
   }>('/crew-chat/sessions', { method: 'POST', body: JSON.stringify(body) }),
+
+  /**
+   * Create or return the voice-call sibling (`voice:{textSessionId}`).
+   * Call transcripts persist here — never in the private text chat.
+   */
+  startVoiceSession: (body: {
+    crewId?: string;
+    scopePath?: string;
+    textSessionId?: string;
+    recruit?: CrewChatRecruitBody;
+  }) => request<{
+    sessionId: string;
+    textSessionId: string;
+    voiceSessionId: string;
+    created: boolean;
+    crew: CrewChatCrewInfo;
+    session: CrewChatSessionInfo;
+  }>('/crew-chat/voice-sessions', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Call history — voice:{textSessionId} siblings only. */
+  listVoiceSessions: () => request<{ sessions: CrewVoiceSessionInfo[] }>('/crew-chat/voice-sessions'),
+
+  /** Permanently delete a call entry and its transcript messages. */
+  deleteVoiceSession: (id: string) =>
+    request<{ ok: boolean }>(`/crew-chat/voice-sessions/${id}`, { method: 'DELETE' }),
 };
+
+export interface CrewVoiceSessionInfo {
+  id: string;
+  voiceSessionId: string;
+  textSessionId: string | null;
+  title?: string;
+  contextKind?: 'crew_private';
+  hostCrewId?: string | null;
+  hostCrewName?: string | null;
+  hostCrewCallsign?: string | null;
+  hostCrewTitle?: string | null;
+  hostCrewColor?: string | null;
+  hostCrewCatalogId?: string | null;
+  hostCrewCategoryId?: string | null;
+  messageCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export const crewSuggestions = {
   evaluate: (text: string, sessionId: string, priorUserMessages?: string[]) =>
@@ -291,8 +336,11 @@ export const crewCatalog = {
   listCategories: () => request<{ categories: CatalogCategorySummary[] }>('/crew-catalog/categories'),
   listByCategory: (categoryId: string, limit = 500) =>
     request<{ crews: CatalogSummary[] }>(`/crew-catalog/by-category/${encodeURIComponent(categoryId)}?limit=${limit}`),
-  search: (q: string, limit = 40) =>
-    request<{ crews: CatalogSummary[] }>(`/crew-catalog/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  search: (q: string, limit = 40, signal?: AbortSignal) =>
+    request<{ crews: CatalogSummary[] }>(
+      `/crew-catalog/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+      signal ? { signal } : {},
+    ),
 };
 
 // ─── Chat ───
@@ -318,7 +366,7 @@ async function postChatAsync(path: string, body: Record<string, unknown>) {
 export const chat = {
   send: (
     text: string,
-    attachments?: { name: string; content: string }[],
+    attachments?: TurnAttachment[],
     retry?: boolean,
     delegateCrewIds?: string[],
     crewSuggestionResolved?: boolean,
@@ -328,6 +376,7 @@ export const chat = {
     forceWebSearch?: boolean,
     userMessagePersisted?: boolean,
     clientSituation?: ClientSituation,
+    crewSuggestionRequested?: boolean,
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -341,6 +390,7 @@ export const chat = {
       forceWebSearch,
       userMessagePersisted,
       clientSituation,
+      crewSuggestionRequested,
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -349,7 +399,7 @@ export const chat = {
   sendStream: async (
     text: string,
     onProgress: (event: { type: string; data: unknown }) => void,
-    attachments?: { name: string; content: string }[],
+    attachments?: TurnAttachment[],
     retry?: boolean,
     delegateCrewIds?: string[],
     crewSuggestionResolved?: boolean,
@@ -378,8 +428,8 @@ export const chat = {
       }
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error((error as any).error || `HTTP ${response.status}`);
+        const error: { error?: string } = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(error.error || `HTTP ${response.status}`);
       }
 
       // Handle Server-Sent Events
@@ -439,13 +489,26 @@ export const chat = {
   cancel: () => request<{ ok: boolean }>('/chat/cancel', { method: 'POST' }),
   history: () => request<ChatMessage[]>('/chat/history'),
   clear: () => request<{ ok: boolean }>('/chat/clear', { method: 'POST' }),
-  queue: (text: string, attachments?: { name: string; content: string }[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
+  queue: (text: string, attachments?: TurnAttachment[]) => request<{ ok: boolean; queueLength: number }>('/chat/queue', { method: 'POST', body: JSON.stringify({ text, attachments }) }),
   getQueue: () => request<{ queue: Array<{ text: string }>; length: number }>('/chat/queue'),
   clearQueue: () => request<{ ok: boolean }>('/chat/queue', { method: 'DELETE' }),
-  steer: (text: string, attachments?: { name: string; content: string }[]) =>
+  steer: (text: string, attachments?: TurnAttachment[]) =>
     postChatAsync('/chat/steer', { text, attachments }),
-  stopAndSend: (text: string, attachments?: { name: string; content: string }[]) =>
+  stopAndSend: (text: string, attachments?: TurnAttachment[]) =>
     postChatAsync('/chat/stop-and-send', { text, attachments }),
+};
+
+// ─── Attachments ───
+export const attachments = {
+  upload: (sessionId: string, filename: string, dataUrl: string) =>
+    request<{ ok: boolean; attachment: AttachmentReference }>(`/sessions/${encodeURIComponent(sessionId)}/attachments`, {
+      method: 'POST',
+      body: JSON.stringify({ filename, dataUrl }),
+    }),
+  get: (id: string) => `${BASE}/attachments/${encodeURIComponent(id)}`,
+  meta: (id: string) => request<{ ok: boolean; available: boolean; attachment: AttachmentReference }>(`/attachments/${encodeURIComponent(id)}?meta=1`),
+  preview: (id: string) => request<{ ok: boolean; preview: AttachmentPreview }>(`/attachments/${encodeURIComponent(id)}/preview`),
+  delete: (id: string) => request<{ ok: boolean }>(`/attachments/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 // ─── Sessions ───
@@ -475,6 +538,11 @@ export const sessions = {
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
   // Soft-archive: hides messages from the UI without deleting DB rows or memory embeddings
   archiveMessages: (id: string) => request<{ ok: boolean }>(`/sessions/${id}/archive-messages`, { method: 'POST' }),
+  // Hard-delete super-session messages + memory fabric (irreversible clean slate)
+  purgeContent: (id: string) => request<{ ok: boolean; memoryWiped?: { deletedNodes: number; deletedEdges: number } }>(
+    `/sessions/${id}/purge-content`,
+    { method: 'POST' },
+  ),
   restore: (id: string, opts?: { perRole?: number }) =>
     request<{
       session: SessionInfo;
@@ -485,6 +553,7 @@ export const sessions = {
       turnFeedback?: Array<Record<string, unknown>>;
       resumeState?: Record<string, unknown> | null;
       messagesMeta?: { total: number; truncated: boolean; perRole: number };
+      turnState?: { phase: string; stage?: string; step?: number; turnId?: string | null; startedAt?: number | null } | null;
     }>(`/sessions/${id}/restore`, {
       method: 'POST',
       body: JSON.stringify(opts?.perRole ? { perRole: opts.perRole } : {}),
@@ -556,8 +625,55 @@ export const sessions = {
 export const permissions = {
   respond: (requestId: string, choice: 'allow_once' | 'allow_always' | 'deny') =>
     request<{ ok: boolean }>('/permission/respond', { method: 'POST', body: JSON.stringify({ requestId, choice }) }),
+  instruct: (requestId: string, instruction: string) =>
+    request<{ ok: boolean }>('/permission/instruct', { method: 'POST', body: JSON.stringify({ requestId, instruction }) }),
   respondBatch: (choice: 'allow_once' | 'allow_always' | 'deny') =>
     request<{ ok: boolean }>('/permission/respond-batch', { method: 'POST', body: JSON.stringify({ choice }) }),
+};
+
+export interface SessionPermissionDecision {
+  toolName: string;
+  targetPath: string | null;
+  decision: string;
+}
+
+export interface SessionPermissions {
+  bypassPermissions: boolean;
+  decisions: SessionPermissionDecision[];
+}
+
+export const sessionPermissions = {
+  get: (sessionId: string) => request<SessionPermissions>(`/sessions/${sessionId}/permissions`),
+  setBypass: (sessionId: string, enabled: boolean) =>
+    request<{ bypassPermissions: boolean }>(`/sessions/${sessionId}/permissions/bypass`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+  revoke: (sessionId: string) =>
+    request<{ bypassPermissions: boolean; ok: boolean }>(`/sessions/${sessionId}/permissions/revoke`, { method: 'POST' }),
+  setTool: (sessionId: string, toolName: string, decision: 'allow_always' | 'deny' | 'revoke') =>
+    request<{ ok: boolean }>(`/sessions/${sessionId}/permissions/tool`, { method: 'POST', body: JSON.stringify({ toolName, decision }) }),
+};
+
+export const settingsPermissions = {
+  get: () => request<{ permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions'),
+  update: (permissions: Record<string, 'allow' | 'deny' | 'ask'>) =>
+    request<{ ok: boolean }>('/settings/permissions', { method: 'POST', body: JSON.stringify({ permissions }) }),
+};
+
+export interface PermissionToolEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  riskLevel: string;
+  defaultDecision: 'allow' | 'deny' | 'ask';
+  currentDecision: 'allow' | 'deny' | 'ask';
+  overridden: boolean;
+  source: 'native' | 'mcp';
+  providerId?: string;
+  providerName?: string;
+}
+
+export const settingsPermissionTools = {
+  list: () => request<{ tools: PermissionToolEntry[]; permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions/tools'),
 };
 
 // ─── System ───
@@ -568,12 +684,10 @@ export const system = {
   dirs: (path?: string) => request<{ current: string; parent: string | null; dirs: Array<{ name: string; path: string }> }>(`/filesystem/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 };
 
-// ─── Session Settings ───
-export type AgentMode = 'agent' | 'plan';
-
-export const sessionSettings = {
-  get: () => request<{ mode: AgentMode }>('/session/settings'),
-  setMode: (mode: AgentMode) => request<{ ok: boolean; mode: AgentMode }>('/session/mode', { method: 'POST', body: JSON.stringify({ mode }) }),
+// ─── Client Situation (location + timezone) ───
+export const clientSituation = {
+  set: (situation: ClientSituation) => request<{ ok: boolean; situation: ClientSituation | null }>('/client-situation', { method: 'POST', body: JSON.stringify({ situation }) }),
+  get: () => request<{ situation: ClientSituation | null }>('/client-situation'),
 };
 
 // ─── Tools ───
@@ -597,226 +711,155 @@ export const plugins = {
   updateConfig: (id: string, cfg: Record<string, unknown>) => request<{ ok: boolean }>(`/plugins/${id}/config`, { method: 'PUT', body: JSON.stringify(cfg) }),
 };
 
-// ─── RAG ───
-export const rag = {
-  status: () => request<{ enabled: boolean; indexedChunks: number }>('/rag/status').then(r => ({ enabled: r.enabled, chunkCount: r.indexedChunks ?? 0 })),
-  index: (content: string, metadata?: Record<string, string>) => request<{ ok: boolean }>('/rag/index', { method: 'POST', body: JSON.stringify({ content, metadata }) }),
-  search: (query: string, topK?: number) => request<RAGResult[]>('/rag/search', { method: 'POST', body: JSON.stringify({ query, topK }) }),
-  clear: () => request<{ ok: boolean }>('/rag/clear', { method: 'POST' }),
-};
-
-// ─── RAG Studio (async document ingestion + job tracking) ───
-
-/** Atomic stage detail persisted alongside job progress. */
-export interface StageDetail {
-  stage: string;
-  detail?: string;
-  chunkIndex?: number;
-  chunkCount?: number;
-  batchIndex?: number;
-  batchCount?: number;
-}
-
-export interface IngestionJob {
-  id: string;
-  kind: string;
-  payload: unknown;
-  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-  priority: number;
-  attemptCount: number;
-  maxAttempts: number;
-  error?: string;
-  progress: number;
-  result?: unknown;
-  stageDetail?: StageDetail | null;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
-  lockedUntil: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Full atomic event delivered via the SSE stream. */
-export interface IngestStreamEvent {
-  jobId: string;
-  stage: string;
-  progress: number;
+// ─── Knowledge Base (document ingestion / search) ───
+export interface KnowledgeSourceStatusEvent {
+  type: 'knowledge_source_status';
+  sourceId: string;
   status: string;
+  progress: number;
   detail?: string;
-  chunkIndex?: number;
-  chunkCount?: number;
-  batchIndex?: number;
-  batchCount?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
   error?: string;
-  updatedAt?: string;
+  timestamp?: string;
+}
+export interface KnowledgeSourceReadyEvent {
+  type: 'knowledge_source_ready';
+  sourceId: string;
+  timestamp?: string;
+}
+export interface KnowledgeSourceFailedEvent {
+  type: 'knowledge_source_failed';
+  sourceId: string;
+  error: string;
+  timestamp?: string;
+}
+export type KnowledgeSourceEvent = KnowledgeSourceStatusEvent | KnowledgeSourceReadyEvent | KnowledgeSourceFailedEvent;
+
+function knowledgeBaseWsUrl(): string {
+  const token = getAuthToken();
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${proto}://${window.location.host}/ws${qs}`;
 }
 
-export interface IngestAsyncResult {
-  jobId: string;
-  status: string;
-  name: string;
-  kind: string;
-}
+export const knowledgeBase = {
+  /** List knowledge sources, optionally scoped to a session. */
+  list: (sessionId?: string) => request<KnowledgeSourceListResponse>(`/knowledge${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`).then((r) => r.sources),
 
-export const ragStudio = {
-  /** Enqueue a file for async ingestion. Returns the job ID. */
-  ingestFile: async (file: File, opts?: { chunkSize?: number; chunkOverlap?: number }): Promise<IngestAsyncResult> => {
+  /** Get a single knowledge source by ID. */
+  get: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge/${encodeURIComponent(id)}`).then((r) => r.source),
+
+  /** Upload a file to the knowledge base. */
+  upload: async (file: File, sessionId?: string): Promise<KnowledgeSource> => {
     const form = new FormData();
     form.append('file', file);
-    if (opts?.chunkSize) form.append('chunkSize', String(opts.chunkSize));
-    if (opts?.chunkOverlap) form.append('chunkOverlap', String(opts.chunkOverlap));
+    if (sessionId) form.append('sessionId', sessionId);
     const headers: Record<string, string> = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-    const res = await fetch(`${BASE}/memory/ingest-async`, {
+    const token = getAuthToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${BASE}/knowledge/upload`, {
       method: 'POST',
       credentials: 'include',
       headers,
       body: form,
     });
-    if (!res.ok) throw new Error(`Failed to enqueue file: ${res.statusText}`);
-    return res.json();
+    if (!res.ok) {
+      const raw = await res.text().catch(() => '');
+      let message = `Upload failed: ${res.statusText}`;
+      try {
+        const parsed = JSON.parse(raw) as { error?: string; message?: string };
+        message = parsed.message ?? parsed.error ?? message;
+      } catch { /* raw is not JSON */ }
+      throw new Error(message);
+    }
+    const data = await res.json() as { source: KnowledgeSource };
+    return data.source;
   },
 
-  /** Enqueue a web URL for async ingestion. */
-  ingestUrl: async (url: string, name?: string): Promise<IngestAsyncResult> => {
-    return request<IngestAsyncResult>('/memory/ingest-async', {
-      method: 'POST',
-      body: JSON.stringify({ url, name }),
+  /** Delete a knowledge source. */
+  delete: async (id: string): Promise<void> => {
+    const token = getAuthToken();
+    const res = await fetch(`${BASE}/knowledge/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
+    if (res.status === 204) return;
+    if (!res.ok) {
+      const raw = await res.text().catch(() => '');
+      let message = `Delete failed: ${res.statusText}`;
+      try {
+        const parsed = JSON.parse(raw) as { error?: string; message?: string };
+        message = parsed.message ?? parsed.error ?? message;
+      } catch { /* raw is not JSON */ }
+      throw new Error(message);
+    }
   },
 
-  /** Enqueue raw text content for async ingestion. */
-  ingestText: async (content: string, name: string, kind: 'text' | 'markdown' | 'json' = 'text'): Promise<IngestAsyncResult> => {
-    return request<IngestAsyncResult>('/memory/ingest-async', {
+  /** Reprocess a knowledge source. */
+  reprocess: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge/${encodeURIComponent(id)}/reprocess`, { method: 'POST', body: JSON.stringify({}) }).then((r) => r.source),
+
+  /** Search the knowledge base. */
+  search: (query: string, topK = 5, kind: KnowledgeSearchRequest['kind'] = 'all', sourceId?: string) =>
+    request<{ results: KnowledgeSearchResult[] }>('/knowledge/search', {
       method: 'POST',
-      body: JSON.stringify({ content, name, kind }),
-    });
-  },
+      body: JSON.stringify({ query, topK, kind, sourceId }),
+    }).then((r) => r.results),
 
-  /** List recent ingestion jobs (filtered to document_ingest only by default). */
-  jobs: (limit = 50, kind = 'document_ingest') => request<{ jobs: IngestionJob[] }>(`/memory/jobs?limit=${limit}&kind=${kind}`),
+  /** Subscribe to WebSocket knowledge source lifecycle events. */
+  subscribe: (onEvent: (event: KnowledgeSourceEvent) => void): (() => void) => {
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryCount = 0;
 
-  /** Get a single job by ID. */
-  job: (id: string) => request<IngestionJob>(`/memory/jobs/${id}`),
+    function connect() {
+      if (closed) return;
+      try {
+        ws = new WebSocket(knowledgeBaseWsUrl());
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data) as Record<string, unknown>;
+            if (
+              data.type === 'knowledge_source_status' ||
+              data.type === 'knowledge_source_ready' ||
+              data.type === 'knowledge_source_failed'
+            ) {
+              onEvent(data as unknown as KnowledgeSourceEvent);
+            }
+          } catch { /* ignore parse errors */ }
+        };
+        ws.onopen = () => { retryCount = 0; };
+        ws.onclose = () => {
+          if (closed) return;
+          retryCount++;
+          const delay = Math.min(3000 * Math.pow(2, retryCount - 1), 30000);
+          retryTimer = setTimeout(connect, delay);
+        };
+        ws.onerror = () => { ws?.close(); };
+      } catch {
+        retryCount++;
+        const delay = Math.min(3000 * Math.pow(2, retryCount - 1), 30000);
+        retryTimer = setTimeout(connect, delay);
+      }
+    }
 
-  /** Fetch the full event log for a job (for populating the log on selection). */
-  jobEvents: (id: string) => request<{ events: IngestStreamEvent[] }>(`/memory/jobs/${id}/events`),
+    connect();
 
-  /** Cancel a running or pending job. */
-  cancelJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}/cancel`, { method: 'POST' }),
-
-  /** Delete a job and all its events. */
-  deleteJob: (id: string) => request<{ ok: boolean }>(`/memory/jobs/${id}`, { method: 'DELETE' }),
-
-  /** Open an SSE stream that polls job progress until terminal state. */
-  streamJob: (jobId: string, onEvent: (data: IngestStreamEvent) => void): (() => void) => {
-    const url = authToken
-      ? `${BASE}/memory/jobs/${jobId}/stream?token=${encodeURIComponent(authToken)}`
-      : `${BASE}/memory/jobs/${jobId}/stream`;
-    const es = new EventSource(url, { withCredentials: true });
-    es.onmessage = (e) => {
-      try { onEvent(JSON.parse(e.data)); } catch { /* ignore parse errors */ }
+    return () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      ws?.close();
     };
-    return () => es.close();
-  },
-};
-
-// ─── Knowledge Base (memory browsing) ───
-
-export interface MemorySource {
-  id: string;
-  name: string;
-  kind: string;
-  colorHex: string;
-  createdAt: string;
-  filePath?: string | null;
-  fileSize?: number | null;
-  fileMime?: string | null;
-}
-
-export type MemoryNodeCategory = 'persona' | 'tool' | 'episodic' | 'semantic' | 'source_doc' | 'system';
-
-export interface MemoryNode {
-  id: string;
-  label: string;
-  category: MemoryNodeCategory;
-  content: string;
-  status: string;
-  x: number | null;
-  y: number | null;
-  layoutEpoch: number;
-  tag?: string;
-  isBenchmark: boolean;
-  sourceId?: string;
-  sessionId?: string;
-  agentId?: string;
-  confidence?: number;
-  createdAt: string;
-  updatedAt: string;
-  accessCount: number;
-  lastAccessedAt: string | null;
-}
-
-export interface MemoryEdge {
-  id: string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  relationshipType: string;
-  weight: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface GraphSnapshot {
-  nodes: MemoryNode[];
-  edges: MemoryEdge[];
-}
-
-export interface SourceNodesResult {
-  nodes: MemoryNode[];
-  total: number;
-}
-
-export const knowledge = {
-  /** List all knowledge sources. */
-  sources: () => request<MemorySource[]>('/memory/sources'),
-
-  /** Get all nodes for a specific source (paginated). */
-  sourceNodes: (sourceId: string, opts?: { limit?: number; offset?: number; category?: MemoryNodeCategory }) => {
-    const params = new URLSearchParams();
-    if (opts?.limit) params.set('limit', String(opts.limit));
-    if (opts?.offset) params.set('offset', String(opts.offset));
-    if (opts?.category) params.set('category', opts.category);
-    const qs = params.toString();
-    return request<SourceNodesResult>(`/memory/sources/${sourceId}/nodes${qs ? `?${qs}` : ''}`);
   },
 
-  /** Get a graph snapshot of recent nodes (optionally filtered). */
-  graph: (opts?: { limit?: number; category?: MemoryNodeCategory; sourceId?: string; tag?: string }) => {
-    const params = new URLSearchParams();
-    if (opts?.limit) params.set('limit', String(opts.limit));
-    if (opts?.category) params.set('category', opts.category);
-    if (opts?.sourceId) params.set('sourceId', opts.sourceId);
-    if (opts?.tag) params.set('tag', opts.tag);
-    const qs = params.toString();
-    return request<GraphSnapshot>(`/memory/graph${qs ? `?${qs}` : ''}`);
-  },
+  /** Check which optional Python document parsers are installed. */
+  parserStatus: () => request<{ parsers: Array<{ id: string; installed: boolean; version?: string }> }>('/knowledge/parsers/status').then((r) => r.parsers),
 
-  /** Get a single node by ID. */
-  node: (id: string) => request<MemoryNode>(`/memory/nodes/${id}`),
-
-  /** Download the original file for a source (returns a URL for an anchor click). */
-  sourceFileUrl: (sourceId: string) => `${BASE}/memory/sources/${sourceId}/file`,
-
-  /** Get RAG Studio storage stats (file count, total size). */
-  storageStats: () => request<{ fileCount: number; totalBytes: number; path: string }>('/memory/rag-studio/storage'),
-
-  /** Clear all persisted RAG Studio files (does NOT delete knowledge nodes). */
-  clearStorage: () => request<{ ok: boolean; deletedFiles: number; freedBytes: number }>('/memory/rag-studio/storage', { method: 'DELETE' }),
+  /** Install and auto-load an optional parser (marker or docling). */
+  installParser: (id: string) => request<{ success: boolean; message: string; version?: string }>('/knowledge/parsers/install', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  }),
 };
 
 // ─── Bridges ───
@@ -841,6 +884,8 @@ export const bridges = {
     stop: () => request<{ ok: boolean }>('/email/stop', { method: 'POST' }),
     status: () => request<BridgeStatus>('/email/status'),
   },
+  clearConversation: (channelId: string) =>
+    request<{ success: boolean; message: string }>(`/channels/${channelId}/clear`, { method: 'POST' }),
 };
 
 export interface TelegramDiscoverResponse {
@@ -876,7 +921,7 @@ export const channels = {
 // ─── Automation & Notifications ───
 export type AutomationNotifyChannel = 'in_app' | 'desktop' | 'telegram' | 'slack' | 'email' | 'discord';
 export type AutomationTaskStatus = 'active' | 'paused' | 'cancelled' | 'completed';
-export type NotificationKind = 'automation_success' | 'automation_failure' | 'automation_scheduled';
+export type NotificationKind = 'automation_success' | 'automation_failure' | 'automation_scheduled' | 'background_task_complete' | 'background_task_failed';
 
 export interface AutomationTaskRecord {
   id: string;
@@ -954,34 +999,30 @@ export const notifications = {
   dismissAll: () => request<{ ok: boolean; count: number }>('/notifications/dismiss-all', { method: 'POST' }),
 };
 
-export type CanvasRecord = import('@agentx/shared').AgentXCanvasRecord;
+export type MarkdownDocumentRecord = import('@agentx/shared').MarkdownDocumentRecord;
 
-export const canvases = {
+export const markdownDocuments = {
   list: (opts?: { sessionId?: string; limit?: number; offset?: number }) => {
     const params = new URLSearchParams();
     if (opts?.sessionId) params.set('session_id', opts.sessionId);
     if (opts?.limit) params.set('limit', String(opts.limit));
     if (opts?.offset) params.set('offset', String(opts.offset));
     const qs = params.toString();
-    return request<{ canvases: CanvasRecord[] }>(`/canvases${qs ? `?${qs}` : ''}`);
+    return request<{ documents: MarkdownDocumentRecord[] }>(`/markdown${qs ? `?${qs}` : ''}`);
   },
   get: (id: string) => request<{
-    canvas: CanvasRecord;
+    document: MarkdownDocumentRecord;
     contentMarkdown?: string;
-    contentTsx?: string;
-    compiledJs?: string;
-    compileError?: string | null;
-  }>(`/canvases/${id}`),
+  }>(`/markdown/${id}`),
   create: (body: {
     sessionId: string;
     contentMarkdown?: string;
     contentTsx?: string;
-    contentFormat?: 'markdown' | 'canvas_tsx';
     title?: string;
     messageId?: string;
     sourceRole?: 'user' | 'assistant' | 'system';
-  }) => request<{ canvas: CanvasRecord }>('/canvases', { method: 'POST', body: JSON.stringify(body) }),
-  delete: (id: string) => request<{ ok: boolean }>(`/canvases/${id}`, { method: 'DELETE' }),
+  }) => request<{ document: MarkdownDocumentRecord }>('/markdown', { method: 'POST', body: JSON.stringify(body) }),
+  delete: (id: string) => request<{ ok: boolean }>(`/markdown/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew) ───
@@ -1112,6 +1153,7 @@ export interface AgentXConfig {
     lazyStorageCache?: boolean;
     backgroundConcurrency?: number;
   };
+  permissions?: Record<string, 'allow' | 'deny' | 'ask'>;
   channels?: {
     telegram?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; botToken?: string; chatId?: string };
     slack?: { enabled?: boolean; inbound?: boolean; outbound?: boolean; webhookUrl?: string; botToken?: string; appToken?: string };
@@ -1132,13 +1174,21 @@ export interface AgentXConfig {
   voice?: VoiceConfig;
 }
 
-export type TtsEngine = 'kokoro' | 'styletts2';
+export type TtsEngine = 'kokoro';
 
 export interface VoiceConfig {
   enabled?: boolean;
   mode?: {
     web?: 'off' | 'push-to-talk' | 'duplex';
     channels?: 'off' | 'voice-notes';
+  };
+  /** Active voice engine. */
+  engine?: 'stt_llm_tts' | 'realtime_xai';
+  /** xAI realtime settings. */
+  xai?: {
+    apiKey?: string;
+    model?: string;
+    voice?: string;
   };
   stt?: {
     engine?: 'faster-whisper';
@@ -1162,6 +1212,12 @@ export interface VoiceConfig {
     phrase?: string;
   };
   downloadedAssets?: VoiceDownloadedAsset[];
+  /** Separate provider/model for voice sessions. Falls back to default provider config. */
+  provider?: {
+    activeProvider?: string;
+    activeModel?: string;
+    activeProfile?: string;
+  };
 }
 
 export type VoiceTtsStyleConfig = NonNullable<NonNullable<VoiceConfig['tts']>['style']>;
@@ -1203,12 +1259,13 @@ export interface VoiceCapabilityStatus {
     selectedVoiceId?: string;
     selectedVoiceInstalled: boolean;
     kokoroInstalled: boolean;
-    styleTts2Installed: boolean;
   };
   vadInstalled: boolean;
   gpuAvailable?: boolean;
   canRunWeb: boolean;
   canRunChannels: boolean;
+  engine?: string;
+  realtimeXai?: { configured: boolean };
 }
 
 export interface VoiceSetupStatus {
@@ -1436,6 +1493,7 @@ export interface ChatMessage {
   subAgents?: Array<{ id: string; name: string; task: string; status: 'running' | 'done' | 'error'; result?: string }>;
   plan?: string[];
   turnTokens?: number;
+  attachments?: Array<{ id: string; name: string; mimeType?: string }>;
 }
 
 export interface SessionInfo {
@@ -1451,7 +1509,7 @@ export interface SessionInfo {
   hostCrewColor?: string;
   hostCrewCatalogId?: string;
   hostCrewCategoryId?: string;
-  mode?: 'agent' | 'plan';
+  bypassPermissions?: boolean;
   messageCount: number;
   status?: string;
   tokensUsed: number;
@@ -1462,12 +1520,13 @@ export interface SessionInfo {
   crewCount?: number;
   crewCallsigns?: string[];
   totalCostUsd?: number;
-  hyperdrive?: boolean;
   createdAt: string;
   updatedAt?: string;
   title?: string;
   scopePath?: string;
   parentId?: string;
+  /** Lightweight turn status from the turn registry (null if no recent turn). */
+  turnStatus?: { status: 'running' | 'complete' | 'error' | 'cancelled'; turnId: string; startedAt: number } | null;
 }
 
 export interface ChildSessionInfo {
@@ -1523,12 +1582,6 @@ export interface PluginConfigField {
   placeholder?: string;
 }
 
-export interface RAGResult {
-  content: string;
-  score: number;
-  metadata?: Record<string, string>;
-}
-
 export interface BridgeStatus {
   configured: boolean;
   connected: boolean;
@@ -1569,6 +1622,7 @@ export interface HealthStatus {
   telegramConnected: boolean;
   telegramBot?: string | null;
   memory: { rss: number; heapUsed: number; heapTotal?: number; external?: number };
+  cpu?: number;
   config?: { provider?: string; model?: string; user?: string };
   gateway?: {
     focus?: string | null;
@@ -1591,8 +1645,7 @@ export interface HealthStatus {
     contextTokens: number;
     contextWindow: number;
     compactionCount: number;
-    planMode: boolean;
-    hyperdriveMode: boolean;
+    bypassPermissions?: boolean;
     neuralConfidenceAvg: number;
     costHistory?: Array<{ ts: number; cost: number; errors: number }>;
   } | null;
@@ -1734,6 +1787,41 @@ export const localModel = {
     ),
 };
 
+// ─── Schema Migrations ───
+export interface AppliedMigrationInfo {
+  version: number;
+  name: string;
+  appliedAt: string;
+}
+
+export interface PendingMigrationInfo {
+  version: number;
+  name: string;
+}
+
+export interface MigrationStatus {
+  applied: AppliedMigrationInfo[];
+  pending: PendingMigrationInfo[];
+  currentVersion: number;
+  appliedVersion: number;
+  totalMigrations: number;
+  upToDate: boolean;
+}
+
+export interface MigrationRunResult {
+  ok: boolean;
+  applied: number;
+  skipped: number;
+  currentVersion: number;
+  appliedMigrations: AppliedMigrationInfo[];
+  error?: string;
+}
+
+export const migrations = {
+  status: () => request<MigrationStatus>('/migrations/status'),
+  run: () => request<MigrationRunResult>('/migrations/run', { method: 'POST' }),
+};
+
 export const voice = {
   getConfig: () =>
     request<{ voice?: VoiceConfig }>('/config').then((cfg) => cfg.voice ?? {}),
@@ -1749,15 +1837,13 @@ export const voice = {
       body: JSON.stringify({ assetId }),
     }),
   downloadStatus: (assetId: string) =>
-    request<{ status: string; progress?: number; error?: string }>(`/voice/assets/download-status/${assetId}`),
+    request<{ status: string; progress?: number; error?: string; detail?: string; downloadedMB?: number; totalMB?: number }>(`/voice/assets/download-status/${assetId}`),
   cancelDownload: (assetId: string) =>
     request<{ ok: boolean }>(`/voice/assets/download/${assetId}/cancel`, { method: 'POST' }),
   deleteAsset: (assetId: string) =>
     request<{ ok: boolean }>(`/voice/assets/${assetId}`, { method: 'DELETE' }),
   installSidecar: () =>
     request<{ ok: boolean }>('/voice/install-sidecar', { method: 'POST' }),
-  installStyleTts: () =>
-    request<{ ok: boolean }>('/voice/install-styletts', { method: 'POST' }, 35 * 60_000),
   setup: () =>
     request<{ ok: boolean; status: VoiceSetupStatus }>('/voice/setup', { method: 'POST' }),
   setupStatus: () =>
@@ -1771,15 +1857,33 @@ export const voice = {
       '/voice/sidecar/release',
       { method: 'POST', body: JSON.stringify({ force: opts?.force === true }) },
     ),
-  preview: (text: string, engine: TtsEngine, voiceId?: string, style?: VoiceTtsStyleConfig) =>
+  preview: (text: string, engine: string, voiceId?: string, style?: VoiceTtsStyleConfig) =>
     request<{ audioBase64: string; mimeType: string; durationMs?: number }>(
       '/voice/preview',
       {
         method: 'POST',
         body: JSON.stringify({ text, engine, voiceId, style }),
       },
-      engine === 'styletts2' ? 10 * 60_000 : 60_000,
+      60_000,
     ),
+  validateXai: (apiKey?: string) =>
+    request<{ valid: boolean; error?: string }>('/voice/xai/validate', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
+    }),
+  xaiVoices: () =>
+    request<{ voices: Array<{ id: string; name: string; language?: string }> }>('/voice/xai/voices'),
+  greeting: () =>
+    request<{ text: string; fallback?: boolean }>(
+      '/voice/greeting',
+      { method: 'POST' },
+      30_000,
+    ),
+  generateGreeting: (callsign: string) =>
+    request<{ text: string }>('/voice/greeting', {
+      method: 'POST',
+      body: JSON.stringify({ callsign }),
+    }, 30_000),
   updateConfig: async (patch: VoiceConfig) => {
     // downloadedAssets is server-managed; sending a stale copy would wipe
     // assets registered during deployment.
@@ -1816,9 +1920,14 @@ export interface EmbeddingModelProgress {
 
 export const embeddingModels = {
   status: () =>
-    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean }>('/embedding-models/status'),
-  download: () =>
-    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', { method: 'POST' }),
+    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean; neuralBrainSupported: boolean }>('/embedding-models/status'),
+  download: (opts?: { force?: boolean }) =>
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', {
+      method: 'POST',
+      body: JSON.stringify({ force: opts?.force === true }),
+    }),
+  purge: () =>
+    request<{ ok: boolean; message: string; freedMB: number }>('/embedding-models', { method: 'DELETE' }),
   /**
    * Opens an SSE connection for download progress. Returns a cleanup function.
    */
@@ -2154,6 +2263,28 @@ export interface IntegrationProvider {
   tools?: { autoExecute?: string[]; alwaysConfirm?: string[] };
 }
 
+export interface IntegrationToolBenchmark {
+  mcpName: string;
+  readonly: boolean;
+  status: 'ok' | 'error' | 'skipped' | 'pending';
+  error?: string;
+  testedAt?: string;
+  skipReason?: string;
+}
+
+export interface IntegrationNotification {
+  id: string;
+  connectionId: string;
+  providerId: string;
+  displayName: string;
+  toolName?: string;
+  kind: 'benchmark_error' | 'runtime_error' | 'sync_error';
+  message: string;
+  createdAt: string;
+  dismissedAt?: string;
+  source: 'benchmark' | 'runtime' | 'sync';
+}
+
 export interface IntegrationConnection {
   id: string;
   providerId: string;
@@ -2166,6 +2297,9 @@ export interface IntegrationConnection {
   accountLabel?: string;
   toolCount?: number;
   enabled: boolean;
+  toolBenchmarks?: IntegrationToolBenchmark[];
+  lastBenchmarkAt?: string;
+  benchmarkSummary?: { ok: number; error: number; skipped: number };
   stdio?: {
     command: string;
     args: string[];
@@ -2231,6 +2365,7 @@ export const integrations = {
     }>(`/integrations/catalog${includeCandidates ? '?includeCandidates=true' : ''}`),
   connections: () => request<{ connections: IntegrationConnection[] }>('/integrations/connections'),
   analytics: () => request<{ analytics: IntegrationAnalytics }>('/integrations/analytics'),
+  maintain: () => request<{ ok: boolean }>('/integrations/maintain', { method: 'POST' }),
   settings: () => request<{ settings: IntegrationHubSettings }>('/integrations/settings'),
   updateSettings: (body: IntegrationHubSettings) =>
     request<{ settings: IntegrationHubSettings }>('/integrations/settings', { method: 'POST', body: JSON.stringify(body) }),
@@ -2261,7 +2396,9 @@ export const integrations = {
   disconnect: (connectionId: string) =>
     request<{ ok: boolean }>(`/integrations/${connectionId}`, { method: 'DELETE' }),
   sync: (connectionId: string) =>
-    request<{ connection: IntegrationConnection }>(`/integrations/${connectionId}/sync`, { method: 'POST' }),
+    request<{ connection: IntegrationConnection }>(`/integrations/${connectionId}/sync`, { method: 'POST' }, 180_000),
+  benchmark: (connectionId: string) =>
+    request<{ connection: IntegrationConnection }>(`/integrations/${connectionId}/benchmark`, { method: 'POST' }, 180_000),
   runTool: (connectionId: string, toolName: string, args?: Record<string, unknown>) =>
     request<{ result: { success: boolean; output: string; error?: string } }>(`/integrations/${connectionId}/run-tool`, {
       method: 'POST',
@@ -2271,6 +2408,29 @@ export const integrations = {
     request<{ health: { status: string; toolCount: number; error?: string; lastSyncAt?: string } }>(
       `/integrations/${connectionId}/health`,
     ),
+  tools: (connectionId: string) =>
+    request<{
+      tools: Array<{
+        mcpName: string;
+        name: string;
+        description: string;
+        riskLevel: string;
+        defaultDecision: 'allow' | 'deny' | 'ask';
+        benchmarkStatus?: 'ok' | 'error' | 'skipped' | 'pending';
+        benchmarkError?: string;
+        benchmarkSkipReason?: string;
+        lastTestedAt?: string;
+        readonly?: boolean;
+      }>;
+      lastBenchmarkAt?: string;
+      benchmarkSummary?: { ok: number; error: number; skipped: number };
+    }>(`/integrations/${connectionId}/tools`),
+  notifications: (limit = 100) =>
+    request<{ notifications: IntegrationNotification[]; count: number }>(`/integrations/notifications?limit=${limit}`),
+  dismissNotification: (id: string) =>
+    request<{ ok: boolean; count: number }>(`/integrations/notifications/${encodeURIComponent(id)}/dismiss`, { method: 'POST' }),
+  dismissAllNotifications: () =>
+    request<{ ok: boolean; dismissed: number; count: number }>('/integrations/notifications/dismiss-all', { method: 'POST' }),
   startOAuth: (providerId: string, remoteUrl?: string) =>
     request<{ authUrl: string; state: string; redirectUri?: string }>(`/integrations/${providerId}/oauth/start`, {
       method: 'POST',
@@ -2327,6 +2487,49 @@ export interface AgentVitals {
   status: string;
 }
 
+export interface SubAgentTaskInfo {
+  id: string;
+  parentSessionId?: string;
+  childSessionId?: string;
+  instruction: string;
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  background?: boolean;
+  startTime?: number;
+  endTime?: number;
+  result?: string;
+  error?: string;
+}
+
+export interface SystemMetrics {
+  timestamp: string;
+  uptime: number;
+  cpu: { process: number; system: number };
+  memory: { used: number; total: number; percent: number; rss: number; heapUsed: number; heapTotal: number; external: number };
+}
+
+export interface SystemTime {
+  timestamp: string;
+  date: string;
+  time: string;
+  timezone: string;
+  utcOffset: number;
+}
+
+export interface WeatherConditions {
+  temperature: number;
+  windSpeed: number;
+  windDirection: number;
+  weatherCode: number;
+  isDay: boolean;
+  time: string;
+}
+
+export interface Weather {
+  location: { latitude: number; longitude: number };
+  current: WeatherConditions;
+  url: string;
+}
+
 export const agent = {
   vitals: () => request<AgentVitals>('/agent/vitals'),
   autonomyStatus: () => request<AutonomyStatus>('/agent/autonomy-status'),
@@ -2337,11 +2540,22 @@ export const agent = {
       method: 'POST',
       body: JSON.stringify({ response, ...(sessionId ? { sessionId } : {}) }),
     }),
-  respondToModeEscalation: (accepted: boolean) =>
-    request<{ ok: boolean }>('/agent/mode-escalation', { method: 'POST', body: JSON.stringify({ accepted }) }),
   respondToStepCap: (continueRun: boolean) =>
     request<{ ok: boolean }>('/agent/step-cap/respond', { method: 'POST', body: JSON.stringify({ continueRun }) }),
   getTurnState: () => request<{ phase: string; stage?: string; step?: number }>('/agent/turn-state'),
+};
+
+export const subagents = {
+  list: () => request<{ tasks: SubAgentTaskInfo[] }>('/subagents').then((r) => r.tasks),
+  get: (id: string) => request<{ task: SubAgentTaskInfo }>(`/subagents/${id}`).then((r) => r.task),
+  bySession: (sessionId: string) => request<{ tasks: SubAgentTaskInfo[] }>(`/subagents/session/${sessionId}`).then((r) => r.tasks),
+  cancel: (id: string) => request<{ ok: boolean }>(`/subagents/${id}/cancel`, { method: 'POST' }),
+};
+
+export const runtime = {
+  metrics: () => request<SystemMetrics>('/system/metrics'),
+  time: () => request<SystemTime>('/system/time'),
+  weather: (lat: number, lon: number) => request<Weather>(`/weather?lat=${lat}&lon=${lon}`),
 };
 
 // ─── Factory Reset ───

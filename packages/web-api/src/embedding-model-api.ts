@@ -6,7 +6,7 @@
  * bundling them in the app. Progress is streamed via Server-Sent Events (SSE).
  */
 import { Router, type Request, type Response } from 'express';
-import { pipeline } from '@huggingface/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
@@ -14,6 +14,66 @@ import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 import os from 'node:os';
 
 const router: import('express').Router = Router();
+
+// ── HuggingFace transformers.js environment configuration ──────────────────
+// The server runs inside Electron's main process where `process.release.name`
+// is 'electron' (not 'node'), so transformers.js incorrectly detects a browser
+// environment. We disable local model probing — we always use cache_dir.
+env.allowLocalModels = false;
+
+const MAX_REDIRECTS = 5;
+let fetchPatched = false;
+
+/**
+ * Patch globalThis.fetch to manually follow 3xx redirects.
+ *
+ * HuggingFace returns 307/302 redirects to route file requests to their CDN
+ * cache. The app's HTTP keep-alive layer (configureHttpKeepAlive) replaces
+ * globalThis.fetch with a custom https.request-based implementation that does
+ * NOT follow redirects. We wrap that implementation with redirect-following
+ * logic so transformers.js can download model files successfully.
+ *
+ * This must be called AFTER configureHttpKeepAlive() has run, so we call it
+ * lazily right before the first pipeline() invocation rather than at module
+ * load time.
+ */
+function ensureRedirectFetchPatch(): void {
+  if (fetchPatched) return;
+  fetchPatched = true;
+  const currentFetch = globalThis.fetch;
+
+  globalThis.fetch = (async (input: string | URL | globalThis.Request, init?: RequestInit): Promise<globalThis.Response> => {
+    let currentInput: string | URL | globalThis.Request = input;
+    let currentInit: RequestInit | undefined = init;
+    for (let i = 0; i < MAX_REDIRECTS; i++) {
+      const response = await currentFetch(currentInput as Parameters<typeof currentFetch>[0], currentInit);
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) return response as globalThis.Response;
+        // Resolve relative redirects against the current URL.
+        const baseUrl = typeof currentInput === 'string'
+          ? currentInput
+          : currentInput instanceof URL
+            ? currentInput.href
+            : currentInput.url;
+        const nextUrl = new URL(location, baseUrl).href;
+        getLogger().info('EMBEDDING_DOWNLOAD', `Following redirect ${response.status} → ${nextUrl}`);
+        // 307/308 preserve method and body; 301/302/303 convert to GET.
+        if (response.status === 307 || response.status === 308) {
+          currentInput = nextUrl;
+        } else {
+          currentInput = nextUrl;
+          currentInit = { method: 'GET' };
+        }
+        continue;
+      }
+      return response as globalThis.Response;
+    }
+    throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
+  }) as typeof globalThis.fetch;
+
+  getLogger().info('EMBEDDING_DOWNLOAD', 'Patched globalThis.fetch with redirect-following wrapper');
+}
 
 function neuralBrainHardwareSupported(): boolean {
   return isNeuralBrainSupported(os.totalmem() / (1024 ** 3));
@@ -23,7 +83,7 @@ const EMBEDDING_MODELS_DIR = join(getDataDir(), 'models');
 
 // Ensure the directory exists.
 if (!existsSync(EMBEDDING_MODELS_DIR)) {
-  try { mkdirSync(EMBEDDING_MODELS_DIR, { recursive: true }); } catch {}
+  try { mkdirSync(EMBEDDING_MODELS_DIR, { recursive: true }); } catch { /* ignore */ }
 }
 
 // Set the embedding cache dir so OnnxEmbeddingProvider finds models here.
@@ -86,10 +146,10 @@ function getDirSize(dirPath: string): number {
       if (entry.isDirectory()) {
         total += getDirSize(fullPath);
       } else if (entry.isFile()) {
-        try { total += statSync(fullPath).size; } catch {}
+        try { total += statSync(fullPath).size; } catch { /* ignore */ }
       }
     }
-  } catch {}
+  } catch { /* ignore */ }
   return total;
 }
 
@@ -110,19 +170,19 @@ function getModelSizeMB(model: ModelSpec): number {
 }
 
 /** Max download attempts per model before giving up. */
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
 /** Delay between retry attempts (ms), with exponential backoff. */
-const RETRY_BASE_DELAY_MS = 3000;
+const RETRY_BASE_DELAY_MS = 5000;
 
 /**
  * Clean up a partially downloaded model's cache directory.
  */
 function cleanPartialDownload(model: ModelSpec): void {
   const modelDir = join(EMBEDDING_MODELS_DIR, model.subdir);
-  try { rmSync(modelDir, { recursive: true, force: true }); } catch {}
+  try { rmSync(modelDir, { recursive: true, force: true }); } catch { /* ignore */ }
   // Also clean the huggingface-style cache dir name.
   const sanitized = model.huggingfaceId.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  try { rmSync(join(EMBEDDING_MODELS_DIR, `models--${sanitized}`), { recursive: true, force: true }); } catch {}
+  try { rmSync(join(EMBEDDING_MODELS_DIR, `models--${sanitized}`), { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 /**
@@ -159,6 +219,10 @@ async function downloadModel(model: ModelSpec): Promise<void> {
     }, 500);
 
     try {
+      // Ensure the redirect-following fetch patch is active before calling
+      // pipeline(). This must run after configureHttpKeepAlive() has replaced
+      // globalThis.fetch, so we do it lazily here rather than at module load.
+      ensureRedirectFetchPatch();
       getLogger().info('EMBEDDING_DOWNLOAD', `Downloading ${model.huggingfaceId} (${model.dtype}) — attempt ${attempt}/${MAX_RETRIES}...`);
       await pipeline('feature-extraction', model.huggingfaceId, {
         dtype: model.dtype,
@@ -198,7 +262,7 @@ async function downloadModel(model: ModelSpec): Promise<void> {
         const s = downloadStates.get(model.id);
         if (s) {
           s.status = 'pending';
-          s.error = `Retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s...`;
+          s.error = `Retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(delay / 1000)}s — ${errMsg.slice(0, 80)}`;
         }
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
@@ -244,8 +308,11 @@ router.get('/embedding-models/status', (_req: Request, res: Response) => {
  * Starts downloading both embedding models in the background.
  * Returns immediately with the initial state.
  */
-router.post('/embedding-models/download', async (_req: Request, res: Response) => {
-  if (!neuralBrainHardwareSupported()) {
+router.post('/embedding-models/download', async (req: Request, res: Response) => {
+  // Allow low-RAM systems to bypass the hardware check when the user has
+  // explicitly opted in via the setup wizard (force: true).
+  const force = req.body?.force === true;
+  if (!neuralBrainHardwareSupported() && !force) {
     return res.status(403).json({
       ok: false,
       error: 'neural-brain-unsupported',
@@ -291,6 +358,30 @@ router.post('/embedding-models/download', async (_req: Request, res: Response) =
 router.post('/embedding-models/disable-neural-brain', (_req: Request, res: Response) => {
   getLogger().warn('EMBEDDING_DOWNLOAD', 'Neural brain disabled — embedding models failed to download after all retries.');
   res.json({ ok: true, message: 'Neural brain disabled' });
+});
+
+/**
+ * DELETE /api/embedding-models
+ * Purges all downloaded embedding model files from disk and resets download
+ * state. Used when the user opts out of the neural brain from Settings.
+ * The caller should also set neuralBrain: false via the config API.
+ */
+router.delete('/embedding-models', (_req: Request, res: Response) => {
+  let purgedMB = 0;
+  for (const model of MODELS) {
+    const sizeBefore = getModelSizeMB(model);
+    cleanPartialDownload(model);
+    // Clear any in-progress download state.
+    const state = downloadStates.get(model.id);
+    if (state && (state.status === 'downloading' || state.status === 'pending')) {
+      state.status = 'error';
+      state.error = 'Download cancelled — neural brain disabled by user.';
+    }
+    purgedMB += sizeBefore;
+  }
+  downloadInProgress = false;
+  getLogger().info('EMBEDDING_DOWNLOAD', `Purged all embedding models from disk (${purgedMB.toFixed(1)} MB freed).`);
+  res.json({ ok: true, message: 'All embedding models purged', freedMB: Math.round(purgedMB * 100) / 100 });
 });
 
 /**

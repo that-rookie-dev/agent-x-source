@@ -156,6 +156,6 @@ export class ProviderRouter {
     };
 
     const baseUrl = baseUrlMap[plan.providerId] ?? 'https://api.openai.com/v1';
-    genericRoute.endpoint = (baseUrl.endsWith('/') ? baseUrl : baseUrl + '/') as any;
+    genericRoute.endpoint = { ...genericRoute.endpoint, baseUrl: baseUrl.endsWith('/') ? baseUrl : baseUrl + '/' };
   }
 }

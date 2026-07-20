@@ -1,6 +1,6 @@
-import { streamText, stepCountIs } from 'ai';
+import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import type { EngineEvent, AgentXConfig, SessionEvent } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
+import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
 import type { AgentEventBus } from '../EventBus.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
@@ -24,8 +24,6 @@ export interface SessionRunnerOptions {
   onSessionEvent?: (event: SessionEvent) => void;
   modelName?: string;
   maxSteps?: number;
-  /** Dynamic plan-mode flag — read at each agentic step */
-  planMode?: () => boolean;
   /** If provided, collect tool call/result entries for the agent's reflection loop */
   toolCallLog?: Array<{ name: string; success: boolean; output: string; elapsed: number }>;
 }
@@ -74,8 +72,7 @@ export class SessionRunner {
 
       emit({ type: 'step_started', step: stepCount } as unknown as EngineEvent);
 
-      const planMode = this.options.planMode?.() ?? false;
-      const tools = createAiSdkTools(toolRegistry, toolExecutor, sessionId, emit, waitForClarification, runSubAgent, planMode);
+      const tools = createAiSdkTools(toolRegistry, toolExecutor, sessionId, emit, waitForClarification, runSubAgent);
       const model = createAiSdkModel(config, apiKey);
       const contextWindow = (config as unknown as Record<string, number>)['contextWindow'] ?? 128000;
 
@@ -89,13 +86,14 @@ export class SessionRunner {
         const result = streamText({
           model,
           messages: normalizeAiSdkMessagesForProvider(aiMessages, config.provider.activeProvider).map(m => ({
-            role: m.role,
+            role: m.role as 'system' | 'user' | 'assistant' | 'tool',
             content: m.content,
             ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}),
-          })) as any,
+          })) as ModelMessage[],
           tools,
           temperature: 0,
           maxRetries: config.maxRetries ?? 2,
+          maxOutputTokens: resolveMaxOutputTokens(config.maxOutputTokens),
           stopWhen: stepCountIs(100),
           toolChoice: 'auto',
           abortSignal,

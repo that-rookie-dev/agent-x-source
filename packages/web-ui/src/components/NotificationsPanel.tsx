@@ -14,7 +14,7 @@ import { PanelHeader } from './PanelHeader';
 import { CrewAwareMarkdown } from '../chat/ChatMarkdown';
 import { notifications, type NotificationRecord } from '../api';
 import { notify } from './NotificationToast';
-import { useApp } from '../store/AppContext';
+import { useAppLive } from '../store/AppContext';
 import { colors } from '../theme';
 
 type Filter = 'all' | 'unread';
@@ -50,6 +50,8 @@ function kindLabel(kind: NotificationRecord['kind']): string {
     case 'automation_success': return 'Success';
     case 'automation_failure': return 'Failed';
     case 'automation_scheduled': return 'Scheduled';
+    case 'background_task_complete': return 'Background Task';
+    case 'background_task_failed': return 'Background Failed';
     default: return kind;
   }
 }
@@ -69,7 +71,7 @@ function NotificationCard({
   onDismiss: (id: string) => void;
 }) {
   const unread = !n.readAt;
-  const isFailure = n.kind === 'automation_failure';
+  const isFailure = n.kind === 'automation_failure' || n.kind === 'background_task_failed';
   const body = useMemo(() => displayBody(n), [n]);
 
   return (
@@ -146,7 +148,7 @@ function NotificationCard({
 }
 
 export function NotificationsPanel() {
-  const { events, unreadNotificationCount, refreshUnreadNotificationCount } = useApp();
+  const { events, unreadNotificationCount, refreshUnreadNotificationCount } = useAppLive();
   const [filter, setFilter] = useState<Filter>('all');
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);

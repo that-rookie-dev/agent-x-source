@@ -1,5 +1,6 @@
 import type { Agent } from '@agentx/engine';
 import { automationRunSessionId, generateAxId, getLogger, sanitizeAutomationNotificationBody } from '@agentx/shared';
+import type { TelemetryEvent } from '@agentx/shared';
 import { effectiveAutomationNotifyChannels, getNotificationChannelStatus } from '@agentx/engine';
 import { createAgent, getEngine, awaitEngineStorageReady, rewireTelegramChannelPermissions } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
@@ -38,7 +39,7 @@ function resolveAutomationScopePath(
 
 async function restorePermissionSnapshot(agent: Agent, snapshot: Array<{ toolName: string; decision: string }> | null | undefined): Promise<void> {
   if (!snapshot?.length) return;
-  const pm = (agent as unknown as { toolExecutor?: { getPermissionManager?: () => { grant: (t: string, d: 'allow_always') => void; allowAll: () => void } } }).toolExecutor?.getPermissionManager?.();
+  const pm = agent.getToolExecutor()?.getPermissionManager();
   if (!pm) return;
   for (const entry of snapshot) {
     if (entry.decision !== 'allow_always') continue;
@@ -61,7 +62,7 @@ function emitAutomationTelemetry(
       automationTaskId: taskId,
       timestamp: new Date().toISOString(),
       ...extra,
-    } as never);
+    } as unknown as TelemetryEvent);
   } catch { /* best-effort */ }
 }
 
@@ -153,10 +154,9 @@ async function runAutomationTurn(
     automationRun: true,
     delegatedWorker: true,
   });
-  agent.setPlanMode(false);
   await restorePermissionSnapshot(agent, task.permissionSnapshot as Array<{ toolName: string; decision: string }>);
 
-  const runExecutor = (agent as unknown as { toolExecutor?: { setPermissionRequestHandler: (h: () => Promise<'allow_once'>) => void } }).toolExecutor;
+  const runExecutor = agent.getToolExecutor();
   runExecutor?.setPermissionRequestHandler(async () => 'allow_once');
 
   agent.clearHistory();
@@ -220,7 +220,7 @@ async function runAutomationTurn(
       rewireTelegramChannelPermissions(eng);
     } catch { /* best-effort */ }
     try {
-      (agent as unknown as { sessionLogger?: { close?: () => void } }).sessionLogger?.close?.();
+      agent.sessionLogger?.close?.();
       agent.endSession();
     } catch { /* best-effort */ }
   }

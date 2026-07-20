@@ -8,6 +8,7 @@ function choiceOptions(labels: string[]): QuestionnaireOption[] {
 const MONTH_RE = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i;
 const DEFER_RE = /\b(you decide|surprise me|up to you|don't care|dont care|whatever works|plan it yourself|use your judgment|use your judgement)\b/i;
 const PLANNING_RE = /\b(plan|itinerary|roadmap|strategy|outline|proposal|organize|schedule|vacation|trip|travel|holiday|wedding|event|project)\b/i;
+const TRAVEL_PLANNING_RE = /\b(itinerary|vacation|trip|travel|holiday)\b/i;
 
 function countSpecificitySignals(text: string): number {
   let signals = 0;
@@ -25,7 +26,8 @@ export function needsCrewDeploymentIntake(userText: string): boolean {
   if (!trimmed || trimmed.length < 12) return false;
   if (DEFER_RE.test(trimmed)) return false;
   if (!PLANNING_RE.test(trimmed)) return false;
-  return countSpecificitySignals(trimmed) < 2;
+  const requiredSignals = TRAVEL_PLANNING_RE.test(trimmed) ? 3 : 2;
+  return countSpecificitySignals(trimmed) < requiredSignals;
 }
 
 export function buildCrewDeploymentIntakeQuestionnaire(

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
@@ -20,10 +20,19 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { crews as crewsApi, crewChat, type Crew, type CrewInput } from '../api';
 import { CrewCard } from './crew/CrewCard';
 import { CrewScreenHeader } from './crew/CrewScreenHeader';
-import { CrewHubDialog, type PrebuiltCategory, type PrebuiltCrew } from './crew/CrewHubDialog';
+import type { PrebuiltCategory, PrebuiltCrew } from './crew/hub-types';
 import { CrewProfileDialog } from './crew/CrewProfileDialog';
 import { crewTheme, getCrewAccent } from '../styles/crew-theme';
-import { loadHubCategoryIndex, ensureHubCategoryCrews, prefetchHubCatalog } from '../data/crew-hub/loadHubCatalog';
+import { ensureHubCategoryCrews, loadHubOpenState } from '../data/crew-hub/loadHubCatalog';
+import {
+  useCrewCall,
+  crewCallTargetFromPrebuilt,
+  crewCallTargetFromRoster,
+} from './crew-call';
+
+const CrewHubDialog = lazy(() =>
+  import('./crew/CrewHubDialog').then((m) => ({ default: m.CrewHubDialog })),
+);
 
 import { colors, alphaColor } from '../theme';
 const EMOTIONS = ['professional', 'friendly', 'witty', 'kind', 'funny', 'sarcastic', 'arrogant', 'flirty', 'happy', 'sad'] as const;
@@ -73,6 +82,7 @@ function crewToProfile(crew: Crew): PrebuiltCrew {
 
 export function CrewsPanel() {
   const navigate = useNavigate();
+  const { startCall, isActive: callActive } = useCrewCall();
   const [crews, setCrews] = useState<Crew[]>([]);
   const [detailCrew, setDetailCrew] = useState<Crew | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -118,15 +128,15 @@ export function CrewsPanel() {
 
     let cancelled = false;
     setHubCategoriesLoading(true);
+    setHubSectorLoading(true);
     setHubCategoriesError('');
 
-    loadHubCategoryIndex()
-      .then((categories) => {
-        if (!cancelled) {
-          setHubCategories(categories);
-          const firstId = categories[importCategory]?.id ?? categories[0]?.id;
-          prefetchHubCatalog(firstId);
-        }
+    // Single coordinated open path — index + first sector share in-flight caches.
+    void loadHubOpenState()
+      .then(({ categories, activeIndex }) => {
+        if (cancelled) return;
+        setHubCategories(categories);
+        setImportCategory(activeIndex);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -134,7 +144,10 @@ export function CrewsPanel() {
         }
       })
       .finally(() => {
-        if (!cancelled) setHubCategoriesLoading(false);
+        if (!cancelled) {
+          setHubCategoriesLoading(false);
+          setHubSectorLoading(false);
+        }
       });
 
     return () => { cancelled = true; };
@@ -221,7 +234,7 @@ export function CrewsPanel() {
     e?.stopPropagation();
     setRegenerating(c.id);
     try {
-      const meta = await crewsApi.generateMetadata(c.systemPrompt, c.title || undefined, c.name, (c as any).description);
+      const meta = await crewsApi.generateMetadata(c.systemPrompt, c.title || undefined, c.name, c.description);
       await crewsApi.update(c.id, { expertise: meta.expertise, traits: meta.traits, systemPrompt: meta.revisedPrompt || c.systemPrompt });
       await load();
       if (detailCrew?.id === c.id) {
@@ -327,6 +340,21 @@ export function CrewsPanel() {
     }
   };
 
+  const startCrewCall = (opts: { crew?: Crew; recruit?: PrebuiltCrew; rosterCrewId?: string }) => {
+    setError('');
+    setDetailCrew(null);
+    if (opts.crew) {
+      void startCall(crewCallTargetFromRoster(opts.crew, getCrewAccent(opts.crew.color, opts.crew.callsign)));
+      return;
+    }
+    if (opts.recruit) {
+      void startCall(crewCallTargetFromPrebuilt(opts.recruit, {
+        rosterCrewId: opts.rosterCrewId,
+        accent: getCrewAccent(undefined, opts.recruit.callsign),
+      }));
+    }
+  };
+
   const filtered = crews.filter((c) =>
     !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.callsign.toLowerCase().includes(search.toLowerCase()));
   const activeCount = crews.filter((c) => c.enabled !== false).length;
@@ -424,6 +452,8 @@ export function CrewsPanel() {
                 onOpen={setDetailCrew}
                 onPrivateChat={(crew) => startPrivateChat({ crewId: crew.id })}
                 privateChatLoading={privateChatLoading}
+                onCall={(crew) => startCrewCall({ crew })}
+                callLoading={callActive}
                 onToggle={handleToggle}
                 onEdit={openEdit}
                 onDelete={setDeleteConfirmId}
@@ -454,6 +484,8 @@ export function CrewsPanel() {
         } : undefined}
         onPrivateChat={detailCrew ? () => startPrivateChat({ crewId: detailCrew.id }) : undefined}
         privateChatLoading={privateChatLoading}
+        onCall={detailCrew ? () => startCrewCall({ crew: detailCrew }) : undefined}
+        callLoading={callActive}
       />
 
       {/* Create / Edit Modal */}
@@ -607,24 +639,40 @@ export function CrewsPanel() {
         </DialogActions>
       </Dialog>
 
-      <CrewHubDialog
-        open={importDialogOpen}
-        onClose={() => setImportDialogOpen(false)}
-        categories={hubCategories}
-        categoriesLoading={hubCategoriesLoading}
-        sectorCrewsLoading={hubSectorLoading}
-        categoriesError={hubCategoriesError}
-        categoryIndex={importCategory}
-        onCategoryChange={setImportCategory}
-        crews={crews}
-        importLoading={importLoading}
-        onImport={handleImportCrew}
-        onRemove={(id) => handleDelete(id)}
-        onPrivateChat={(crew, rosterCrewId) => {
-          startPrivateChat({ crewId: rosterCrewId, recruit: crew });
-        }}
-        privateChatLoading={privateChatLoading}
-      />
+      {importDialogOpen && (
+        <Suspense
+          fallback={
+            <Dialog open maxWidth="lg" fullWidth PaperProps={{ sx: { bgcolor: crewTheme.bg.panel, minHeight: 420 } }}>
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 10 }}>
+                <CircularProgress size={28} sx={{ color: crewTheme.text.secondary }} />
+              </Box>
+            </Dialog>
+          }
+        >
+          <CrewHubDialog
+            open={importDialogOpen}
+            onClose={() => setImportDialogOpen(false)}
+            categories={hubCategories}
+            categoriesLoading={hubCategoriesLoading}
+            sectorCrewsLoading={hubSectorLoading}
+            categoriesError={hubCategoriesError}
+            categoryIndex={importCategory}
+            onCategoryChange={setImportCategory}
+            crews={crews}
+            importLoading={importLoading}
+            onImport={handleImportCrew}
+            onRemove={(id) => handleDelete(id)}
+            onPrivateChat={(crew, rosterCrewId) => {
+              startPrivateChat({ crewId: rosterCrewId, recruit: crew });
+            }}
+            privateChatLoading={privateChatLoading}
+            onCall={(crew, rosterCrewId) => {
+              startCrewCall({ recruit: crew, rosterCrewId });
+            }}
+            callLoading={callActive}
+          />
+        </Suspense>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)}

@@ -1,8 +1,44 @@
-import { generateText } from 'ai';
 import { getLogger } from '@agentx/shared';
-import type { AgentXConfig, EngineEvent, SessionEvent, ToolResult } from '@agentx/shared';
-import { createAiSdkModel } from './AiSdkBridge.js';
+import type { AgentXConfig, SessionEvent } from '@agentx/shared';
 import type { Agent } from './Agent.js';
+import { tryShellExec } from './task-executor-helpers.js';
+import * as gitPipeline from './task-executor-git.js';
+import type { GitPipelineContext } from './task-executor-git.js';
+import * as verifyDebug from './task-executor-verify.js';
+import type { VerifyDebugContext, VerifyContext } from './task-executor-verify.js';
+import {
+  analyzeProject as analyzeProjectHelper,
+  ensureRuntimes as ensureRuntimesHelper,
+  ensureDependencies as ensureDependenciesHelper,
+  selfTune as selfTuneHelper,
+  suggestNewSubtasks as suggestNewSubtasksHelper,
+  checkContext as checkContextHelper,
+  saveTaskMemory as saveTaskMemoryHelper,
+  computeQualityScore as computeQualityScoreHelper,
+  tryModelFailover as tryModelFailoverHelper,
+  processGoalVisuals as processGoalVisualsHelper,
+  safeJsonParse as safeJsonParseHelper,
+  hasGhAvailable as hasGhAvailableHelper,
+  forceSaveState as forceSaveStateHelper,
+  persistState as persistStateHelper,
+  restoreState as restoreStateHelper,
+  emitProgress as emitProgressHelper,
+  type AnalysisContext,
+} from './task-executor-analysis.js';
+import {
+  decompose as decomposeHelper,
+  validatePlanSteps as validatePlanStepsHelper,
+  midPlanReevaluation as midPlanReevaluationHelper,
+  generateAlternativeApproach as generateAlternativeApproachHelper,
+  buildBatches as buildBatchesHelper,
+  replan as replanHelper,
+  type PlanningContext,
+} from './task-executor-planning.js';
+import {
+  verifyStep as verifyStepHelper,
+  verifyGoal as verifyGoalHelper,
+  verifyFacts as verifyFactsHelper,
+} from './task-executor-verify.js';
 
 export interface TaskStep {
   id: string;
@@ -72,96 +108,6 @@ export interface TaskExecutorOptions {
   stepTimeout?: number;
 }
 
-const ANALYSIS_SYSTEM_PROMPT = `You are an environment analysis expert. Given a user's goal and the current working directory context, analyze what's available and what needs to be done.
-
-The user may be a developer, designer, finance professional, artist, or any other knowledge worker.
-
-Return a JSON object:
-{
-  "projectType": "new" | "existing" | "non_code",
-  "keyFiles": ["list", "of", "relevant", "files", "documents"],
-  "techStack": ["tools", "technologies", "runtimes", "or", "software", "detected"],
-  "conventions": ["relevant", "patterns", "rules", "or", "constraints"],
-  "risks": ["potential", "issues", "or", "missing", "tools"],
-  "domain": "code" | "design" | "finance" | "data" | "writing" | "general"
-}`;
-
-const PLAN_SYSTEM_PROMPT = `You are a task decomposition expert. Your job is to break down a user's goal into a step-by-step plan.
-
-Given a goal, produce a JSON array of steps. Each step must have:
-- "description": a clear, actionable instruction for what to do in this step
-- "expectedOutcome": what success looks like for this step
-
-Optional fields:
-- "parallel": true — set this for steps that can run concurrently with other parallel steps (e.g., creating independent files)
-- "dependencies": ["stepId"] — list of step IDs (by array index, 0-based) that must complete first
-- "repoPath": "path/to/repo" — if work spans multiple repositories, specify which repo this step targets
-
-Rules:
-- Break the work into 3-10 steps
-- Each step should be completable in a single LLM turn
-- Sequential by default; use "parallel": true for independent work
-- Be specific — avoid vague steps like "research" without direction
-- If the goal requires external information (API docs, package docs, best practices, etc.), include a "research" step that uses web search to gather information before proceeding
-- The last step should produce the final deliverable
-- COST AWARENESS: Simple verification, linting, and review steps can use cheaper/faster models. Complex coding steps need full capability. Never waste budget on trivial steps.
-- Cross-repo: If the goal spans multiple repos, add "repoPath" to each step to indicate which repo it operates in
-
-Web research is available and the agent can search the web for information, documentation, and examples during execution.
-
-Return ONLY a valid JSON array. No markdown, no explanation.`;
-
-const VERIFY_SYSTEM_PROMPT = `You are a quality assurance expert. Given a task step and its result, determine if the step was completed successfully.
-
-Respond with ONLY a JSON object:
-{ "passed": boolean, "reason": "short explanation" }
-
-Be strict — if the expected outcome is not fully met, mark as failed.`;
-
-const DEBUG_SYSTEM_PROMPT = `You are a debugging expert. A step was completed but the build/test failed. Given the error output, fix the issue.
-
-Return a JSON object:
-{ "fix": "what to fix and how", "revisedStep": "revised step description if needed" }
-
-Be specific about what code changes are needed.`;
-
-const FINAL_VERIFY_SYSTEM_PROMPT = `You are a quality assurance expert. Given a user's original goal and the completed steps of a plan, determine if the goal has been fully achieved.
-
-Respond with ONLY a JSON object:
-{ "achieved": boolean, "reason": "short explanation", "gaps": ["any missing aspects"] }
-
-Be strict — if the goal is not fully met, note what's missing.`;
-
-function extractJsonArray(text: string): Array<Record<string, unknown>> | null {
-  const start = text.indexOf('[');
-  const end = text.lastIndexOf(']');
-  if (start === -1 || end === -1 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(text.slice(start, end + 1));
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function extractJsonObject<T>(text: string): T | null {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1)) as T;
-  } catch {
-    return null;
-  }
-}
-
-function tryShellExec(agent: Agent, command: string): Promise<string> {
-  const executor = (agent as any)['toolExecutor'] as { execute: (id: string, args: Record<string, unknown>, sid: string) => Promise<ToolResult> } | undefined;
-  if (!executor?.execute) return Promise.resolve('');
-  return executor.execute('shell_exec', { command }, (agent as any)['sessionId'] ?? 'unknown')
-    .then((r) => r.output ?? '')
-    .catch(() => '');
-}
 
 export class TaskExecutor {
   private agent: Agent;
@@ -466,23 +412,7 @@ export class TaskExecutor {
   }
 
   private buildBatches(plan: TaskPlan): TaskStep[][] {
-    const batches: TaskStep[][] = [];
-    let currentBatch: TaskStep[] = [];
-
-    // Resolve dependency references to step indices
-    for (const step of plan.steps) {
-      if (step.parallel) {
-        currentBatch.push(step);
-      } else {
-        if (currentBatch.length > 0) {
-          batches.push(currentBatch);
-          currentBatch = [];
-        }
-        batches.push([step]);
-      }
-    }
-    if (currentBatch.length > 0) batches.push(currentBatch);
-    return batches;
+    return buildBatchesHelper(plan);
   }
 
   private async executeParallelBatch(
@@ -492,7 +422,7 @@ export class TaskExecutor {
     getLogger().info('TASK_EXECUTOR', `Executing parallel batch with ${batch.length} steps via sub-agents`);
 
     // Spawn isolated sub-agents for each parallel step
-    const subAgentManager = (this.agent as any)['subAgents'] as { spawn: (...args: unknown[]) => { id: string; status: string; result?: string }; waitFor: (id: string) => Promise<{ status: string; result?: string }> } | undefined;
+    const subAgentManager = this.agent.agents;
 
     const spawnedTasks = batch.map((step) => {
       const i = plan.steps.indexOf(step);
@@ -725,177 +655,24 @@ export class TaskExecutor {
   }
 
   private persistState(plan: TaskPlan, failureHistory: FailureRecord[]): void {
-    if (!this.store) return;
-    this.store.saveTaskSnapshot({
-      sessionId: this.sessionId,
-      taskId: plan.id,
-      stepIndex: plan.currentStepIndex,
-      goal: plan.goal,
-      planState: JSON.stringify({
-        id: plan.id,
-        goal: plan.goal,
-        steps: plan.steps,
-        currentStepIndex: plan.currentStepIndex,
-        createdAt: plan.createdAt,
-        updatedAt: new Date().toISOString(),
-      }),
-      failureHistory: JSON.stringify(failureHistory),
-    });
+    persistStateHelper(this._analysisContext(), plan, failureHistory);
   }
 
   private restoreState(stored: Record<string, unknown>): { plan: TaskPlan; failureHistory: FailureRecord[] } | null {
-    try {
-      const planState = JSON.parse(stored['plan_state'] as string);
-      if (!planState || !planState.steps) return null;
-      const plan: TaskPlan = {
-        id: planState.id,
-        goal: planState.goal,
-        steps: planState.steps,
-        currentStepIndex: planState.currentStepIndex || 0,
-        createdAt: planState.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const failureHistory: FailureRecord[] = JSON.parse((stored['failure_history'] as string) || '[]');
-      return { plan, failureHistory };
-    } catch {
-      return null;
-    }
+    return restoreStateHelper(stored);
   }
 
   private async analyzeProject(goal: string): Promise<{ projectType: string; techStack: string[]; conventions: string[]; keyFiles: string[]; risks: string[] } | null> {
-    try {
-      // Detect project structure by checking common files
-      const filesToCheck = ['package.json', 'tsconfig.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'Gemfile', 'Dockerfile', 'Makefile', '.gitignore', 'composer.json', 'CMakeLists.txt'];
-      const found: string[] = [];
-      for (const file of filesToCheck) {
-        const output = await tryShellExec(this.agent, `test -f "${file}" && echo "exists" || echo "not found"`);
-        if (output.trim() === 'exists') found.push(file);
-      }
-
-      if (found.length > 0) {
-        // Read key config files for convention analysis
-        let projectContext = `Detected files: ${found.join(', ')}\n\n`;
-        if (found.includes('package.json')) {
-          const pkg = await tryShellExec(this.agent, 'cat package.json 2>/dev/null | head -100');
-          projectContext += `package.json:\n${pkg.slice(0, 2000)}\n\n`;
-        }
-        if (found.includes('tsconfig.json')) {
-          const tsconfig = await tryShellExec(this.agent, 'cat tsconfig.json 2>/dev/null | head -50');
-          projectContext += `tsconfig.json:\n${tsconfig.slice(0, 1000)}\n\n`;
-        }
-
-        const model = createAiSdkModel(this.config, this.apiKey);
-        const result = await generateText({
-          model,
-          system: ANALYSIS_SYSTEM_PROMPT,
-          prompt: `User goal: ${goal}\n\nProject context:\n${projectContext}\n\nAnalyze this project and the goal.`,
-          temperature: 0.2,
-          maxRetries: 1,
-        });
-
-        const parsed = extractJsonObject<{ projectType: string; techStack: string[]; conventions: string[]; keyFiles: string[]; risks: string[] }>(result.text);
-        if (parsed) {
-          return {
-            projectType: parsed.projectType || 'existing',
-            techStack: Array.isArray(parsed.techStack) ? parsed.techStack : [],
-            conventions: Array.isArray(parsed.conventions) ? parsed.conventions : [],
-            keyFiles: Array.isArray(parsed.keyFiles) ? parsed.keyFiles : found,
-            risks: Array.isArray(parsed.risks) ? parsed.risks : [],
-          };
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    return analyzeProjectHelper(this._analysisContext(), goal);
   }
 
   private async ensureRuntimes(conventions: { techStack: string[]; projectType: string } | null): Promise<void> {
-    if (!conventions) return;
-    const techStack = conventions.techStack || [];
-    if (techStack.length === 0) return;
-
-    const runtimeMap: Array<{ check: string; install: string; name: string; marker: string }> = [];
-
-    if (techStack.some(t => /node|javascript|typescript|js|ts/i.test(t))) {
-      runtimeMap.push({ check: 'node --version 2>&1', install: '', name: 'Node.js', marker: 'node' });
-      runtimeMap.push({ check: 'npm --version 2>&1', install: '', name: 'npm', marker: 'npm' });
-    }
-    if (techStack.some(t => /python|pytest|django|flask/i.test(t))) {
-      runtimeMap.push({ check: 'python3 --version 2>&1 || python --version 2>&1', install: '', name: 'Python', marker: 'python' });
-      runtimeMap.push({ check: 'pip3 --version 2>&1 || pip --version 2>&1', install: '', name: 'pip', marker: 'pip' });
-    }
-    if (techStack.some(t => /rust|cargo/i.test(t))) {
-      runtimeMap.push({ check: 'rustc --version 2>&1', install: '', name: 'Rust', marker: 'rust' });
-      runtimeMap.push({ check: 'cargo --version 2>&1', install: '', name: 'Cargo', marker: 'cargo' });
-    }
-    if (techStack.some(t => /go|golang/i.test(t))) {
-      runtimeMap.push({ check: 'go version 2>&1', install: '', name: 'Go', marker: 'go' });
-    }
-
-    for (const rt of runtimeMap) {
-      const output = await tryShellExec(this.agent, rt.check);
-      if (output.trim().toLowerCase().includes('not found') || output.trim().toLowerCase().includes('command not found') || !output.trim()) {
-        getLogger().warn('TASK_EXECUTOR', `Missing runtime: ${rt.name}. Attempting auto-install...`);
-        await this.installRuntime(rt);
-      } else {
-        getLogger().info('TASK_EXECUTOR', `Runtime ${rt.name}: ${output.trim().split('\n')[0]}`);
-      }
-    }
-  }
-
-  private async installRuntime(rt: { check: string; install: string; name: string; marker: string }): Promise<void> {
-    const cmds: string[] = [];
-    switch (rt.marker) {
-      case 'node':
-        cmds.push('curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - 2>&1 || true');
-        cmds.push('apt-get install -y nodejs 2>&1 || brew install node 2>&1 || true');
-        break;
-      case 'npm':
-        cmds.push('npm install -g npm@latest 2>&1 || true');
-        break;
-      case 'python':
-        cmds.push('apt-get install -y python3 python3-pip 2>&1 || brew install python 2>&1 || true');
-        break;
-      case 'pip':
-        cmds.push('python3 -m ensurepip --upgrade 2>&1 || python -m ensurepip --upgrade 2>&1 || true');
-        break;
-      case 'rust':
-        cmds.push('curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 2>&1 && source "$HOME/.cargo/env" || true');
-        break;
-      case 'cargo':
-        cmds.push('curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 2>&1 && source "$HOME/.cargo/env" || true');
-        break;
-      case 'go':
-        cmds.push('apt-get install -y golang-go 2>&1 || brew install go 2>&1 || true');
-        break;
-    }
-    for (const cmd of cmds) {
-      await tryShellExec(this.agent, cmd);
-    }
-    // Verify installation
-    const verify = await tryShellExec(this.agent, rt.check);
-    if (verify.trim() && !verify.toLowerCase().includes('not found')) {
-      getLogger().info('TASK_EXECUTOR', `Successfully installed ${rt.name}: ${verify.trim().split('\n')[0]}`);
-    } else {
-      getLogger().warn('TASK_EXECUTOR', `Failed to install ${rt.name}. Continuing anyway.`);
-    }
+    return ensureRuntimesHelper(this._analysisContext(), conventions);
   }
 
   private selfTune(): void {
-    const total = this._stepSuccesses + this._stepFailures;
-    if (total < 3) return; // Need minimum samples
-
-    const failRate = this._stepFailures / total;
-    if (failRate > 0.5 && this._dynamicMaxReplans < 6) {
-      // High failure rate — give more replan attempts
-      this._dynamicMaxReplans = Math.min(6, this._dynamicMaxReplans + 1);
-      getLogger().info('TASK_EXECUTOR', `Self-tuned: increased max replans to ${this._dynamicMaxReplans} (fail rate: ${Math.round(failRate * 100)}%)`);
-    } else if (failRate < 0.15 && this._dynamicMaxReplans > this.maxReplans) {
-      // Low failure rate — reduce replan attempts back toward default
-      this._dynamicMaxReplans = Math.max(this.maxReplans, this._dynamicMaxReplans - 1);
-      getLogger().info('TASK_EXECUTOR', `Self-tuned: decreased max replans to ${this._dynamicMaxReplans} (fail rate: ${Math.round(failRate * 100)}%)`);
-    }
+    selfTuneHelper(this._analysisContext(), this.maxReplans);
+    this._dynamicMaxReplans = this._analysisContext().dynamicMaxReplans;
   }
 
   private async autoCommitStep(_step: TaskStep): Promise<void> {
@@ -909,154 +686,23 @@ export class TaskExecutor {
   }
 
   private async suggestNewSubtasks(plan: TaskPlan, step: TaskStep, goal: string): Promise<TaskStep[]> {
-    const completedCount = plan.steps.filter(s => s.status === 'completed').length;
-    if (completedCount < 2) return []; // Don't suggest until at least 2 steps done
-
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const result = await generateText({
-      model,
-      system: `You are a project manager. Given the goal, current plan, and just-completed step, determine if new sub-tasks are needed.
-
-Return a JSON array of additional steps, or empty array if none needed.
-Each step: { "description": "...", "expectedOutcome": "..." }
-
-Only add steps that are genuinely necessary — don't over-engineer.`,
-      prompt: `Goal: ${goal}\n\nCompleted steps: ${plan.steps.filter(s => s.status === 'completed').map((s, idx) => `\n${idx + 1}. ${s.description}`).join('')}\n\nJust completed: ${step.description}\nResult: ${(step.result || '').slice(0, 500)}\n\nAre there any new sub-tasks that this step uncovered?`,
-      temperature: 0.2,
-      maxRetries: 1,
-    });
-
-    const parsed = extractJsonArray(result.text);
-    if (!parsed || parsed.length === 0) return [];
-    return parsed.map(s => ({
-      id: crypto.randomUUID(),
-      description: (s['description'] as string) || 'Additional sub-task',
-      expectedOutcome: (s['expectedOutcome'] as string) || 'Completed',
-      status: 'pending' as const,
-      repoPath: (s['repoPath'] as string) || undefined,
-    }));
+    return suggestNewSubtasksHelper(this._analysisContext(), plan, step, goal);
   }
 
   private async checkContext(plan: TaskPlan): Promise<void> {
-    // Adaptive context compaction: if message count is high, proactively compact
-    const messages = (this.agent as any)['messages'] as Array<unknown> | undefined;
-    if (!messages) return;
-
-    // Session chunking: every 15 completed steps, persist a checkpoint and clear history
-    this._chunkCounter = plan.steps.filter(s => s.status === 'completed').length;
-    if (this._chunkCounter > 0 && this._chunkCounter % 15 === 0) {
-      getLogger().info('TASK_EXECUTOR', `Session chunking at ${this._chunkCounter} completed steps — persisting checkpoint`);
-      // Persist checkpoint to store
-      const store = (this.agent as any).store as { saveTaskSnapshot?: (s: any) => void } | undefined;
-      if (store?.saveTaskSnapshot) {
-        this.persistState(plan, []);
-      }
-    }
-
-    if (messages.length > 40 || (this.agent as any)['compactContext']) {
-      const compactContext = (this.agent as any)['compactContext'] as (() => Promise<void>) | undefined;
-      if (compactContext && typeof compactContext === 'function') {
-        try {
-          await compactContext.call(this.agent);
-          getLogger().info('TASK_EXECUTOR', 'Adaptive context compaction triggered');
-        } catch {
-          // Best-effort
-        }
-      }
-
-      // If compaction didn't reduce enough, force-clear old non-system messages
-      if (messages.length > 80) {
-        const systemMsgs = (messages as any[]).filter((m: any) => m.role === 'system');
-        const recentMsgs = (messages as any[]).filter((m: any) => m.role !== 'system').slice(-20);
-        (this.agent as any)['messages'] = [...systemMsgs, ...recentMsgs];
-        getLogger().info('TASK_EXECUTOR', `Force-pruned messages to ${(this.agent as any)['messages'].length}`);
-      }
-    }
-
-    // Restore original model if we were on a fallback and the error is far enough back
-    if (this._usedFallbackModels.size > 0 && this.config.provider.activeModel !== this._originalModel) {
-      const lastFailIndex = plan.steps.findLastIndex(s => s.status === 'failed');
-      const lastSuccessIndex = plan.steps.findLastIndex(s => s.status === 'completed');
-      if (lastSuccessIndex > (lastFailIndex ?? -1) + 2) {
-        getLogger().info('TASK_EXECUTOR', `Restoring original model: ${this._originalModel}`);
-        const agent = this.agent as any;
-        if (typeof agent.switchModel === 'function') {
-          agent.switchModel(this._originalModel);
-          this.config.provider.activeModel = this._originalModel;
-        }
-      }
-    }
+    return checkContextHelper(this._analysisContext(), plan);
   }
 
   private async saveTaskMemory(plan: TaskPlan): Promise<void> {
-    const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
-    if (completedSteps === 0) return;
-
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const memoryResult = await generateText({
-      model,
-      system: `Extract learnings from this completed task. Return JSON:
-{
-  "projectType": "detected project type",
-  "patterns": ["coding patterns used"],
-  "painPoints": ["issues encountered"],
-  "keyFiles": ["files created or modified"],
-  "suggestions": ["what to do differently next time"]
-}`,
-      prompt: `Goal: ${plan.goal}\n\nSteps:\n${plan.steps.map((s, i) => `${i + 1}. [${s.status}] ${s.description}`).join('\n')}\n\nExtract learnings.`,
-      temperature: 0.2,
-      maxRetries: 1,
-    });
-
-    try {
-      const memoryDir = '.agentx';
-      await tryShellExec(this.agent, `mkdir -p "${memoryDir}"`);
-      const existing = await tryShellExec(this.agent, `cat "${memoryDir}/memories.json" 2>/dev/null || echo "[]"`);
-      let memories: unknown[] = [];
-      try { memories = JSON.parse(existing); } catch { memories = []; }
-      memories.push(JSON.parse(memoryResult.text));
-      // Keep only last 20 memories
-      if (memories.length > 20) memories = memories.slice(-20);
-      await tryShellExec(this.agent, `node -e "require('fs').writeFileSync('${memoryDir}/memories.json', ${JSON.stringify(JSON.stringify(memories))})"`);
-    } catch {
-      // Best-effort
-    }
+    return saveTaskMemoryHelper(this._analysisContext(), plan);
   }
 
   private computeQualityScore(plan: TaskPlan, verification: { achieved: boolean; reason: string; gaps?: string[] }): number {
-    const totalSteps = plan.steps.length;
-    if (totalSteps === 0) return 0;
-
-    const completed = plan.steps.filter(s => s.status === 'completed').length;
-    const completionRatio = completed / totalSteps;
-
-    const failureRatio = this._stepFailures / Math.max(1, this._stepSuccesses + this._stepFailures);
-    const reliabilityScore = Math.max(0, 1 - failureRatio);
-
-    const gapPenalty = (verification.gaps?.length || 0) * 10;
-    const achievedBonus = verification.achieved ? 20 : 0;
-
-    const baseScore = Math.round((completionRatio * 40) + (reliabilityScore * 40) + achievedBonus - gapPenalty);
-    return Math.max(0, Math.min(100, baseScore));
+    return computeQualityScoreHelper(this._analysisContext(), plan, verification);
   }
 
   private async ensureDependencies(): Promise<void> {
-    const hasNodeModules = await tryShellExec(this.agent, 'test -d "node_modules" && echo "y" || echo "n"');
-    if (hasNodeModules.trim() !== 'y') {
-      const hasPackageJson = await tryShellExec(this.agent, 'test -f "package.json" && echo "y" || echo "n"');
-      if (hasPackageJson.trim() === 'y') {
-        getLogger().info('TASK_EXECUTOR', 'node_modules not found — running npm install');
-        await tryShellExec(this.agent, 'npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1');
-      }
-    }
-    const hasVenv = await tryShellExec(this.agent, 'test -d ".venv" || test -d "venv" || test -d "env" && echo "y" || echo "n"');
-    if (hasVenv.trim() !== 'y') {
-      const hasPyproject = await tryShellExec(this.agent, 'test -f "pyproject.toml" || test -f "requirements.txt" && echo "y" || echo "n"');
-      if (hasPyproject.trim() === 'y') {
-        getLogger().info('TASK_EXECUTOR', 'Python venv not found — creating and installing deps');
-        await tryShellExec(this.agent, 'python3 -m venv .venv 2>&1 && source .venv/bin/activate && pip install -r requirements.txt 2>&1 || true');
-      }
-    }
+    return ensureDependenciesHelper(this._analysisContext());
   }
 
   private async checkRegressions(
@@ -1093,339 +739,65 @@ Only add steps that are genuinely necessary — don't over-engineer.`,
   }
 
   private async lintStepConventions(step: TaskStep, result: string): Promise<string> {
-    if (this.conventions.length === 0) return result;
-
-    // Check if the step mentions file modifications that could violate conventions
-    const fileRefs = /\.(ts|js|tsx|jsx|py|rs|go|css|scss|json|md|html|vue|svelte)\b/i.test(result) ||
-      /(created|modified|wrote|updated|added|generated)\s/i.test(result);
-    if (!fileRefs) return result;
-
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const lintResult = await generateText({
-      model,
-      system: `You are a code convention enforcer. Given project conventions and the step result, identify any convention violations.
-
-Project conventions:
-${this.conventions.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
-Return a JSON object:
-{
-  "violations": ["description of each violation"],
-  "fixInstructions": "specific instructions to fix the violations"
-}
-
-If no violations, return { "violations": [] }.`,
-      prompt: `Step: ${step.description}\n\nStep result:\n${result.slice(0, 3000)}`,
-      temperature: 0.1,
-      maxRetries: 1,
-    });
-
-    const lintParsed = extractJsonObject<{ violations: string[]; fixInstructions: string }>(lintResult.text);
-    if (!lintParsed || !lintParsed.violations || lintParsed.violations.length === 0) return result;
-
-    getLogger().warn('TASK_EXECUTOR', `Convention violations detected: ${lintParsed.violations.join('; ')}`);
-
-    // Auto-fix via agent
-    const fixPrompt = `Fix the following convention violations in the work done for step "${step.description}":\n\n${lintParsed.violations.map((v, i) => `${i + 1}. ${v}`).join('\n')}\n\nInstructions: ${lintParsed.fixInstructions}`;
-    const fixResponse = await this.agent.sendMessage(fixPrompt);
-    return `${result}\n\n[Convention fixes applied]\n${fixResponse.content}`;
+    return verifyDebug.lintStepConventions(this._verifyDebugContext(), step, result);
   }
 
   private async runDebugCycle(step: TaskStep, result: string, goal: string): Promise<{ passed: boolean; error?: string; lastOutput: string; fixCount: number }> {
-    // Detect if the step produced code that needs building/testing
-    const hasCodeArtifacts = /\.(ts|js|tsx|jsx|py|rs|go|c|cpp|java|rb|php|swift|kt)\b/.test(result) ||
-      /(created|modified|wrote|updated|added|generated)\s.*\.\w+/.test(result) ||
-      /```[\w]*\n/.test(result);
-
-    if (!hasCodeArtifacts) return { passed: true, lastOutput: result, fixCount: 0 };
-
-    // Extract file names from step result for targeted test generation
-    const mentionedFiles = this.extractFileNames(result);
-
-    // Check for common build/test commands
-    const testCommands = [
-      { check: 'npm test', file: 'package.json', cmd: 'npm test 2>&1', timeout: 60000 },
-      { check: 'pnpm test', file: 'package.json', cmd: 'pnpm test 2>&1', timeout: 60000 },
-      { check: 'cargo test', file: 'Cargo.toml', cmd: 'cargo test 2>&1', timeout: 120000 },
-      { check: 'go test', file: 'go.mod', cmd: 'go test ./... 2>&1', timeout: 120000 },
-      { check: 'pytest', file: 'pyproject.toml', cmd: 'python -m pytest 2>&1', timeout: 60000 },
-      { check: 'npm run build', file: 'package.json', cmd: 'npm run build 2>&1', timeout: 60000 },
-      { check: 'pnpm build', file: 'package.json', cmd: 'pnpm build 2>&1', timeout: 60000 },
-      { check: 'tsc', file: 'tsconfig.json', cmd: 'npx tsc --noEmit 2>&1', timeout: 60000 },
-    ];
-
-    const applicableCommands: Array<{ cmd: string; timeout: number }> = [];
-    for (const tc of testCommands) {
-      const exists = await tryShellExec(this.agent, `test -f "${tc.file}" && echo "y" || echo "n"`);
-      if (exists.trim() === 'y') applicableCommands.push({ cmd: tc.cmd, timeout: tc.timeout });
-    }
-
-    // Phase 0: Auto-install dependencies if missing
-    await this.ensureDependencies();
-
-    // Phase 1: Run existing build/test commands
-    let lastOutput = result;
-    let fixCount = 0;
-
-    if (applicableCommands.length > 0) {
-      for (let fixAttempt = 0; fixAttempt < 3; fixAttempt++) {
-        let allPassed = true;
-        let allOutput = '';
-
-        for (const ac of applicableCommands) {
-          const output = await tryShellExec(this.agent, ac.cmd);
-          allOutput += `\n[${ac.cmd}]\n${output}`;
-          if (output.toLowerCase().includes('error') || output.toLowerCase().includes('fail') || output.toLowerCase().includes('not ok')) {
-            allPassed = false;
-          }
-        }
-
-        if (allPassed) {
-          fixCount = fixAttempt;
-          lastOutput = allOutput;
-          // Regression check: run full test suite to catch regressions
-          const gitManager = this.agent['gitManager'] as { snapshot?: () => string | null; revert?: (hash?: string) => boolean; listSnapshots?: () => Array<{ hash: string }> } | undefined;
-          const regressionResult = await this.checkRegressions(applicableCommands, gitManager);
-          if (regressionResult) {
-            lastOutput += `\n[Regression suite] ${regressionResult}`;
-          }
-          break;
-        }
-
-        // Build/test failed — analyze and fix
-        if (fixAttempt < 2) {
-          getLogger().info('TASK_EXECUTOR', `Debug attempt ${fixAttempt + 1}: analyzing build failure`);
-          const model = createAiSdkModel(this.config, this.apiKey);
-          const debugResult = await generateText({
-            model,
-            system: DEBUG_SYSTEM_PROMPT,
-            prompt: `Goal: ${goal}\nStep: ${step.description}\n\nBuild/test output:\n${allOutput.slice(0, 4000)}\n\nAnalyze the failure and fix it.`,
-            temperature: 0.3,
-            maxRetries: 1,
-          });
-
-          const fixPrompt = `The following build/test failed for step "${step.description}":\n\n${allOutput.slice(0, 3000)}\n\nFix the issues. The debug analysis says:\n\n${debugResult.text.slice(0, 1000)}`;
-          lastOutput = (await this.agent.sendMessage(fixPrompt)).content;
-          fixCount = fixAttempt + 1;
-        }
-      }
-
-      // If existing tests still fail after all attempts, report failure
-      if (fixCount >= 3) {
-        const allOutput = await Promise.all(applicableCommands.map(ac => tryShellExec(this.agent, ac.cmd)));
-        return {
-          passed: false,
-          error: `Build/test still failing after 3 fix attempts. Last output: ${allOutput.join('\n').slice(0, 500)}`,
-          lastOutput,
-          fixCount: 3,
-        };
-      }
-    }
-
-    // Phase 2: Generate and run tests for new/modified files (if none exist yet)
-    if (mentionedFiles.length > 0 && applicableCommands.length === 0) {
-      getLogger().info('TASK_EXECUTOR', `No existing test suite found — generating tests for ${mentionedFiles.length} file(s)`);
-      const testGenResult = await this.generateAndRunTests(mentionedFiles, step, goal);
-      if (!testGenResult.passed) {
-        getLogger().warn('TASK_EXECUTOR', `Generated tests failed: ${testGenResult.error?.slice(0, 200)}`);
-        return testGenResult;
-      }
-      lastOutput = testGenResult.lastOutput;
-      fixCount += testGenResult.fixCount;
-    }
-
-    return { passed: true, lastOutput, fixCount };
+    return verifyDebug.runDebugCycle(this._verifyDebugContext(), step, result, goal);
   }
 
-  private extractFileNames(result: string): string[] {
-    const files: string[] = [];
-    const fileRe = /(?:created|modified|wrote|updated|added|generated)\s+["']?([\w./-]+\.(?:ts|js|tsx|jsx|py|rs|go|c|cpp|java|rb|php|swift|kt))["']?/gi;
-    let m: RegExpExecArray | null;
-    while ((m = fileRe.exec(result)) !== null) {
-      if (m[1] && !files.includes(m[1])) files.push(m[1]);
-    }
-    return files.slice(0, 10);
+  private _verifyDebugContext(): VerifyDebugContext {
+    return {
+      agent: this.agent,
+      config: this.config,
+      apiKey: this.apiKey,
+      conventions: this.conventions,
+      ensureDependencies: () => this.ensureDependencies(),
+      checkRegressions: (commands, gitManager) => this.checkRegressions(commands, gitManager),
+    };
   }
 
-  private async generateAndRunTests(
-    files: string[], step: TaskStep, goal: string,
-  ): Promise<{ passed: boolean; error?: string; lastOutput: string; fixCount: number }> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    let lastOutput = '';
-    let fixCount = 0;
-
-    for (const file of files) {
-      // Read the source file to generate relevant tests
-      const sourceContent = await tryShellExec(this.agent, `cat "${file}" 2>/dev/null || echo ""`);
-      if (!sourceContent.trim()) continue;
-
-      const testFilePath = this.inferTestPath(file);
-
-      const genResult = await generateText({
-        model,
-        system: `You are a test generation expert. Given a source file, generate a test file for it.
-Use the appropriate test framework for the language (Jest/Vitest for TS/JS, pytest for Python, Go test, etc.).
-Return ONLY the test file content. No markdown, no explanation.`,
-        prompt: `Source file: ${file}\n\nSource content:\n${sourceContent.slice(0, 4000)}\n\nGoal context: ${goal}\nStep: ${step.description}\n\nGenerate a comprehensive test file at path: ${testFilePath}`,
-        temperature: 0.2,
-        maxRetries: 1,
-      });
-
-      if (!genResult.text.trim()) continue;
-
-      // Write the test file
-      const writeResult = await tryShellExec(this.agent, `cat > "${testFilePath}" << 'TESTEOF'\n${genResult.text}\nTESTEOF`);
-      if (writeResult.includes('error')) {
-        // Fallback: write via node
-        await tryShellExec(this.agent, `node -e "require('fs').writeFileSync('${testFilePath.replace(/'/g, "\\'")}', ${JSON.stringify(genResult.text)})"`);
-      }
-
-      lastOutput += `\n[Test generated] ${testFilePath}`;
-
-      // Try to run the generated test
-      const testRunner = this.inferTestRunner(file);
-      if (testRunner) {
-        const testOutput = await tryShellExec(this.agent, `${testRunner} 2>&1`);
-        lastOutput += `\n${testOutput.slice(0, 1000)}`;
-
-        if (testOutput.toLowerCase().includes('error') || testOutput.toLowerCase().includes('fail')) {
-          // One fix attempt for generated tests
-          if (fixCount < 1) {
-            const fixResult = await generateText({
-              model,
-              system: 'Fix the test file. Return ONLY the corrected file content.',
-              prompt: `Test file ${testFilePath} has failures:\n\n${testOutput.slice(0, 2000)}\n\nFix the test file.`,
-              temperature: 0.2,
-              maxRetries: 1,
-            });
-            if (fixResult.text.trim()) {
-              await tryShellExec(this.agent, `node -e "require('fs').writeFileSync('${testFilePath.replace(/'/g, "\\'")}', ${JSON.stringify(fixResult.text)})"`);
-              const retryOutput = await tryShellExec(this.agent, `${testRunner} 2>&1`);
-              lastOutput += `\n[Retry] ${retryOutput.slice(0, 500)}`;
-              fixCount++;
-            }
-          }
-        }
-      }
-    }
-
-    return { passed: true, lastOutput, fixCount };
+  private _analysisContext(): AnalysisContext {
+    return {
+      agent: this.agent,
+      config: this.config,
+      apiKey: this.apiKey,
+      sessionId: this.sessionId,
+      stepSuccesses: this._stepSuccesses,
+      stepFailures: this._stepFailures,
+      dynamicMaxReplans: this._dynamicMaxReplans,
+      originalModel: this._originalModel,
+      usedFallbackModels: this._usedFallbackModels,
+      chunkCounter: this._chunkCounter,
+      store: this.store,
+      persistState: (plan, failureHistory) => this.persistState(plan, failureHistory as FailureRecord[]),
+      emitEvent: (event) => this.emitEvent(event),
+      emitSessionEvent: (event) => this.emitSessionEvent(event),
+    };
   }
 
-  private inferTestPath(file: string): string {
-    const base = file.replace(/\.\w+$/, '');
-    if (file.endsWith('.ts') || file.endsWith('.tsx')) return `${base}.test.ts`;
-    if (file.endsWith('.js') || file.endsWith('.jsx')) return `${base}.test.js`;
-    if (file.endsWith('.py')) return `test_${base.replace(/.*\//, '')}.py`;
-    if (file.endsWith('.rs')) return `${base}_test.rs`;
-    if (file.endsWith('.go')) return `${base}_test.go`;
-    return `${base}_test${file.match(/\.\w+$/)?.[0] || '.test'}`;
+  private _planningContext(): PlanningContext {
+    return { agent: this.agent, config: this.config, apiKey: this.apiKey };
   }
 
-  private inferTestRunner(file: string): string | null {
-    if (file.endsWith('.ts') || file.endsWith('.tsx')) return 'npx vitest run 2>&1 || npx jest 2>&1';
-    if (file.endsWith('.js') || file.endsWith('.jsx')) return 'npx jest 2>&1';
-    if (file.endsWith('.py')) return 'python -m pytest 2>&1';
-    if (file.endsWith('.rs')) return 'cargo test 2>&1';
-    if (file.endsWith('.go')) return 'go test ./... 2>&1';
-    return null;
+  private _verifyContext(): VerifyContext {
+    return { agent: this.agent, config: this.config, apiKey: this.apiKey };
   }
 
   private async decompose(prompt: string): Promise<TaskStep[]> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const result = await generateText({
-      model,
-      system: PLAN_SYSTEM_PROMPT,
-      prompt,
-      temperature: 0.3,
-      maxRetries: 2,
-    });
-
-    const parsed = extractJsonArray(result.text);
-    if (!parsed || parsed.length === 0) {
-      getLogger().warn('TASK_EXECUTOR', 'Failed to parse plan JSON, using single-step fallback');
-      return [{
-        id: crypto.randomUUID(),
-        description: prompt.slice(0, 200),
-        expectedOutcome: 'Goal completed successfully',
-        status: 'pending' as const,
-      }];
-    }
-
-    return parsed.map((s, i) => ({
-      id: crypto.randomUUID(),
-      description: (s['description'] as string) || `Step ${i + 1}`,
-      expectedOutcome: (s['expectedOutcome'] as string) || 'Completed',
-      status: 'pending' as const,
-      repoPath: (s['repoPath'] as string) || undefined,
-    }));
+    return decomposeHelper(this._planningContext(), prompt);
   }
 
   private validatePlanSteps(steps: TaskStep[]): TaskStep[] {
-    if (steps.length === 0) return steps;
-    const stepIds = new Set(steps.map(s => s.id));
-    const valid: TaskStep[] = [];
-
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i]!;
-      if (!step.id) step.id = crypto.randomUUID();
-      if (!step.description || step.description.trim().length < 3) continue;
-      if (step.dependencies) {
-        step.dependencies = step.dependencies.filter(d => stepIds.has(d) && d !== step.id);
-      }
-      if (step.parallel) {
-        step.parallel = true;
-      }
-      valid.push(step);
-    }
-
-    return valid.length > 0 ? valid : steps.slice(0, 1);
+    return validatePlanStepsHelper(steps);
   }
 
   private async midPlanReevaluation(plan: TaskPlan, goal: string): Promise<void> {
-    const completedCount = plan.steps.filter(s => s.status === 'completed').length;
-    if (completedCount < 3) return;
-    if (completedCount % 3 !== 0) return;
-
-    getLogger().info('TASK_EXECUTOR', `Mid-plan re-evaluation at step ${completedCount}`);
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const stepsSummary = plan.steps.map((s, i) =>
-      `${i + 1}. ${s.description} — ${s.status}${s.result ? ': ' + s.result.slice(0, 100) : ''}`
-    ).join('\n');
-
-    const reEvalResult = await generateText({
-      model,
-      system: `You are a plan reviewer. Given the original goal, current progress, and remaining steps, determine if the plan needs adjustment.
-Return JSON: { "needsAdjustment": boolean, "reason": "...", "suggestedChanges": ["..."] }
-If the plan is on track, return {"needsAdjustment": false}.`,
-      prompt: `Original goal: ${goal}\n\nProgress so far:\n${stepsSummary}\n\nRemaining steps:\n${plan.steps.slice(completedCount).map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\nDoes the plan need adjustment?`,
-      temperature: 0.2,
-      maxRetries: 1,
-    });
-
-    const parsed = extractJsonObject<{ needsAdjustment: boolean; reason: string; suggestedChanges: string[] }>(reEvalResult.text);
-    if (parsed?.needsAdjustment) {
-      getLogger().info('TASK_EXECUTOR', `Mid-plan adjustment: ${parsed.reason}`);
-    }
+    return midPlanReevaluationHelper(this._planningContext(), plan, goal);
   }
 
   private async generateAlternativeApproach(step: TaskStep, failureReason: string, lastResult: string, goal: string): Promise<string> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const altResult = await generateText({
-      model,
-      system: `You are a creative problem solver. The current approach to a step failed. Generate 1-2 alternative approaches.
-Return JSON: { "approaches": [{"description": "...", "rationale": "..."}] }
-Focus on fundamentally different approaches — not minor tweaks.`,
-      prompt: `Goal: ${goal}\n\nFailed step: ${step.description}\nFailure: ${failureReason}\nLast attempt output: ${lastResult.slice(0, 1000)}\n\nWhat alternative approach should be tried next?`,
-      temperature: 0.5,
-      maxRetries: 1,
-    });
-
-    const parsed = extractJsonObject<{ approaches: Array<{ description: string; rationale: string }> }>(altResult.text);
-    if (parsed?.approaches?.length) {
-      return parsed.approaches.map(a => `  - ${a.description} (${a.rationale})`).join('\n');
-    }
-    return '';
+    return generateAlternativeApproachHelper(this._planningContext(), step, failureReason, lastResult, goal);
   }
 
   private async executeStep(step: TaskStep, goal: string): Promise<string> {
@@ -1442,48 +814,11 @@ Focus on fundamentally different approaches — not minor tweaks.`,
   }
 
   private async verify(step: TaskStep, result: string): Promise<{ passed: boolean; reason: string }> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const verifyResult = await generateText({
-      model,
-      system: VERIFY_SYSTEM_PROMPT,
-      prompt: `Step: ${step.description}\nExpected: ${step.expectedOutcome}\n\nResult:\n${result.slice(0, 3000)}`,
-      temperature: 0.1,
-      maxRetries: 1,
-    });
-
-    const parsed = extractJsonObject<{ passed: boolean; reason: string }>(verifyResult.text);
-    if (parsed) {
-      return { passed: Boolean(parsed.passed), reason: parsed.reason || 'No reason given' };
-    }
-
-    const passed = /"passed"\s*:\s*true/i.test(verifyResult.text);
-    return { passed, reason: passed ? 'Step completed' : 'Verification failed to parse, assuming failure' };
+    return verifyStepHelper(this._verifyContext(), step, result);
   }
 
   private async verifyGoal(goal: string, plan: TaskPlan): Promise<{ achieved: boolean; reason: string; gaps?: string[] }> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const stepsSummary = plan.steps.map((s, i) =>
-      `${i + 1}. ${s.description} — ${s.status}${s.result ? ': ' + s.result.slice(0, 200) : ''}`
-    ).join('\n');
-
-    const verifyResult = await generateText({
-      model,
-      system: FINAL_VERIFY_SYSTEM_PROMPT,
-      prompt: `Original goal: ${goal}\n\nCompleted steps:\n${stepsSummary}\n\nWas the goal fully achieved?`,
-      temperature: 0.1,
-      maxRetries: 1,
-    });
-
-    const parsed = extractJsonObject<{ achieved: boolean; reason: string; gaps?: string[] }>(verifyResult.text);
-    if (parsed) {
-      return {
-        achieved: Boolean(parsed.achieved),
-        reason: parsed.reason || 'No reason given',
-        gaps: parsed.gaps || [],
-      };
-    }
-
-    return { achieved: false, reason: 'Failed to parse verification result', gaps: [] };
+    return verifyGoalHelper(this._verifyContext(), goal, plan);
   }
 
   /**
@@ -1491,42 +826,7 @@ Focus on fundamentally different approaches — not minor tweaks.`,
    * against tool execution results. Detects fabricated content.
    */
   private async verifyFacts(step: TaskStep, result: string): Promise<{ passed: boolean; warnings: string[] }> {
-    const warnings: string[] = [];
-
-    // Extract file path claims
-    const mentionedFiles = result.match(/["'`]?([\w./-]+\.[\w]{1,8})["'`]?/g) || [];
-    for (const f of mentionedFiles.slice(0, 10)) {
-      const clean = f.replace(/["'`]/g, '');
-      const exists = await tryShellExec(this.agent, `test -f "${clean}" && echo "y" || echo "n"`);
-      if (exists.trim() !== 'y' && !clean.startsWith('http') && !/^\d+\.\d+/.test(clean)) {
-        warnings.push(`Claimed file "${clean}" may not exist — verify`);
-      }
-    }
-
-    // Detect fabricated statistics/numbers without source context
-    const statClaims = result.match(/(\d+%|[\d,]+ (?:users|requests|items|records|errors|lines|files|rows))/gi);
-    if (statClaims && statClaims.length > 2) {
-      const hasSource = /(?:according to|source|from|based on|measured|observed|found|returned|output)/i.test(result);
-      if (!hasSource) {
-        warnings.push(`${statClaims.length} statistical claims without verifiable source context`);
-      }
-    }
-
-    // Cross-reference with step result claims — if step claims "created file X" but result doesn't mention it
-    const creationClaims = result.match(/(?:created|wrote|generated|built|compiled)\s+["'`]?([\w./-]+)["'`]?/gi) || [];
-    if (creationClaims.length > 0 && step.result) {
-      for (const claim of creationClaims) {
-        const fileMatch = claim.match(/["'`]?([\w./-]+\.[\w]{1,8})["'`]?/);
-        if (fileMatch && !(step.result.includes(fileMatch[1]!))) {
-          warnings.push(`Claimed "${claim}" but not found in tool results`);
-        }
-      }
-    }
-
-    return {
-      passed: warnings.length < 3, // Allow minor inconsistencies
-      warnings,
-    };
+    return verifyFactsHelper(this._verifyContext(), step, result);
   }
 
   private async replan(
@@ -1536,92 +836,15 @@ Focus on fundamentally different approaches — not minor tweaks.`,
     failureReason: string,
     failureHistory: FailureRecord[],
   ): Promise<TaskStep[]> {
-    const model = createAiSdkModel(this.config, this.apiKey);
-    const remainingDesc = failedSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
-    const failureContext = failureHistory.length > 0
-      ? '\nPrevious failed attempts for context:\n' + failureHistory.map(f =>
-          `  - Attempt ${f.attemptNumber} at "${f.description}": ${f.failureReason}`
-        ).join('\n')
-      : '';
-
-    const replanResult = await generateText({
-      model,
-      system: PLAN_SYSTEM_PROMPT + '\n\nYou are re-planning because a previous step failed. Adjust the remaining steps to account for the failure. DO NOT repeat the same approach that already failed.\n\nWeb research is available — use research steps to investigate the failure and find solutions before re-attempting.',
-      prompt: `Goal: ${goal}\n\nFailed step: ${failedSteps[0]?.description}\nFailure reason: ${failureReason}\nPartial result: ${lastResult.slice(0, 1000)}${failureContext}\n\nRemaining steps to replan:\n${remainingDesc}\n\nProvide a revised plan (JSON array).`,
-      temperature: 0.4,
-      maxRetries: 2,
-    });
-
-    const parsed = extractJsonArray(replanResult.text);
-    if (!parsed || parsed.length === 0) return failedSteps;
-
-    // Preserve repoPath from the original failed step if the first entry has one
-    const firstFailedStep = failedSteps[0];
-    const defaultRepoPath = firstFailedStep?.repoPath;
-
-    return parsed.map(s => ({
-      id: crypto.randomUUID(),
-      description: (s['description'] as string) || 'Revised step',
-      expectedOutcome: (s['expectedOutcome'] as string) || 'Completed',
-      status: 'pending' as const,
-      repoPath: (s['repoPath'] as string) || defaultRepoPath,
-    }));
+    return replanHelper(this._planningContext(), goal, failedSteps, lastResult, failureReason, failureHistory);
   }
 
   private async autoPrPush(plan: TaskPlan): Promise<void> {
-    const gitManager = this.agent['gitManager'] as { pushBranch?: () => boolean; createPR?: (title: string, body: string) => string | null; ensureBranch?: (sessionId?: string) => boolean; getBranchName?: (sessionId?: string) => string; getRemoteUrl?: () => string | null } | undefined;
-    if (!gitManager?.pushBranch || !gitManager?.createPR) return;
-
-    // Only push if there's a remote configured
-    const remoteUrl = gitManager.getRemoteUrl?.();
-    if (!remoteUrl) {
-      getLogger().info('TASK_EXECUTOR', 'No git remote configured — skipping auto PR/push');
-      return;
-    }
-
-    gitManager.ensureBranch?.(this.sessionId);
-
-    const branchName = gitManager.getBranchName?.(this.sessionId) || 'auto';
-    const title = `[Agent-X] ${plan.goal.slice(0, 80)}`;
-    const body = `## Agent-X Automated Changes\n\n**Goal:** ${plan.goal}\n\n**Steps completed:** ${plan.steps.filter(s => s.status === 'completed').length}/${plan.steps.length}\n\n### Steps:\n${plan.steps.filter(s => s.status === 'completed').map((s, i) => `${i + 1}. ${s.description}`).join('\n')}\n\n---\n*Auto-generated by Agent-X*`;
-
-    if (gitManager.pushBranch()) {
-      getLogger().info('TASK_EXECUTOR', `Pushed branch ${branchName} to origin`);
-      const prUrl = gitManager.createPR(title, body);
-      if (prUrl) {
-        getLogger().info('TASK_EXECUTOR', `PR created: ${prUrl}`);
-      } else {
-        getLogger().warn('TASK_EXECUTOR', 'Failed to create PR');
-      }
-    } else {
-      getLogger().warn('TASK_EXECUTOR', 'Failed to push branch');
-    }
+    return gitPipeline.autoPrPush(this._gitPipelineContext(), plan);
   }
 
   private commitTaskResult(plan: TaskPlan, success: boolean, summary: string): void {
-    const completedSteps = plan.steps.filter(s => s.status === 'completed').length;
-    this.emitSessionEvent({
-      type: 'task_completed',
-      payload: { taskId: plan.id, success, summary, completedSteps, totalSteps: plan.steps.length },
-    });
-    // Persist failure record for cross-session memory
-    if (!success && this.store) {
-      const failures = plan.steps.filter(s => s.status === 'failed').map(s => ({
-        taskGoal: plan.goal.slice(0, 200),
-        stepDescription: s.description,
-        error: s.error || 'unknown',
-        failedAt: new Date().toISOString(),
-      }));
-      if (failures.length > 0) {
-        try {
-          const existing = this.store.getTaskSnapshot('_failure_history') as Record<string, unknown> | null;
-          const history = existing ? (JSON.parse((existing as any)['failures'] || '[]') as typeof failures) : [];
-          history.push(...failures);
-          if (history.length > 50) history.splice(0, history.length - 50);
-          this.store.saveTaskSnapshot({ sessionId: '_failure_history', failures: JSON.stringify(history), _key: '_failure_history' } as any);
-        } catch { /* non-critical */ }
-      }
-    }
+    gitPipeline.commitTaskResult(this._gitPipelineContext(), plan, success, summary);
   }
 
   private makeResult(success: boolean, plan: TaskPlan, summary: string): TaskExecutorResult {
@@ -1629,77 +852,14 @@ Focus on fundamentally different approaches — not minor tweaks.`,
   }
 
   private emitEvent(event: Record<string, unknown>): void {
-    this.agent['emit']?.({ type: 'task_event', ...event } as unknown as EngineEvent);
-  }
-
-  /**
-   * Resolve git merge conflicts using the LLM.
-   */
-  private async resolveGitConflicts(): Promise<boolean> {
-    const gitManager = this.agent['gitManager'] as { hasConflicts?: () => boolean; getConflictFiles?: () => string[]; getConflictContent?: (f: string) => string | null; resolveConflict?: (f: string, c: string) => boolean } | undefined;
-    if (!gitManager?.hasConflicts || !gitManager.hasConflicts()) return true;
-
-    getLogger().info('TASK_EXECUTOR', 'Merge conflicts detected — resolving via LLM');
-    const conflictFiles = gitManager.getConflictFiles?.() || [];
-    if (conflictFiles.length === 0) return true;
-
-    const model = createAiSdkModel(this.config, this.apiKey);
-    for (const file of conflictFiles) {
-      const content = gitManager.getConflictContent?.(file);
-      if (!content) continue;
-
-      const resolution = await generateText({
-        model,
-        system: `You are a merge conflict resolution expert. Given a file with merge conflicts, resolve them.
-Output ONLY the resolved file content with conflict markers removed and a clean merge.
-Preserve all functionality from both sides.`,
-        prompt: `Resolve conflicts in file "${file}":\n\n${content.slice(0, 8000)}`,
-        temperature: 0.1,
-        maxRetries: 1,
-      });
-
-      if (resolution.text.trim()) {
-        gitManager.resolveConflict?.(file, resolution.text);
-        getLogger().info('TASK_EXECUTOR', `Resolved conflict in ${file}`);
-      }
-    }
-    return true;
+    this.agent.emit({ type: 'task_event', ...event });
   }
 
   /**
    * CI pipeline: push, watch CI, auto-fix failures, re-push until green or timeout.
    */
   private async ciPipeline(plan: TaskPlan): Promise<boolean> {
-    const gitManager = this.agent['gitManager'] as { hasConflicts?: () => boolean; getConflictFiles?: () => string[]; pushBranch?: () => boolean; watchCI?: (timeoutMs: number) => string; getRemoteUrl?: () => string | null } | undefined;
-    if (!gitManager?.pushBranch || !gitManager?.getRemoteUrl) return true;
-
-    const remoteUrl = gitManager.getRemoteUrl();
-    if (!remoteUrl) return true;
-
-    gitManager.pushBranch();
-    getLogger().info('TASK_EXECUTOR', 'CI pipeline: pushed, waiting for CI results...');
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const ciResult = gitManager.watchCI?.(300_000) || 'success';
-      if (ciResult === 'success') {
-        getLogger().info('TASK_EXECUTOR', 'CI pipeline: all checks passed');
-        return true;
-      }
-
-      getLogger().warn('TASK_EXECUTOR', `CI pipeline: checks failed (attempt ${attempt + 1}/3)`);
-
-      // Try to fix CI failures
-      const ciStatus = await tryShellExec(this.agent, 'gh run list --branch HEAD --limit 1 --json name,conclusion 2>/dev/null || true');
-      const fixPrompt = `The CI pipeline failed for task "${plan.goal}".\n\nCI status: ${ciStatus.slice(0, 1000)}\n\nAnalyze the CI failures and fix the underlying issues.`;
-      await this.agent.sendMessage(fixPrompt);
-
-      // Re-push after fix
-      await this.resolveGitConflicts();
-      gitManager.pushBranch();
-    }
-
-    getLogger().error('TASK_EXECUTOR', 'CI pipeline: failed after 3 attempts');
-    return false;
+    return gitPipeline.ciPipeline(this._gitPipelineContext(), plan);
   }
 
   /**
@@ -1707,114 +867,34 @@ Preserve all functionality from both sides.`,
    * then merge when approved. Runs a maximum of 10 review cycles.
    */
   private async prReviewLoop(plan: TaskPlan): Promise<boolean> {
-    const gitManager = this.agent['gitManager'] as { getBranchName?: (sessionId?: string) => string; getRemoteUrl?: () => string | null; pushBranch?: () => boolean } | undefined;
-    if (!gitManager?.getRemoteUrl?.() || !gitManager?.pushBranch) return true;
-
-    const branch = gitManager.getBranchName?.(this.sessionId) || 'auto';
-
-    for (let cycle = 0; cycle < 10; cycle++) {
-      await new Promise(r => setTimeout(r, 5000)); // Poll interval
-
-      // Check PR status
-      const prStatus = await tryShellExec(this.agent,
-        `gh pr view "${branch}" --json state,body,comments,reviews,url 2>/dev/null || true`
-      );
-      const prData = this.safeJsonParse(prStatus);
-
-      if (!prData || !prData['url']) {
-        getLogger().info('TASK_EXECUTOR', 'PR review loop: no PR found, proceeding');
-        return true;
-      }
-
-      // Check if PR is merged
-      if (prData['state'] === 'MERGED') {
-        getLogger().info('TASK_EXECUTOR', `PR review loop: PR merged — ${prData['url']}`);
-        return true;
-      }
-
-      // Check if PR is closed without merge
-      if (prData['state'] === 'CLOSED') {
-        getLogger().warn('TASK_EXECUTOR', 'PR review loop: PR was closed without merge');
-        return false;
-      }
-
-      // Process pending reviews
-      const reviews = (prData['reviews'] as Array<{ body: string; state: string }>) || [];
-      const changesRequested = reviews.some((r: { state: string }) => r.state === 'CHANGES_REQUESTED');
-
-      // Process comments that need responses
-      const comments = (prData['comments'] as Array<{ body: string; author: { login: string } }>) || [];
-      const newComments = comments.filter((_c: { body: string; author: { login: string } }, i: number) =>
-        i >= (this._lastCommentCount || 0)
-      );
-      this._lastCommentCount = comments.length;
-
-      if (newComments.length === 0 && !changesRequested) {
-        // No new feedback — approve and merge
-        await tryShellExec(this.agent, `gh pr merge "${branch}" --squash --subject "Agent-X: ${plan.goal.slice(0, 60)}" 2>/dev/null || true`);
-        getLogger().info('TASK_EXECUTOR', 'PR review loop: auto-approved and merged');
-        return true;
-      }
-
-      // Respond to review comments
-      for (const comment of newComments) {
-        const commentBody = comment['body'] || '';
-        getLogger().info('TASK_EXECUTOR', `PR review: addressing comment: ${commentBody.slice(0, 100)}`);
-        const fixPrompt = `A PR reviewer commented:\n\n${commentBody}\n\nFix the issue, then reply with a summary of the change.`;
-        await this.agent.sendMessage(fixPrompt);
-      }
-
-      // If changes were requested, fix and re-push
-      if (changesRequested) {
-        await this.resolveGitConflicts();
-        gitManager.pushBranch();
-      }
-    }
-
-    // After 10 cycles, try to merge anyway
-    await tryShellExec(this.agent, `gh pr merge "${branch}" --squash 2>/dev/null || true`);
-    return true;
+    return gitPipeline.prReviewLoop(this._gitPipelineContext(), plan);
   }
 
   /**
    * Deploy after PR merge. Supports: gh workflow run, vercel, railway, docker.
    */
   private async deploy(_plan: TaskPlan): Promise<boolean> {
-    // Detect available deploy targets
-    const hasVercel = await tryShellExec(this.agent, 'test -f "vercel.json" && echo "y" || echo "n"');
-    const hasRailway = await tryShellExec(this.agent, 'test -f "railway.json" && echo "y" || echo "n"');
-    const hasDockerfile = await tryShellExec(this.agent, 'test -f "Dockerfile" && echo "y" || echo "n"');
-    const hasGhWorkflow = await tryShellExec(this.agent, 'test -d ".github/workflows" && echo "y" || echo "n"');
+    return gitPipeline.deploy(this._gitPipelineContext(), _plan);
+  }
 
-    getLogger().info('TASK_EXECUTOR', `Deploy phase: vercel=${hasVercel.trim()}, railway=${hasRailway.trim()}, docker=${hasDockerfile.trim()}, gh=${hasGhWorkflow.trim()}`);
-
-    if (hasVercel.trim() === 'y') {
-      const output = await tryShellExec(this.agent, 'npx vercel --prod --yes 2>&1 || true');
-      getLogger().info('TASK_EXECUTOR', `Vercel deploy: ${output.slice(0, 200)}`);
-      if (!output.toLowerCase().includes('error')) return true;
-    }
-
-    if (hasRailway.trim() === 'y') {
-      const output = await tryShellExec(this.agent, 'railway up --detach 2>&1 || true');
-      getLogger().info('TASK_EXECUTOR', `Railway deploy: ${output.slice(0, 200)}`);
-      if (!output.toLowerCase().includes('error')) return true;
-    }
-
-    if (hasDockerfile.trim() === 'y') {
-      const output = await tryShellExec(this.agent,
-        'docker build -t agentx-deploy:latest . 2>&1 && docker push agentx-deploy:latest 2>&1 || true'
-      );
-      getLogger().info('TASK_EXECUTOR', `Docker deploy: ${output.slice(0, 200)}`);
-    }
-
-    if (hasGhWorkflow.trim() === 'y') {
-      const output = await tryShellExec(this.agent,
-        'gh workflow run --ref main 2>&1 || gh workflow run --ref master 2>&1 || true'
-      );
-      getLogger().info('TASK_EXECUTOR', `GitHub workflow triggered: ${output.slice(0, 200)}`);
-    }
-
-    return true;
+  private _gitPipelineContext(): GitPipelineContext {
+    const ctx: GitPipelineContext = {
+      agent: this.agent,
+      sessionId: this.sessionId,
+      config: this.config,
+      apiKey: this.apiKey,
+      store: this.store,
+      lastCommentCount: this._lastCommentCount,
+      emitSessionEvent: (event) => this.emitSessionEvent(event),
+      safeJsonParse: (text) => this.safeJsonParse(text),
+    };
+    Object.defineProperty(ctx, 'lastCommentCount', {
+      get: () => this._lastCommentCount,
+      set: (v: number) => { this._lastCommentCount = v; },
+      enumerable: true,
+      configurable: true,
+    });
+    return ctx;
   }
 
   /**
@@ -1822,64 +902,14 @@ Preserve all functionality from both sides.`,
    * Uses a prioritized chain: fastest/cheapest first, most capable last.
    */
   private async tryModelFailover(): Promise<boolean> {
-    const agent = this.agent as any;
-
-    const fallbackModels: string[] = [
-      'gemini-2.0-flash',
-      'claude-3-haiku-20240307',
-      'gpt-4o-mini',
-      'claude-3-5-sonnet-20241022',
-      'gpt-4o',
-      'gemini-2.0-pro-exp',
-    ];
-
-    const usedFallbacks = this._usedFallbackModels;
-
-    for (const fb of fallbackModels) {
-      if (usedFallbacks.has(fb)) continue;
-      if (agent.isModelGrounded?.(fb)) {
-        getLogger().info('TASK_EXECUTOR', `Skipping grounded fallback model: ${fb}`);
-        continue;
-      }
-      usedFallbacks.add(fb);
-
-      try {
-        getLogger().info('TASK_EXECUTOR', `Trying fallback model: ${fb}`);
-        if (typeof agent.trialModel === 'function') {
-          const available = await agent.trialModel(fb);
-          if (!available) {
-            getLogger().warn('TASK_EXECUTOR', `Fallback model ${fb} is not available`);
-            continue;
-          }
-        }
-        if (typeof agent.switchModel === 'function') {
-          agent.switchModel(fb);
-          this.config.provider.activeModel = fb;
-          this._usedFallbackModels = usedFallbacks;
-          getLogger().info('TASK_EXECUTOR', `Switched to fallback model: ${fb}`);
-          return true;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    return false;
+    return tryModelFailoverHelper(this._analysisContext());
   }
 
   /**
    * Safe JSON parse that returns null on failure.
    */
   private safeJsonParse(text: string): Record<string, unknown> | null {
-    try {
-      // Try to extract JSON from the text (might have other output)
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      if (start === -1 || end === -1 || end <= start) return null;
-      return JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
+    return safeJsonParseHelper(text);
   }
 
   private emitSessionEvent(event: Omit<SessionEvent, 'sessionId' | 'sequence' | 'timestamp'>): void {
@@ -1893,83 +923,25 @@ Preserve all functionality from both sides.`,
    * Returns a description string to inject into planning context, or null.
    */
   private async processGoalVisuals(goal: string): Promise<string | null> {
-    const imageRefs: string[] = [];
-    const imgRe = /["']?([\w./-]+\.(?:png|jpg|jpeg|gif|bmp|webp|svg|fig|sketch|xd|psd))["']?/gi;
-    let m: RegExpExecArray | null;
-    while ((m = imgRe.exec(goal)) !== null) {
-      if (m[1]) imageRefs.push(m[1]);
-    }
-    // Also detect generic references like "screenshot", "wireframe", "diagram", "mockup"
-    const hasGenericRef = /screenshot|wireframe|diagram|mockup|visual|design|ui\s*mock|prototype/i.test(goal) && imageRefs.length === 0;
-
-    if (imageRefs.length === 0 && !hasGenericRef) return null;
-
-    const descriptions: string[] = [];
-
-    for (const ref of imageRefs) {
-      const exists = await tryShellExec(this.agent, `test -f "${ref}" && echo "exists" || echo "not found"`);
-      if (exists.trim() === 'exists') {
-        const fileInfo = await tryShellExec(this.agent, `file "${ref}" 2>/dev/null || echo "unknown"`);
-        const sizeInfo = await tryShellExec(this.agent, `wc -c "${ref}" 2>/dev/null | awk '{print $1}' || echo "unknown"`);
-        descriptions.push(`- ${ref} (${fileInfo.trim().split(',')[0] || 'image'}, ${sizeInfo.trim()} bytes)`);
-      } else {
-        descriptions.push(`- ${ref} (referenced but not found in workspace)`);
-      }
-    }
-
-    if (hasGenericRef) {
-      descriptions.push('- Generic visual reference (screenshot/diagram/mockup) mentioned');
-    }
-
-    if (descriptions.length === 0) return null;
-
-    return descriptions.join('\n');
+    return processGoalVisualsHelper(this._analysisContext(), goal);
   }
 
   private emitProgress(plan: TaskPlan, stepIndex: number, phase: string): void {
-    const completed = plan.steps.filter(s => s.status === 'completed').length;
-    const total = plan.steps.length;
-    this.emitEvent({ type: 'task_progress', phase, stepIndex, completed, total });
-    this.emitSessionEvent({
-      type: 'task_progress',
-      payload: {
-        taskId: plan.id,
-        goal: plan.goal,
-        phase,
-        stepIndex,
-        completedSteps: completed,
-        totalSteps: total,
-        percent: total > 0 ? Math.round((completed / total) * 100) : 0,
-      },
-    });
+    emitProgressHelper(this._analysisContext(), plan, stepIndex, phase);
   }
 
   /**
    * Check if gh CLI is available. Returns false if not installed.
    */
   private async hasGhAvailable(): Promise<boolean> {
-    const result = await tryShellExec(this.agent, 'which gh 2>/dev/null && echo "found" || echo "notfound"');
-    return result.trim().includes('found');
+    return hasGhAvailableHelper(this._analysisContext());
   }
 
   /**
    * Hard restart: force-save current state so we can retry from scratch if the supervisor catches a fatal crash.
    */
   private forceSaveState(goal: string): boolean {
-    try {
-      const snapshot = {
-        taskId: this.sessionId,
-        goal,
-        planState: JSON.stringify({ steps: [], currentStepIndex: 0, goal }),
-        stepIndex: 0,
-        failureHistory: '[]',
-        created_at: new Date().toISOString(),
-      };
-      this.store?.saveTaskSnapshot(snapshot);
-      return true;
-    } catch {
-      return false;
-    }
+    return forceSaveStateHelper(this._analysisContext(), goal);
   }
 
 }

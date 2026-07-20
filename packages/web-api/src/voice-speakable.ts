@@ -5,9 +5,17 @@ export const VOICE_BLOCK_CLOSE = '⟨/voice⟩';
 
 /** Drop LLM token bleed before the voice opener (e.g. stray CJK characters). */
 export function normalizeVoiceAssistantContent(content: string): string {
-  const idx = content.indexOf(VOICE_BLOCK_OPEN);
-  if (idx > 0) return content.slice(idx);
-  return content;
+  // Normalize ASCII <voice> variants to Unicode ⟨voice⟩ — LLMs sometimes use
+  // regular angle brackets instead of the Unicode ones we instruct.
+  // Also handle mixed ASCII/Unicode bracket variants like </voice⟩ or ⟨/voice>.
+  const normalized = content
+    .replace(/<voice>/g, VOICE_BLOCK_OPEN)
+    .replace(/<\/voice>/g, VOICE_BLOCK_CLOSE)
+    .replace(/<\/voice⟩/g, VOICE_BLOCK_CLOSE)
+    .replace(/⟨\/voice>/g, VOICE_BLOCK_CLOSE);
+  const idx = normalized.indexOf(VOICE_BLOCK_OPEN);
+  if (idx > 0) return normalized.slice(idx);
+  return normalized;
 }
 
 const VOICE_BLOCK_RE = /⟨voice⟩([\s\S]*?)⟨\/voice⟩/i;
@@ -15,6 +23,137 @@ const VOICE_BLOCK_STRIP_RE = /⟨voice⟩[\s\S]*?⟨\/voice⟩\s*/gi;
 
 export function buildVoiceTurnInstruction(): string {
   return buildVoiceSummaryPhaseInstruction();
+}
+
+/** Phone-call turn for crew-private sessions — stay in character, not Agent-X voice chat. */
+export function buildCrewCallTurnInstruction(): string {
+  return `CREW PHONE CALL — spoken turn.
+
+You are on a live phone call with the user as yourself (the crew persona above) — not Agent-X, not a generic assistant.
+
+Speak naturally like a real phone conversation in your persona:
+- Short turns (1–3 spoken sentences). Plain speech only.
+- Stay in character — match your tone, expertise, and mannerisms.
+- Prefer ending with a short question when it keeps the call moving.
+- No markdown, bullet lists, URLs, skill menus, or generic AI clichés.
+- Do not offer to "put a report in chat" unless they explicitly ask for written notes.
+- Use tools (web_search, deep_web_search, http_get, integration__* MCP tools, etc.) when you need live facts, research, or connected apps before answering.
+
+Output ONLY a brief spoken reply inside this exact wrapper:
+
+${VOICE_BLOCK_OPEN}
+Your spoken reply as this person on the call.
+${VOICE_BLOCK_CLOSE}
+
+CRITICAL:
+- Your reply MUST start with ${VOICE_BLOCK_OPEN} — nothing before it.
+- After ${VOICE_BLOCK_CLOSE} write NOTHING else.
+- Keep the voice block under 60 words.
+- Prefer web_search for current information when the topic needs it.
+- THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] and questionnaire/clarification forms — ask follow-ups as spoken sentences inside the voice block.`;
+}
+
+/** Identity hints so the opener names the person and fits their role. */
+export interface CrewCallOpenerIdentity {
+  name: string;
+  title?: string;
+  expertise?: string[];
+}
+
+function formatOpenerIdentity(identity?: CrewCallOpenerIdentity | null): {
+  who: string;
+  roleHint: string;
+  nameLine: string;
+} {
+  const name = identity?.name?.trim();
+  const title = identity?.title?.trim();
+  const niche = title || identity?.expertise?.find(Boolean)?.trim() || '';
+  const who = name
+    ? (title ? `${name}, ${title}` : name)
+    : 'yourself (the named person in CREW_IDENTITY — never a generic "crew")';
+  const roleHint = niche
+    ? `Ask ONE short question that fits your work as ${niche}.`
+    : 'Ask ONE short question that fits your specific role and expertise.';
+  const nameLine = name
+    ? `Your name is ${name}${title ? ` and you are a ${title}` : ''}. Introduce yourself as ${name} (or a natural first-name variant) — never say "crew", "your crew", "the crew", or "Agent-X".`
+    : 'Use your real persona name from identity — never say "crew", "your crew", "the crew", or "Agent-X".';
+  return { who, roleHint, nameLine };
+}
+
+/** First move when a crew call connects (or reconnects after hold) — local STT→LLM→TTS. */
+export function buildCrewCallOpenerInstruction(
+  kind: 'open' | 'resume' = 'open',
+  identity?: CrewCallOpenerIdentity | null,
+): string {
+  const { who, roleHint, nameLine } = formatOpenerIdentity(identity);
+  const beat = kind === 'resume'
+    ? `The call was on hold and just resumed. You speak first as ${who}: briefly acknowledge you are back, then ask one natural follow-up from prior context (or invite them to continue).`
+    : `The call just connected. YOU MUST SPEAK FIRST as ${who} with a warm welcome, then ask ONE short question that fits your persona. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.`;
+  return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} turn.
+
+${beat}
+
+${nameLine}
+${roleHint}
+
+Stay fully in character. Sound like a real person on a phone — not a generic AI assistant.
+
+Output ONLY:
+
+${VOICE_BLOCK_OPEN}
+Medium, simple welcome in character (about 2 sentences), ending with one short persona-fit question.
+${VOICE_BLOCK_CLOSE}
+
+CRITICAL:
+- Start with ${VOICE_BLOCK_OPEN}. Nothing after ${VOICE_BLOCK_CLOSE}.
+- You MUST include a welcome AND a question.
+- Under 45 words. No markdown. No capability lists. No tools on this turn.
+- Never refer to yourself as "crew" or "your crew on the line".`;
+}
+
+/**
+ * xAI / realtime opener — spoken audio is produced natively.
+ * Must NOT use ⟨voice⟩ wrappers (those are for the local TTS pipeline only).
+ */
+export function buildCrewCallRealtimeOpenerInstruction(
+  kind: 'open' | 'resume' = 'open',
+  identity?: CrewCallOpenerIdentity | null,
+): string {
+  const { who, roleHint, nameLine } = formatOpenerIdentity(identity);
+  const beat = kind === 'resume'
+    ? `The call was on hold and just resumed. Speak first as ${who}: briefly acknowledge you are back, then ask one natural follow-up (or invite them to continue).`
+    : `The call just connected. Speak first immediately as ${who} with a warm welcome, then ask ONE short question that fits your persona. Do not wait for the user. If prior history exists, you may briefly acknowledge continuity.`;
+  return `CREW PHONE CALL — ${kind === 'resume' ? 'resume' : 'opening'} greeting.
+
+${beat}
+
+${nameLine}
+${roleHint}
+
+You are on a live phone call as yourself — not Agent-X. Speak naturally out loud:
+- About 2 short spoken sentences (medium, simple — not a long monologue).
+- Plain speech only — no markdown, tags, wrappers, tool lists, or stage directions.
+- Include a welcome AND one persona-fit question.
+- Never say "crew", "your crew", or "your crew on the line".
+- No tools on this turn.`;
+}
+
+export function isCrewCallEventText(text: string): boolean {
+  return /^\[call_event:(open|resume)\]$/i.test(text.trim());
+}
+
+/** True when a voice/text session already has real turns (not just call_event markers). */
+export function crewCallSessionHasSpokenHistory(
+  messages: Array<{ role?: string; content?: unknown }>,
+): boolean {
+  for (const msg of messages) {
+    if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+    const text = typeof msg.content === 'string' ? msg.content.trim() : '';
+    if (!text) continue;
+    if (isCrewCallEventText(text)) continue;
+    return true;
+  }
+  return false;
 }
 
 /** Phase 1: tools + spoken summary + ask what the user wants next. */
@@ -26,14 +165,15 @@ The user is listening via text-to-speech. You may use tools (web_search, deep_we
 When ready, output ONLY a brief spoken reply inside this exact wrapper (plain sentences — no markdown, URLs, lists, or tables):
 
 ${VOICE_BLOCK_OPEN}
-2–3 sentences with the key answer. Then ask what they want next — e.g. more detail on a part, save a note, another search, or say "put the full report in chat" for the written version.
+1–2 crisp sentences with the key answer. Then ask one short follow-up question or offer a single next step.
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL RULES:
 - Your reply MUST start with ${VOICE_BLOCK_OPEN} — no characters, words, or tokens before it.
 - Do NOT say the full report is already in chat — it is not until they ask.
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else.
-- Keep the voice block under 90 words.
+- Keep the voice block under 40 words.
+- Be terse. Do not summarize, repeat, or elaborate.
 - Prefer web_search for live facts. Avoid shell_exec unless absolutely necessary (max ~20s).
 - THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
@@ -49,12 +189,14 @@ If the user replied with a short affirmative ("yes please", "sure", "go ahead"),
 Output ONLY a brief spoken reply inside:
 
 ${VOICE_BLOCK_OPEN}
-2–4 sentences addressing their request. Use tools if needed for live facts or actions (notes, files, searches).
+1–2 crisp sentences addressing their request. Use tools if needed for live facts or actions (notes, files, searches).
 If they did not ask for the chat report, do NOT mention putting anything in chat.
 ${VOICE_BLOCK_CLOSE}
 
 CRITICAL:
 - After ${VOICE_BLOCK_CLOSE} write NOTHING else — no markdown body unless they explicitly asked for the full report in chat.
+- Keep the voice block under 40 words.
+- Be terse. Do not summarize, repeat, or elaborate.
 - THIS TURN OVERRIDES conflicting system-prompt rules: ignore [CHAT_MARKDOWN] formatting and the "deliver plans as markdown in chat" conduct. Ask conversational follow-ups as plain spoken sentences inside the voice block — do NOT call ask_clarification on this voice turn.`;
 }
 
@@ -68,11 +210,6 @@ Rules:
 - Do NOT include a ${VOICE_BLOCK_OPEN} block.
 - Do not repeat the spoken summary verbatim; expand with full detail.
 - Answer thoroughly with sources where applicable.`;
-}
-
-/** @deprecated Use buildVoiceChatReportPhaseInstruction */
-export function buildVoiceChatBodyPhaseInstruction(): string {
-  return buildVoiceChatReportPhaseInstruction();
 }
 
 export function isVoiceSummaryOnlyMessage(content: string): boolean {
@@ -130,10 +267,10 @@ export function extractVoiceSpeakable(content: string): { voice: string; chat: s
   const normalized = normalizeVoiceAssistantContent(content);
   const match = normalized.match(VOICE_BLOCK_RE);
   if (!match) {
-    return { voice: '', chat: normalized.trim() };
+    return { voice: '', chat: sanitizeSpeakableText(normalized) };
   }
-  const voice = match[1]?.trim() ?? '';
-  const chat = normalized.replace(VOICE_BLOCK_STRIP_RE, '').trim();
+  const voice = sanitizeSpeakableText(match[1] ?? '');
+  const chat = sanitizeSpeakableText(normalized.replace(VOICE_BLOCK_STRIP_RE, ''));
   return { voice, chat };
 }
 
@@ -147,6 +284,40 @@ export function buildVoiceFallback(chat: string): string {
     return 'I have a brief answer for you. What would you like next?';
   }
   return normalized;
+}
+
+/**
+ * Strip LLM internal token bleed and XML-like markup from speakable text.
+ * This prevents TTS from reading raw tags like <tool_call>, <invoke>, <url>,
+ * or model-specific token leaks like ]<]minimax[>[ that sometimes appear
+ * inside or after voice blocks.
+ */
+// Allow digits/hyphen in model tokens (e.g. minimax, gpt-4o bleed variants).
+const LLM_TOKEN_BLEED_RE = /\]?<\]?[a-zA-Z0-9_-]+\[?>?\[?/g;
+const XML_LIKE_TAG_RE = /<\/?[a-zA-Z_][^>]*>/g;
+
+export function sanitizeSpeakableText(text: string): string {
+  if (!text) return '';
+  let out = text;
+  // 1. Remove XML-like tags (e.g. <tool_call>, <invoke name="...">, <url>, </url>)
+  out = out.replace(XML_LIKE_TAG_RE, ' ');
+  // 2. Remove model-specific token bleed (e.g. ]<]minimax[>[) — the whole
+  //    pattern including the model name is stripped so it isn't spoken.
+  out = out.replace(LLM_TOKEN_BLEED_RE, ' ');
+  // 3. Remove any remaining stray bracket / angle-bracket characters that
+  //    are clearly not part of natural speech.
+  out = out.replace(/[<>[\]]/g, ' ');
+  // 4. Collapse whitespace
+  out = out.replace(/\s+/g, ' ').trim();
+  return out;
+}
+
+/** Sanitize assistant text for UI / WS status (voice block preferred when present). */
+export function sanitizeVoiceDisplayText(text: string): string {
+  if (!text) return '';
+  const { voice, chat } = extractVoiceSpeakable(text);
+  const raw = voice.trim() || chat.trim() || text;
+  return sanitizeSpeakableText(raw);
 }
 
 /** Extracts speakable deltas from streamed assistant output (voice block only). */
@@ -177,13 +348,13 @@ export class VoiceBlockStreamExtractor {
       const pending = body.slice(this.voiceEmitted);
       const { emit, held } = holdBackVoiceCloseSuffix(pending);
       this.voiceEmitted = body.length - held;
-      return emit;
+      return sanitizeSpeakableText(emit);
     }
 
     const inner = body.slice(0, closeIdx);
     const speakable = inner.slice(this.voiceEmitted);
     this.voiceEmitted = inner.length;
     this.voiceClosed = true;
-    return speakable;
+    return sanitizeSpeakableText(speakable);
   }
 }

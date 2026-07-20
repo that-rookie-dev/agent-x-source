@@ -19,7 +19,6 @@ export class Gateway {
       port: config.port ?? 18789,
       host: config.host ?? '127.0.0.1',
       maxConcurrentSessions: config.maxConcurrentSessions ?? 4,
-      rateLimitPerMinute: config.rateLimitPerMinute ?? 30,
       authRequired: config.authRequired ?? false,
     };
 
@@ -88,7 +87,7 @@ export class Gateway {
     for (const ch of channels) {
       try {
         await this.registry.stopChannel(ch.id);
-      } catch {}
+      } catch { /* ignore */ }
     }
     for (const ch of this.focus.getAllChannels()) {
       this.focus.unregisterChannel(ch);
@@ -201,7 +200,9 @@ export class Gateway {
       try {
         await entry.plugin.handleOutgoing(text, { broadcast: true });
         entry.stats.messagesSent++;
-      } catch {}
+      } catch (err) {
+        getLogger().warn('GATEWAY', `Broadcast to channel ${ch.id} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 

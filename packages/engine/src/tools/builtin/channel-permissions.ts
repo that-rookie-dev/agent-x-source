@@ -1,12 +1,12 @@
 import type { ToolExecutionContext, ToolResult } from '@agentx/shared';
-import { CHANNEL_SESSION_ID } from '@agentx/shared';
+import { isChannelSessionId } from '@agentx/shared';
 import { getChannelPermissionBridge } from '../../channels/channel-permission-bridge.js';
 
 export async function channelPermissions(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
 ): Promise<ToolResult> {
-  if (context.sessionId !== CHANNEL_SESSION_ID) {
+  if (!isChannelSessionId(context.sessionId)) {
     return { success: false, output: 'channel_permissions is only available on messaging channel sessions.', error: 'CHANNEL_ONLY' };
   }
 

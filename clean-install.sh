@@ -50,7 +50,6 @@ rm -rf packages/server/release packages/server/.pack-staging packages/runtime/py
 echo ">>> Building shared, engine, web-api, web-ui, and web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
-pnpm --filter @agentx/canvas run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build

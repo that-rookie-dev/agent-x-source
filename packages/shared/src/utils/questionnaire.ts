@@ -9,6 +9,113 @@ import type {
   QuestionnaireQuestion,
   QuestionnaireResponseState,
 } from '../types/questionnaire.js';
+
+export const MESSAGING_CHANNEL_IDS = ['telegram', 'slack', 'discord', 'email'] as const;
+export type MessagingChannelId = (typeof MESSAGING_CHANNEL_IDS)[number];
+
+/** True when inbound traffic is from a messaging channel (Telegram, Slack, Discord, Email). */
+export function isMessagingChannel(channel: string | null | undefined): channel is MessagingChannelId {
+  return channel === 'telegram' || channel === 'slack' || channel === 'discord' || channel === 'email';
+}
+
+/** Whether the questionnaire includes structured choice inputs. */
+export function questionnaireHasChoices(payload: QuestionnairePayload): boolean {
+  return payload.questions.some((q) => q.type === 'single_choice' || q.type === 'multi_choice');
+}
+
+/** Single open-ended text question — must be plain chat, never ask_clarification. */
+export function isSimpleTextQuestionnaire(payload: QuestionnairePayload): boolean {
+  return payload.questions.length === 1 && payload.questions[0]?.type === 'text';
+}
+
+/** All questions are open-ended text — ask_clarification must never be used. */
+export function isTextOnlyClarification(payload: QuestionnairePayload): boolean {
+  return payload.questions.length > 0 && payload.questions.every((q) => q.type === 'text');
+}
+
+/** ask_clarification is valid only when structured choices exist. */
+export function shouldUseQuestionnaireClarification(payload: QuestionnairePayload): boolean {
+  return questionnaireHasChoices(payload);
+}
+
+/** Max choice options per question for inline buttons on messaging channels. */
+export const MESSAGING_INLINE_MAX_OPTIONS = 12;
+
+/** Max choice questions in a wizard before falling back to plain text. */
+export const MESSAGING_INLINE_MAX_QUESTIONS = 8;
+
+/** True when every question can be rendered as inline choice buttons (possibly multi-step). */
+export function questionnaireSupportsInlineButtons(payload: QuestionnairePayload): boolean {
+  if (!questionnaireHasChoices(payload)) return false;
+  if (payload.questions.length > MESSAGING_INLINE_MAX_QUESTIONS) return false;
+  for (const q of payload.questions) {
+    if (q.type !== 'single_choice' && q.type !== 'multi_choice') return false;
+    const enabled = (q.options ?? []).filter((o) => !o.disabled);
+    if (enabled.length === 0 || enabled.length > MESSAGING_INLINE_MAX_OPTIONS) return false;
+  }
+  return true;
+}
+
+export const TEXT_CLARIFICATION_REJECTED_MESSAGE =
+  'ask_clarification rejected: open-ended questions must be asked in plain assistant message text, then end your turn and wait for the user\'s reply. ask_clarification is ONLY for single_choice or multi_choice (structured options). Never use type "text".';
+
+/** Format a questionnaire as readable text for messaging channels (Telegram, Slack, Discord). */
+export function formatQuestionnaireForMessagingChannel(payload: QuestionnairePayload): string {
+  const lines: string[] = [];
+  if (payload.title?.trim()) {
+    lines.push(`*${payload.title.trim()}*`, '');
+  }
+
+  for (const [i, q] of payload.questions.entries()) {
+    if (payload.questions.length > 1) {
+      lines.push(`**${i + 1}. ${q.prompt}**`);
+    } else {
+      lines.push(q.prompt);
+    }
+
+    if (q.type === 'single_choice' || q.type === 'multi_choice') {
+      const opts = q.options ?? [];
+      opts.forEach((o, j) => {
+        const marker = o.recommended ? ' *(suggested)*' : '';
+        lines.push(`${j + 1}. ${o.label}${marker}`);
+      });
+      if (q.allowCustom !== false) {
+        lines.push('', 'Reply with a number or type your own answer.');
+      } else {
+        lines.push('', 'Reply with the number of your choice.');
+      }
+    }
+
+    if (payload.questions.length > 1 && i < payload.questions.length - 1) {
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n').trim();
+}
+
+type ReplyMessageLike = {
+  content?: string;
+  parts?: unknown;
+};
+
+/** Extract assistant reply text for outbound messaging (content or questionnaire parts). */
+export function extractAssistantReplyText(message: ReplyMessageLike): string {
+  const content = typeof message.content === 'string' ? message.content.trim() : '';
+  if (content) return content;
+
+  if (!Array.isArray(message.parts)) return '';
+
+  for (const part of message.parts as Array<{ type?: string; questionnaire?: { status?: string; payload?: QuestionnairePayload } }>) {
+    if (part.type !== 'questionnaire' || !part.questionnaire?.payload) continue;
+    // Only surface pending questionnaires — answered ones are context, not outbound replies.
+    if (part.questionnaire.status && part.questionnaire.status !== 'pending') continue;
+    const text = formatQuestionnaireForMessagingChannel(part.questionnaire.payload);
+    if (text) return text;
+  }
+
+  return '';
+}
 import { MAX_QUESTIONNAIRE_CHOICES, QUESTIONNAIRE_CUSTOM_SUFFIX } from '../types/questionnaire.js';
 
 function newQuestionnaireId(): string {

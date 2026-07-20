@@ -2,9 +2,12 @@ import { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, ipcMain, 
 import { writeFileSync } from 'node:fs';
 import { join, basename } from 'path';
 import { existsSync, createWriteStream, unlinkSync, mkdtempSync, readFileSync } from 'fs';
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFile, execFileSync } from 'child_process';
+import { promisify } from 'util';
 import { tmpdir, totalmem } from 'os';
 import { AgentRuntime, createDesktopRuntimeOptions, DEFAULT_PORT } from '@agentx/runtime';
+
+const execFileAsync = promisify(execFile);
 
 const REPO = 'that-rookie-dev/agent-x';
 
@@ -248,7 +251,7 @@ async function checkForUpdates(manual = false): Promise<boolean> {
     installUpdate(destPath);
     return true;
   } catch (err) {
-    console.error('Update failed:', err);
+    console.error('Update failed', err);
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showErrorBox('Update Failed', err instanceof Error ? err.message : String(err));
     }
@@ -302,14 +305,53 @@ function isExternalHttpUrl(url: string): boolean {
   }
 }
 
+/** Open URL as a new tab in existing Google Chrome (macOS Privacy → Automation). */
+async function openInExistingChromeTab(url: string): Promise<void> {
+  if (process.platform === 'darwin') {
+    const escaped = url.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = [
+      'tell application "Google Chrome"',
+      '  if it is running then',
+      '    activate',
+      '    if (count of windows) = 0 then make new window',
+      `    tell window 1 to make new tab with properties {URL:"${escaped}"}`,
+      '  else',
+      `    open location "${escaped}"`,
+      '    activate',
+      '  end if',
+      'end tell',
+    ].join('\n');
+    try {
+      await execFileAsync('osascript', ['-e', script]);
+      return;
+    } catch {
+      await execFileAsync('open', ['-a', 'Google Chrome', url]);
+      return;
+    }
+  }
+  if (process.platform === 'win32') {
+    await execFileAsync('cmd', ['/c', 'start', '', url]);
+    return;
+  }
+  await shell.openExternal(url);
+}
+
 async function openExternalLink(url: string): Promise<boolean> {
   if (!isExternalHttpUrl(url)) return false;
   try {
-    await shell.openExternal(url);
+    // Prefer a new tab in the already-running Google Chrome.
+    // Avoids MCP/OAuth flows spawning a separate Chrome app instance.
+    await openInExistingChromeTab(url);
     return true;
   } catch (err) {
-    console.error('openExternal failed:', err);
-    return false;
+    console.error('openExternal (Chrome tab) failed, falling back', err);
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch (fallbackErr) {
+      console.error('openExternal failed', fallbackErr);
+      return false;
+    }
   }
 }
 
@@ -356,7 +398,7 @@ function createWindow(): void {
       return;
     }
     if (permission === 'geolocation' && reqOrigin === appOrigin) {
-      console.info('[desktop] granting geolocation for app origin');
+      console.log('granting geolocation for app origin');
       callback(true);
       return;
     }
@@ -365,11 +407,11 @@ function createWindow(): void {
       const mediaTypes = mediaDetails.mediaTypes ?? [];
       const wantsMic = mediaTypes.includes('audio') || mediaTypes.length === 0;
       if (wantsMic && reqOrigin === appOrigin) {
-        console.info('[desktop] granting microphone for app origin');
+        console.log('granting microphone for app origin');
         callback(true);
         return;
       }
-      console.info('[desktop] denying microphone for origin', reqOrigin);
+      console.log(`denying microphone for origin ${reqOrigin}`);
       callback(false);
       return;
     }
@@ -638,7 +680,7 @@ app.whenReady().then(async () => {
     }, 2000);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('Failed to start:', err);
+    console.error('Failed to start', err);
     dialog.showErrorBox('Startup Error', `Agent-X failed to start.\n\n${msg}`);
     app.quit();
   }

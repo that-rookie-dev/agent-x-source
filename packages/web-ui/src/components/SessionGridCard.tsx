@@ -6,11 +6,13 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import GroupsIcon from '@mui/icons-material/Groups';
 import ForumIcon from '@mui/icons-material/Forum';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import type { SessionInfo } from '../api';
 import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
 import { MedicalCrewCardStripe, isMedicalCrewDisplay } from './crew/MedicalDisclaimerBanner';
 import { sessionHostCrewDisplay } from '../utils/crew-display';
+import { useCrewCallOptional, crewCallTargetFromSession } from './crew-call';
 
 interface SessionGridCardProps {
   session: SessionInfo;
@@ -61,9 +63,10 @@ function KpiCell({ label, value, accent }: { label: string; value: string | numb
 }
 
 export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardProps) {
+  const crewCall = useCrewCallOptional();
   const isCrewPrivate = (session.contextKind ?? 'agent_x') === 'crew_private';
   const isActive = session.status === 'active';
-  const mode = session.mode ?? 'plan';
+  const bypass = session.bypassPermissions ?? false;
   const tokenPct = session.tokenUsagePct ?? 0;
   const crewCount = session.crewCount ?? session.crewCallsigns?.length ?? 0;
   const hostCallsignRaw = session.hostCrewCallsign ?? '';
@@ -166,6 +169,21 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
             </Typography>
           )}
         </Box>
+        {isCrewPrivate && crewCall && (
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              const target = crewCallTargetFromSession(session);
+              if (target) void crewCall.startCall(target);
+            }}
+            disabled={crewCall.isActive}
+            sx={{ p: 0.25, color: crewAccent, '&:hover': { color: colors.text.primary } }}
+            title="Secure call"
+          >
+            <PhoneInTalkIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        )}
         <IconButton
           size="small"
           onClick={(e) => { e.stopPropagation(); onDelete(session.id); }}
@@ -190,21 +208,12 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         <Box sx={{
           px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
           fontFamily: "'JetBrains Mono', monospace",
-          bgcolor: mode === 'agent' ? alphaColor(colors.accent.orange, '12') : alphaColor(colors.accent.blue, '10'),
-          color: mode === 'agent' ? colors.accent.orange : colors.accent.blue,
-          border: `1px solid ${mode === 'agent' ? alphaColor(colors.accent.orange, '25') : alphaColor(colors.accent.blue, '25')}`,
+          bgcolor: bypass ? alphaColor(colors.accent.orange, '12') : alphaColor(colors.accent.blue, '10'),
+          color: bypass ? colors.accent.orange : colors.accent.blue,
+          border: `1px solid ${bypass ? alphaColor(colors.accent.orange, '25') : alphaColor(colors.accent.blue, '25')}`,
         }}>
-          {mode.toUpperCase()}
+          {bypass ? 'BYPASS' : 'GUARDED'}
         </Box>
-        {session.hyperdrive && (
-          <Box sx={{
-            px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            bgcolor: alphaColor(colors.accent.purple, '12'), color: colors.accent.purple,
-          }}>
-            HYPER
-          </Box>
-        )}
       </Box>
       )}
 
@@ -216,12 +225,12 @@ export function SessionGridCard({ session, onOpen, onDelete }: SessionGridCardPr
         <KpiCell label="Msgs" value={session.messageCount ?? 0} />
         {isCrewPrivate ? (
           <>
-            <KpiCell label="Current Mode" value={(session.mode ?? 'agent').toUpperCase()} accent={crewAccent} />
-            <KpiCell label="Type" value="1:1" />
+            <KpiCell label="Current Mode" value={bypass ? 'BYPASS' : 'GUARDED'} accent={crewAccent} />
+            <KpiCell label="Type" value="Private" />
           </>
         ) : (
           <>
-            <KpiCell label="Compact" value={session.compactionCount ?? 0} accent={session.compactionCount ? colors.accent.orange : undefined} />
+            <KpiCell label="Type" value="Group" />
             <KpiCell label="Workers" value={session.childSessionCount ?? 0} />
           </>
         )}

@@ -85,7 +85,7 @@ def test_stt_stream_endpoint_uses_runtime(tmp_path, monkeypatch) -> None:
         thread.join(timeout=2)
 
 
-def test_warm_unloads_inactive_tts_engine(tmp_path, monkeypatch) -> None:
+def test_warm_activates_kokoro_engine(tmp_path, monkeypatch) -> None:
     config = SidecarConfig(
         host="127.0.0.1",
         port=0,
@@ -97,34 +97,15 @@ def test_warm_unloads_inactive_tts_engine(tmp_path, monkeypatch) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
-    unload_kokoro = MagicMock()
-    unload_style = MagicMock()
     warm_stt = MagicMock()
     warm_kokoro = MagicMock()
-    warm_style = MagicMock()
     warm_vad = MagicMock()
 
     monkeypatch.setattr(server.runtime.stt, "warm", warm_stt)
     monkeypatch.setattr(server.runtime.kokoro, "warm", warm_kokoro)
-    monkeypatch.setattr(server.runtime.kokoro, "unload", unload_kokoro)
-    monkeypatch.setattr(server.runtime.styletts2, "warm", warm_style)
-    monkeypatch.setattr(server.runtime.styletts2, "unload", unload_style)
     monkeypatch.setattr(server.runtime.vad, "warm", warm_vad)
 
     try:
-        status, payload = _request(
-            actual_port,
-            "POST",
-            "/warm",
-            token="secret-token",
-            body={"ttsEngine": "styletts2"},
-        )
-        assert status == 200
-        assert payload["models"]["ttsEngine"] == "styletts2"
-        unload_kokoro.assert_called_once()
-        warm_style.assert_called_once()
-        unload_style.assert_not_called()
-
         status, payload = _request(
             actual_port,
             "POST",
@@ -134,8 +115,9 @@ def test_warm_unloads_inactive_tts_engine(tmp_path, monkeypatch) -> None:
         )
         assert status == 200
         assert payload["models"]["ttsEngine"] == "kokoro"
-        unload_style.assert_called_once()
         warm_kokoro.assert_called_once()
+        warm_stt.assert_called_once()
+        warm_vad.assert_called_once()
     finally:
         server.shutdown()
         thread.join(timeout=2)

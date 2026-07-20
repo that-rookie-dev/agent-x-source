@@ -270,7 +270,6 @@ fi
 echo ">>> Building dependencies in topological order..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
-pnpm --filter @agentx/canvas run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/runtime run build
 pnpm --filter @agentx/web-api run build

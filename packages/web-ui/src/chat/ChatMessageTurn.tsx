@@ -1,29 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
-import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import Tooltip from '@mui/material/Tooltip';
 import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import { colors, alphaColor } from '../theme';
-import { ReasoningBlock } from '../components/ChatEnhancements';
-import { InlineToolCall } from '../components/InlineToolCall';
+import { AttachmentModal } from './AttachmentModal';
 import { normalizeMessageForUi, orderPartsForChatRender } from '@agentx/shared/browser';
 import type { UIMessage, PartEntry } from './types';
 import { displayContent } from './utils';
-import { CrewAwareMarkdown, getWebCrewColor } from './ChatMarkdown';
+import { CrewAwareMarkdown, getWebCrewColor, StreamingMarkdown } from './ChatMarkdown';
 import { collectWebSourceUrls } from './web-source-urls';
-import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
 import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
+import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
 import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
+import { WorkflowEntryCard } from './WorkflowEntryCard';
+
+// Loaded only when the user opens a turn's workflow — chunk stays out of the
+// chat path and the modal DOM is destroyed on close.
+const WorkflowModal = lazy(() => import('./WorkflowModal').then((m) => ({ default: m.WorkflowModal })));
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -134,6 +139,7 @@ function renderParts(
   onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void,
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void,
   voiceSummary?: string | null,
+  streaming = false,
 ) {
   const filtered = parts.filter((p) => {
     if (p.type === 'deep_search') {
@@ -141,31 +147,39 @@ function renderParts(
     }
     if (p.type === 'text') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
+    if (p.type === 'chart') return !!p.chartJson;
     if (p.type === 'subagent') return !!p.agent;
     if (p.type === 'questionnaire') return !!p.questionnaire;
     if (p.type === 'crew_roster_picker') return !!p.crewRosterPicker;
     return false;
   });
 
-  const ordered = orderPartsForChatRender(filtered);
-  const webSources = collectWebSourceUrls(ordered);
+  // Web-source chips are derived from tool/deep-search data. Tool steps still
+  // render only in the Workflow modal, but deep_search parts also have an inline
+  // fallback card so users see a research summary without opening the workflow.
+  const orderedAll = orderPartsForChatRender(filtered);
+  const webSources = collectWebSourceUrls(orderedAll);
+  const ordered = orderedAll.filter((p) => p.type !== 'tool');
 
-  const renderDeepSearchPart = (part: PartEntry, afterTool: boolean) => (
-    <Box key={part.id} sx={{ mb: 0.25, mt: afterTool ? -0.625 : 0 }}>
-      <DeepSearchMessageBlock
-        bundle={part.deepSearch!.bundle}
-        progress={part.deepSearch!.progress}
-        running={part.deepSearch!.running}
-      />
-    </Box>
-  );
-
-  const renderMainPart = (part: PartEntry, compactTop = false) => {
+  const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
       case 'text':
         if (!part.content) return null;
         const textContent = stripVoiceChannelBlock(part.content);
-        return textContent ? <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} /> : null;
+        if (!textContent) return null;
+        return streaming
+          ? <StreamingMarkdown key={part.id} content={textContent} webSources={webSources} />
+          : <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} />;
+      case 'deep_search':
+        if (!part.deepSearch) return null;
+        return (
+          <DeepSearchMessageBlock
+            key={part.id}
+            bundle={part.deepSearch.bundle}
+            progress={part.deepSearch.progress}
+            running={part.deepSearch.running}
+          />
+        );
       case 'questionnaire':
         if (!part.questionnaire) return null;
         return (
@@ -199,14 +213,8 @@ function renderParts(
           />
         );
       case 'chart':
-        // Avoid double-render when the matching render_chart tool already shows ChartToolRender.
         if (!part.chartJson) return null;
-        if (ordered.some((p) => p.type === 'tool' && p.tool?.id === part.id && p.tool?.name === 'render_chart')) {
-          return null;
-        }
         return <ChartBlock key={part.id} code={part.chartJson} language="chart" />;
-      case 'tool':
-        return part.tool ? <InlineToolCall key={part.id} tool={part.tool} compactTop={compactTop} /> : null;
       case 'subagent':
         if (!part.agent) return null;
         if (part.agent.kind === 'crew_worker') return null;
@@ -240,49 +248,32 @@ function renderParts(
     }
   };
 
+  const renderSlice = (slice: PartEntry[]) =>
+    slice.map((part) => {
+      const node = renderMainPart(part);
+      return node ? <React.Fragment key={part.id}>{node}</React.Fragment> : null;
+    });
+
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
   if (firstTextIdx >= 0) {
-    const beforeText = ordered.slice(0, firstTextIdx);
-    const textAndAfter = ordered.slice(firstTextIdx);
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-        {beforeText.map((part, i) => {
-          const prev = beforeText[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          if (part.type === 'deep_search' && part.deepSearch) {
-            return renderDeepSearchPart(part, prev?.type === 'tool');
-          }
-          return renderMainPart(part, compactTop);
-        })}
+        {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx)) : null}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-        {textAndAfter.map((part, i) => {
-          const prev = textAndAfter[i - 1];
-          const compactTop = part.type === 'tool' && prev?.type === 'tool';
-          return renderMainPart(part, compactTop);
-        })}
+        {renderSlice(ordered.slice(firstTextIdx))}
       </Box>
     );
   }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {ordered.map((part, i) => {
-        const prev = ordered[i - 1];
-        const compactTop = part.type === 'tool' && prev?.type === 'tool';
-
-        if (part.type === 'deep_search' && part.deepSearch) {
-          const afterTool = prev?.type === 'tool';
-          return renderDeepSearchPart(part, afterTool);
-        }
-
-        return renderMainPart(part, compactTop);
-      })}
+      {renderSlice(ordered)}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
 }
 
-function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, onSaveCanvas, feedbackSubmitting }: {
+function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, showFeedback, onTurnFeedback, onSaveMarkdown, feedbackSubmitting }: {
   message: UIMessage;
   loadingSteps?: Array<{ id: string; label: string; status: string }> | null;
   onOpenChildSession?: (props: Omit<ChildSessionCardProps, 'onExpand'>) => void;
@@ -292,58 +283,96 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
   showFeedback?: boolean;
   onTurnFeedback?: (messageId: string, rating: TurnFeedbackRating) => void;
-  onSaveCanvas?: (message: UIMessage) => void;
+  onSaveMarkdown?: (message: UIMessage) => void;
   feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
-  const normalized = normalizeMessageForUi({
-    content: message.content,
-    parts: message.parts,
-    toolCalls: message.toolCalls,
-  }, []);
-  const displayMessage = {
-    ...message,
-    content: normalized.content || message.content,
-    parts: normalized.parts?.map((p) => (
-      p.type === 'tool' && p.tool
-        ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
-        : p
-    )) as PartEntry[] | undefined ?? message.parts,
-    toolCalls: (normalized.toolCalls ?? message.toolCalls)?.map((t) => ({
-      ...t,
-      status: t.status || 'done' as const,
-    })),
-  };
-  const cleanContent = displayContent(displayMessage);
-  const voiceSummary = extractVoiceChannelBlock(displayMessage.content || '')
-    || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || '');
-  const hasParts = !!(displayMessage.parts && displayMessage.parts.length > 0);
-  const webSources = collectWebSourceUrls(displayMessage.parts);
-  const hasQuestionnaire = !!(displayMessage.parts?.some((p) => p.type === 'questionnaire'));
-  const canSaveCanvas = !message.streaming && message.role === 'assistant' && onSaveCanvas && (hasParts || !!cleanContent);
-  const contentBlock = hasParts ? renderParts(
-    displayMessage.parts!,
-    onOpenChildSession,
-    onQuestionnaireRespond,
-    message.id,
-    onCrewRosterPickerSubmit,
-    onCrewRosterPickerSkip,
-    onViewCrewDossier,
-    voiceSummary,
-  ) : (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
-      {displayMessage.toolCalls?.map((t, i) => (
-        <InlineToolCall key={t.id} tool={t} compactTop={i > 0} />
-      ))}
-      {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
-      {cleanContent && <CrewAwareMarkdown content={cleanContent} webSources={webSources} />}
-    </Box>
+  const [workflowOpen, setWorkflowOpen] = useState(false);
+  const [openAttachmentId, setOpenAttachmentId] = useState<string | null>(null);
+  const normalized = useMemo(
+    () => normalizeMessageForUi({
+      content: message.content,
+      parts: message.parts,
+      toolCalls: message.toolCalls,
+    }, []),
+    [message.content, message.parts, message.toolCalls],
+  );
+  const displayMessage = useMemo(
+    () => ({
+      ...message,
+      content: normalized.content || message.content,
+      parts: normalized.parts?.map((p) => (
+        p.type === 'tool' && p.tool
+          ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
+          : p
+      )) as PartEntry[] | undefined ?? message.parts,
+      toolCalls: (normalized.toolCalls ?? message.toolCalls)?.map((t) => ({
+        ...t,
+        status: t.status || 'done' as const,
+      })),
+    }),
+    [message, normalized],
+  );
+  const cleanContent = useMemo(() => displayContent(displayMessage), [displayMessage]);
+  const voiceSummary = useMemo(
+    () => extractVoiceChannelBlock(displayMessage.content || '')
+      || extractVoiceChannelBlock(displayMessage.parts?.filter((p) => p.type === 'text' && p.content).map((p) => p.content).join('') || ''),
+    [displayMessage.content, displayMessage.parts],
+  );
+  const hasParts = useMemo(() => !!(displayMessage.parts && displayMessage.parts.length > 0), [displayMessage.parts]);
+  const webSources = useMemo(() => collectWebSourceUrls(displayMessage.parts), [displayMessage.parts]);
+  const hasQuestionnaire = useMemo(() => !!(displayMessage.parts?.some((p) => p.type === 'questionnaire')), [displayMessage.parts]);
+  const canSaveMarkdown = useMemo(
+    () => !message.streaming && message.role === 'assistant' && onSaveMarkdown && (hasParts || !!cleanContent),
+    [message.streaming, message.role, onSaveMarkdown, hasParts, cleanContent],
+  );
+  const contentBlock = useMemo(
+    () => hasParts ? renderParts(
+      displayMessage.parts!,
+      onOpenChildSession,
+      onQuestionnaireRespond,
+      message.id,
+      onCrewRosterPickerSubmit,
+      onCrewRosterPickerSkip,
+      onViewCrewDossier,
+      voiceSummary,
+      message.streaming,
+    ) : (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
+        {cleanContent && (
+          message.streaming
+            ? <StreamingMarkdown content={cleanContent} webSources={webSources} />
+            : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
+        )}
+      </Box>
+    ),
+    [hasParts, displayMessage.parts, onOpenChildSession, onQuestionnaireRespond, message.id, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, voiceSummary, message.streaming, cleanContent, webSources],
   );
 
-  const subAgentCards = (message.subAgents ?? []).filter(
-    (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+  const hasWorkflow = useMemo(
+    () => !message.streaming && message.role === 'assistant' && !!(
+      displayMessage.toolCalls?.length
+      || message.thinking
+      || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
+    ),
+    [message.streaming, message.role, displayMessage.toolCalls, message.thinking, displayMessage.parts],
+  );
+  const workflowStepCount = useMemo(() => {
+    const parts = displayMessage.parts ?? [];
+    const toolParts = parts.filter((p) => p.type === 'tool' && p.tool).length;
+    const deepParts = parts.filter((p) => p.type === 'deep_search' && (p.deepSearch?.bundle || p.deepSearch?.progress)).length;
+    const fallbackTools = toolParts === 0 ? (displayMessage.toolCalls?.length ?? 0) : 0;
+    return toolParts + deepParts + fallbackTools;
+  }, [displayMessage.parts, displayMessage.toolCalls]);
+
+  const subAgentCards = useMemo(
+    () => (message.subAgents ?? []).filter(
+      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
+    ),
+    [message.subAgents],
   );
 
   return (
@@ -371,11 +400,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
         )}
       </Box>
 
-      {message.thinking && (
-        <ReasoningBlock text={message.thinking} streaming={message.streaming && !message.thinkingDoneAt}
-          durationMs={message.thinkingDoneAt && message.thinkingStartedAt ? (message.thinkingDoneAt - message.thinkingStartedAt) : undefined} />
-      )}
-
       {subAgentCards.length > 0 && onOpenChildSession && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: hasParts || cleanContent ? 1.25 : 0 }}>
           {subAgentCards.map((agent) => (
@@ -398,6 +422,31 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
         </Box>
       )}
 
+      {message.attachments && message.attachments.length > 0 && (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
+          {message.attachments.map((a, i) => (
+            <Chip
+              key={i}
+              size="small"
+              icon={<InsertDriveFileIcon sx={{ fontSize: '11px !important' }} />}
+              label={a.name}
+              onClick={() => setOpenAttachmentId(a.id)}
+              sx={{ fontSize: '0.5rem', height: 18, cursor: 'pointer', bgcolor: alphaColor(colors.accent.blue, '08'), border: `1px solid ${alphaColor(colors.accent.blue, '20')}` }}
+            />
+          ))}
+          {message.attachments.map((a) => (
+            <AttachmentModal
+              key={a.id}
+              open={openAttachmentId === a.id}
+              onClose={() => setOpenAttachmentId(null)}
+              id={a.id}
+              name={a.name}
+              mimeType={a.mimeType}
+            />
+          ))}
+        </Box>
+      )}
+
       {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
 
       {message.streaming && !cleanContent && !hasParts && !hasQuestionnaire && (
@@ -405,9 +454,40 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           {[0, 1, 2].map((i) => (
             <Box key={i} sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: colors.accent.purple, animation: 'agentx-pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.2}s` }} />
           ))}
-          {typeof loadingSteps?.[0]?.label === 'string' && loadingSteps[0].label && (
-            <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim, fontStyle: 'italic', ml: 0.5 }}>{loadingSteps[0].label}</Typography>
-          )}
+        </Box>
+      )}
+
+      {message.streaming && loadingSteps && loadingSteps.length > 0 && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
+          {loadingSteps.slice(-3).map((step) => (
+            <Box
+              key={step.id}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.4,
+                px: 0.6,
+                py: 0.2,
+                borderRadius: '4px',
+                bgcolor: step.status === 'complete' ? alphaColor(colors.accent.green, '12') : alphaColor(colors.accent.purple, '10'),
+                border: `1px solid ${step.status === 'complete' ? alphaColor(colors.accent.green, '30') : alphaColor(colors.accent.purple, '25')}`,
+              }}
+            >
+              <Box
+                sx={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: '50%',
+                  bgcolor: step.status === 'complete' ? colors.accent.green : colors.accent.purple,
+                  flexShrink: 0,
+                  ...(step.status !== 'complete' && { animation: 'agentx-pulse 1.2s ease-in-out infinite' }),
+                }}
+              />
+              <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'nowrap' }}>
+                {step.label}
+              </Typography>
+            </Box>
+          ))}
         </Box>
       )}
 
@@ -418,16 +498,24 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
         />
       )}
 
+      {hasWorkflow && (
+        <WorkflowEntryCard
+          stepCount={workflowStepCount}
+          hasReasoning={!!message.thinking}
+          onOpen={() => setWorkflowOpen(true)}
+        />
+      )}
+
       {!message.streaming && (
         <Box sx={{ mt: 0.5, display: 'flex', alignItems: 'center', gap: 0.75, opacity: 0.45 }}>
-            {canSaveCanvas && (
-              <Tooltip title="Save as Canvas">
+            {canSaveMarkdown && (
+              <Tooltip title="Save as Markdown">
                 <IconButton
                   size="small"
-                  onClick={() => onSaveCanvas!(message)}
+                  onClick={() => onSaveMarkdown!(message)}
                   sx={{ p: 0.25, color: colors.text.dim, '&:hover': { color: colors.text.primary } }}
                 >
-                  <ViewQuiltIcon sx={{ fontSize: 13 }} />
+                  <ArticleOutlinedIcon sx={{ fontSize: 13 }} />
                 </IconButton>
               </Tooltip>
             )}
@@ -454,12 +542,18 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
             )}
         </Box>
       )}
+
+      {workflowOpen && (
+        <Suspense fallback={null}>
+          <WorkflowModal message={displayMessage} onClose={() => setWorkflowOpen(false)} />
+        </Suspense>
+      )}
     </Box>
   );
 }
 
-function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean },
-  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveCanvas?: unknown; feedbackSubmitting?: boolean }) {
+function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveMarkdown?: unknown; feedbackSubmitting?: boolean },
+  next: { message: UIMessage; loadingSteps?: Array<{ id: string; label: string; status: string }> | null; onOpenChildSession?: unknown; onQuestionnaireRespond?: unknown; onCrewRosterPickerSubmit?: unknown; onCrewRosterPickerSkip?: unknown; onViewCrewDossier?: unknown; showFeedback?: boolean; onTurnFeedback?: unknown; onSaveMarkdown?: unknown; feedbackSubmitting?: boolean }) {
   if (prev.loadingSteps !== next.loadingSteps) return false;
   if (prev.onOpenChildSession !== next.onOpenChildSession) return false;
   if (prev.onQuestionnaireRespond !== next.onQuestionnaireRespond) return false;
@@ -468,35 +562,39 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (prev.onViewCrewDossier !== next.onViewCrewDossier) return false;
   if (prev.showFeedback !== next.showFeedback) return false;
   if (prev.onTurnFeedback !== next.onTurnFeedback) return false;
-  if (prev.onSaveCanvas !== next.onSaveCanvas) return false;
+  if (prev.onSaveMarkdown !== next.onSaveMarkdown) return false;
   if (prev.feedbackSubmitting !== next.feedbackSubmitting) return false;
   const pm = prev.message;
   const nm = next.message;
   if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;
-  if (pm.thinking !== nm.thinking || pm.toolCalls !== nm.toolCalls) return false;
+  // Thinking renders only in the Workflow modal — presence toggles the button.
+  if (!!pm.thinking !== !!nm.thinking) return false;
+  // Tool cards render only in the Workflow modal — only count/completion matter
+  // (webSources chips derive from completed tool results).
+  if ((pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)) return false;
+  const pmDone = pm.toolCalls?.reduce((n, t) => n + (t.status === 'done' ? 1 : 0), 0) ?? 0;
+  const nmDone = nm.toolCalls?.reduce((n, t) => n + (t.status === 'done' ? 1 : 0), 0) ?? 0;
+  if (pmDone !== nmDone) return false;
   if (pm.crew?.crewId !== nm.crew?.crewId || pm.crew?.name !== nm.crew?.name) return false;
   if (pm.subAgents !== nm.subAgents) return false;
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
   if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
-  const prevDeep = pm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
-  const nextDeep = nm.parts?.some((p) => p.type === 'deep_search' && p.deepSearch?.bundle);
-  if (prevDeep !== nextDeep) return false;
-  const prevParts = pm.parts ?? [];
-  const nextParts = nm.parts ?? [];
-  if (prevParts !== nm.parts && prevParts.length === nextParts.length) {
+  const isRenderedPart = (p: NonNullable<UIMessage['parts']>[number]) =>
+    p.type === 'text' || p.type === 'chart' || p.type === 'questionnaire'
+    || p.type === 'crew_roster_picker' || p.type === 'subagent';
+  const prevParts = (pm.parts ?? []).filter(isRenderedPart);
+  const nextParts = (nm.parts ?? []).filter(isRenderedPart);
+  if (pm.parts !== nm.parts) {
+    if (prevParts.length !== nextParts.length) return false;
     for (let i = 0; i < prevParts.length; i++) {
       const pp = prevParts[i]!;
       const np = nextParts[i]!;
-      if (pp.type === 'text' && np.type === 'text' && pp.content !== np.content) return false;
-      if (pp.type === 'questionnaire' && np.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
-      if (pp.type === 'tool' && np.type === 'tool') {
-        if (pp.id !== np.id) return false;
-        if (pp.tool?.status !== np.tool?.status) return false;
-        if (pp.tool?.result !== np.tool?.result) return false;
-        if (pp.tool?.streamOutput !== np.tool?.streamOutput) return false;
-        if (pp.tool?.elapsed !== np.tool?.elapsed) return false;
-      }
-      if (pp.type === 'crew_roster_picker' && np.type === 'crew_roster_picker') {
+      if (pp.type !== np.type || pp.id !== np.id) return false;
+      if (pp.type === 'text' && pp.content !== np.content) return false;
+      if (pp.type === 'chart' && pp.chartJson !== np.chartJson) return false;
+      if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
+      if (pp.type === 'subagent' && (pp.agent?.status !== np.agent?.status || pp.agent?.result !== np.agent?.result)) return false;
+      if (pp.type === 'crew_roster_picker') {
         if (pp.crewRosterPicker?.status !== np.crewRosterPicker?.status) return false;
         const prevIds = pp.crewRosterPicker?.selectedCandidateIds;
         const nextIds = np.crewRosterPicker?.selectedCandidateIds;
@@ -504,8 +602,6 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
         if (prevIds?.some((id, i) => id !== nextIds?.[i])) return false;
       }
     }
-  } else if (prevParts !== nm.parts) {
-    return false;
   }
   return true;
 }

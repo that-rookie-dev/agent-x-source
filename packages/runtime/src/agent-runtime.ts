@@ -4,11 +4,13 @@ import { homedir, networkInterfaces } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
-import { ensureLoginShellPath } from '@agentx/shared';
+import { ensureLoginShellPath, getLogger } from '@agentx/shared';
 import { PostgresLifecycleManager } from './PostgresLifecycleManager.js';
+import { RedisLifecycleManager } from './RedisLifecycleManager.js';
 
 export const DEFAULT_PORT = 3333;
 export const DEFAULT_EMBEDDED_PG_PORT = 3335;
+export const DEFAULT_EMBEDDED_REDIS_PORT = 6379;
 
 export interface VaultStorageAdapter {
   isEncryptionAvailable(): boolean;
@@ -20,6 +22,7 @@ export interface AgentRuntimeOptions {
   mode: 'desktop' | 'server';
   port?: number;
   embeddedPgPort?: number;
+  embeddedRedisPort?: number;
   isDev: boolean;
   getResourcesPath: () => string;
   getDataDir: () => string;
@@ -100,29 +103,17 @@ export function resolveRuntimePaths(options: AgentRuntimeOptions): AgentRuntimeP
   };
 }
 
-/**
- * Previously set process-wide DYLD/LD_LIBRARY_PATH for embedded Postgres.
- * That poisoned child processes like bundled ffmpeg: dyld preferred Postgres'
- * incomplete libiconv and failed with "Symbol not found: _iconv".
- *
- * Lib paths are applied only to postgres children in PostgresLifecycleManager.
- * Kept as a no-op so older call sites remain safe.
- */
-export function ensureEmbeddedPgLibPath(_installDir: string): void {
-  // intentionally no-op — do not set process-wide library paths
-}
-
 export function setupPythonEnv(paths: AgentRuntimePaths, isDev: boolean): void {
   if (existsSync(paths.pythonPath)) {
     process.env['AGENTX_PYTHON_PATH'] = paths.pythonPath;
     if (paths.pythonDir) {
       process.env['PATH'] = paths.pythonDir + (process.platform === 'win32' ? ';' : ':') + (process.env['PATH'] || '');
     }
-    console.log(`Bundled Python: ${paths.pythonPath}`);
+    getLogger().info('RUNTIME', `Bundled Python: ${paths.pythonPath}`);
   } else if (isDev) {
-    console.log('Development mode: using system Python');
+    getLogger().info('RUNTIME', 'Development mode: using system Python');
   } else {
-    console.warn('Bundled Python not found at', paths.pythonPath);
+    getLogger().warn('RUNTIME', `Bundled Python not found at ${paths.pythonPath}`);
   }
 
   setupFfmpegEnv(paths, isDev);
@@ -202,11 +193,11 @@ export function setupFfmpegEnv(paths: AgentRuntimePaths, isDev: boolean): void {
     if (paths.ffmpegDir) {
       process.env['PATH'] = paths.ffmpegDir + (process.platform === 'win32' ? ';' : ':') + (process.env['PATH'] || '');
     }
-    console.log(`Bundled ffmpeg: ${paths.ffmpegPath}`);
+    getLogger().info('RUNTIME', `Bundled ffmpeg: ${paths.ffmpegPath}`);
   } else if (isDev) {
-    console.log('Development mode: using system ffmpeg (if available)');
+    getLogger().info('RUNTIME', 'Development mode: using system ffmpeg (if available)');
   } else {
-    console.warn('Bundled ffmpeg not found at', paths.ffmpegPath);
+    getLogger().warn('RUNTIME', `Bundled ffmpeg not found at ${paths.ffmpegPath}`);
   }
 }
 
@@ -245,7 +236,7 @@ async function initializeVaultKey(dataDir: string, vaultStorage?: VaultStorageAd
         process.env['AGENTX_VAULT_KEY'] = vaultStorage.decryptString(encrypted);
         return;
       } catch (e) {
-        console.error('Failed to decrypt vault key, generating new one:', e);
+        getLogger().error('VAULT', 'Failed to decrypt vault key, generating new one:', { error: e });
       }
     }
 
@@ -254,7 +245,7 @@ async function initializeVaultKey(dataDir: string, vaultStorage?: VaultStorageAd
       const encrypted = vaultStorage.encryptString(key);
       writeFileSync(keyFile, encrypted);
     } catch (e) {
-      console.error('Failed to encrypt vault key:', e);
+      getLogger().error('VAULT', 'Failed to encrypt vault key:', { error: e });
     }
     process.env['AGENTX_VAULT_KEY'] = key;
     return;
@@ -317,7 +308,9 @@ export class AgentRuntime {
   private readonly options: AgentRuntimeOptions;
   private readonly port: number;
   private readonly embeddedPgPort: number;
+  private readonly embeddedRedisPort: number;
   private pgManager: PostgresLifecycleManager | null = null;
+  private redisManager: RedisLifecycleManager | null = null;
   private httpServer: Server | null = null;
   private pgStartPromise: Promise<string> | null = null;
 
@@ -325,6 +318,7 @@ export class AgentRuntime {
     this.options = options;
     this.port = options.port ?? DEFAULT_PORT;
     this.embeddedPgPort = options.embeddedPgPort ?? DEFAULT_EMBEDDED_PG_PORT;
+    this.embeddedRedisPort = options.embeddedRedisPort ?? DEFAULT_EMBEDDED_REDIS_PORT;
   }
 
   getPort(): number {
@@ -351,19 +345,19 @@ export class AgentRuntime {
     const decision = shouldStartEmbeddedPostgresAtBoot(this.options.getDataDir());
 
     if (decision.action === 'use-env' && decision.connectionString) {
-      console.log('[startup] Using AGENTX_POSTGRES_CONNECTION_STRING from environment');
+      getLogger().info('STARTUP', 'Using AGENTX_POSTGRES_CONNECTION_STRING from environment');
       return decision.connectionString;
     }
 
     if (decision.action === 'use-cloud' && decision.connectionString) {
-      console.log('[startup] Cloud/remote PostgreSQL configured — skipping embedded Postgres');
+      getLogger().info('STARTUP', 'Cloud/remote PostgreSQL configured — skipping embedded Postgres');
       process.env['AGENTX_POSTGRES_CONNECTION_STRING'] = decision.connectionString;
       process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
       return decision.connectionString;
     }
 
     if (decision.action === 'defer') {
-      console.log('[startup] First-run: deferring PostgreSQL until setup wizard confirms storage');
+      getLogger().info('STARTUP', 'First-run: deferring PostgreSQL until setup wizard confirms storage');
       process.env['AGENTX_EMBEDDED_PG_ENABLED'] = '0';
       delete process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
       return null;
@@ -398,7 +392,7 @@ export class AgentRuntime {
 
   private async startEmbeddedPostgresInternal(onLog?: (msg: string) => void): Promise<string> {
     const emit = (msg: string) => {
-      console.log(`[PG] ${msg}`);
+      getLogger().info('PG', msg);
       onLog?.(msg);
     };
 
@@ -414,7 +408,7 @@ export class AgentRuntime {
       onLog: emit,
       onError: (msg) => {
         const text = typeof msg === 'string' ? msg : String(msg);
-        console.error(`[PG] ${text}`);
+        getLogger().error('PG', text);
         onLog?.(text);
       },
     });
@@ -441,23 +435,71 @@ export class AgentRuntime {
     }
   }
 
+  isEmbeddedRedisRunning(): boolean {
+    return this.redisManager !== null && this.redisManager.isRunning();
+  }
+
+  async startEmbeddedRedis(): Promise<string | null> {
+    if (process.env['REDIS_URL']) {
+      getLogger().info('STARTUP', 'Using REDIS_URL from environment');
+      return process.env['REDIS_URL'];
+    }
+
+    if (this.isEmbeddedRedisRunning()) {
+      return this.redisManager!.start();
+    }
+
+    const dataDir = join(this.options.getDataDir(), 'redis');
+    this.redisManager = new RedisLifecycleManager({
+      dataDir,
+      port: this.embeddedRedisPort,
+      host: '127.0.0.1',
+      onLog: (msg) => getLogger().info('REDIS', msg),
+      onError: (msg) => getLogger().error('REDIS', msg),
+    });
+
+    try {
+      const connectionString = await this.redisManager.start();
+      if (connectionString) {
+        getLogger().info('STARTUP', 'Embedded Redis ready');
+      }
+      return connectionString;
+    } catch (e) {
+      getLogger().warn('STARTUP', `Embedded Redis failed to start: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
+  async stopEmbeddedRedis(): Promise<void> {
+    if (this.redisManager) {
+      await this.redisManager.stop();
+      this.redisManager = null;
+    }
+  }
+
   async start(): Promise<void> {
     const paths = resolveRuntimePaths(this.options);
     if (!existsSync(paths.webApiPath)) {
       throw new Error(`Web-API not found at ${paths.webApiPath}`);
     }
 
-    console.log('[startup] 1/4 Preparing runtime environment…');
+    getLogger().info('STARTUP', '1/4 Preparing runtime environment…');
     ensureLoginShellPath();
     this.setupPythonEnv();
 
     // Keep engine/shared getDataDir() aligned with runtime (desktop userData vs server XDG).
     process.env['AGENTX_DATA_DIR'] = this.options.getDataDir();
 
-    console.log('[startup] 2/4 Resolving database…');
+    getLogger().info('STARTUP', '2/5 Resolving database…');
     await this.startEmbeddedPostgres();
 
-    console.log('[startup] 3/4 Initializing vault key…');
+    getLogger().info('STARTUP', '3/5 Starting embedded cache (Redis)…');
+    const redisUrl = await this.startEmbeddedRedis();
+    if (redisUrl) {
+      process.env['REDIS_URL'] = redisUrl;
+    }
+
+    getLogger().info('STARTUP', '4/5 Initializing vault key…');
     await initializeVaultKey(this.options.getDataDir(), this.options.vaultStorage);
 
     const listenHost = this.options.listenHost
@@ -485,7 +527,7 @@ export class AgentRuntime {
     process.env['AGENTX_PUBLIC_URL'] = publicUrl;
     process.env['NODE_ENV'] = 'production';
 
-    console.log(`[startup] 4/4 Starting web API on ${listenHost}:${this.port}…`);
+    getLogger().info('STARTUP', `5/5 Starting web API on ${listenHost}:${this.port}…`);
     // Register before import — web-api auto-listens on module load.
     const pgController = {
       start: (onLog?: (line: string) => void) => this.ensureEmbeddedPostgresStarted(onLog),
@@ -499,7 +541,24 @@ export class AgentRuntime {
       mod.registerEmbeddedPostgresController(pgController);
     }
     if (mod.server) this.httpServer = mod.server as Server;
-    console.log(`[startup] Agent-X is active at http://127.0.0.1:${this.port}`);
+    getLogger().info('STARTUP', `Agent-X is active at http://127.0.0.1:${this.port}`);
+  }
+
+  getHealth(): { status: string; uptime: number; pid: number; server: boolean } {
+    return {
+      status: 'ok',
+      uptime: process.uptime(),
+      pid: process.pid,
+      server: this.httpServer !== null,
+    };
+  }
+
+  getReadiness(): { ready: boolean; postgres: boolean; redis: boolean; httpServer: boolean } {
+    const postgresReady = this.isEmbeddedPostgresRunning() || !!process.env['AGENTX_POSTGRES_CONNECTION_STRING'];
+    const redisReady = this.isEmbeddedRedisRunning() || !!process.env['REDIS_URL'];
+    const httpServer = this.httpServer !== null;
+    const ready = postgresReady && redisReady && httpServer;
+    return { ready, postgres: postgresReady, redis: redisReady, httpServer };
   }
 
   async stop(): Promise<void> {
@@ -508,6 +567,7 @@ export class AgentRuntime {
       this.httpServer = null;
     }
     await this.stopEmbeddedPostgres();
+    await this.stopEmbeddedRedis();
   }
 }
 
@@ -536,6 +596,7 @@ export function createServerRuntimeOptions(params?: {
   port?: number;
   publicUrl?: string;
   listenHost?: string;
+  isDev?: boolean;
 }): AgentRuntimeOptions {
   const installDir = params?.installDir
     ?? process.env['AGENTX_INSTALL_DIR']
@@ -546,7 +607,6 @@ export function createServerRuntimeOptions(params?: {
 
   process.env['AGENTX_INSTALL_DIR'] = installDir;
   process.env['AGENTX_DATA_DIR'] = dataDir;
-  ensureEmbeddedPgLibPath(installDir);
 
   const envPort = process.env['AGENTX_PORT'] ? Number(process.env['AGENTX_PORT']) : NaN;
   const port = params?.port
@@ -554,7 +614,7 @@ export function createServerRuntimeOptions(params?: {
 
   return {
     mode: 'server',
-    isDev: false,
+    isDev: params?.isDev ?? false,
     port,
     getResourcesPath: () => join(installDir, 'resources'),
     getDataDir: () => dataDir,

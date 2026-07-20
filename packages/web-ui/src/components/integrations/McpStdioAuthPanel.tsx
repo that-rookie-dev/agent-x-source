@@ -146,17 +146,19 @@ export function McpStdioAuthPanel({
           Callback URL: {redirectUri}
         </Typography>
       )}
-      <Button
-        fullWidth
-        variant="outlined"
-        disabled={busy || status === 'running'}
-        onClick={() => { void runAuth(); }}
-        sx={{ fontSize: '0.65rem', textTransform: 'none', borderColor: settingsTheme.accent.hud, color: settingsTheme.accent.hud }}
-      >
-        {status === 'running'
-          ? <CircularProgress size={14} />
-          : status === 'failed' ? 'Sign in again' : `Sign in with Google (${provider.name})`}
-      </Button>
+      {status !== 'signed_in' && (
+        <Button
+          fullWidth
+          variant="outlined"
+          disabled={busy || status === 'running'}
+          onClick={() => { void runAuth(); }}
+          sx={{ fontSize: '0.65rem', textTransform: 'none', borderColor: settingsTheme.accent.hud, color: settingsTheme.accent.hud }}
+        >
+          {status === 'running'
+            ? <CircularProgress size={14} />
+            : status === 'failed' ? 'Sign in again' : `Sign in with Google (${provider.name})`}
+        </Button>
+      )}
       {status === 'running' && (
         <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5 }}>
           <CircularProgress size={12} />
@@ -166,9 +168,18 @@ export function McpStdioAuthPanel({
         </Box>
       )}
       {status === 'signed_in' && (
-        <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.accent.hud, mt: 1.5, ...settingsMonoSx }}>
-          Signed in successfully.
-        </Typography>
+        busy ? (
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1.5 }}>
+            <CircularProgress size={12} />
+            <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.text.secondary, lineHeight: 1.5 }}>
+              Syncing tools…
+            </Typography>
+          </Box>
+        ) : (
+          <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.accent.hud, mt: 1.5, ...settingsMonoSx }}>
+            Signed in — tools synced.
+          </Typography>
+        )
       )}
       {status === 'failed' && message && (
         <Typography sx={{ fontSize: '0.65rem', color: settingsTheme.accent.alert, mt: 1.5, ...settingsMonoSx, whiteSpace: 'pre-wrap' }}>

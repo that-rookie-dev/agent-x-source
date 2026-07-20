@@ -1,11 +1,34 @@
 import type { Agent } from '@agentx/engine';
 import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
-import type { AgentPersonaConfig, AgentXConfig, ClientSituation } from '@agentx/shared';
+import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage, TurnAttachment } from '@agentx/shared';
 import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { persistMessageDirect } from './ws.js';
 import { turnRegistry } from './turn-registry.js';
 import { getLogger, sanitizeForJson, generateId } from '@agentx/shared';
+
+const SESSION_HYDRATE_TIMEOUT_MS = 3_000;
+
+/** Best-effort session hydrate — must never block chat/voice turns indefinitely. */
+export async function ensureSessionHydratedForTurn(
+  store: StorageAdapter | null | undefined,
+  sessionId: string,
+): Promise<void> {
+  if (!sessionId || !store || typeof store.ensureSessionHydrated !== 'function') return;
+  try {
+    await Promise.race([
+      Promise.resolve(store.ensureSessionHydrated(sessionId)),
+      new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('session hydrate timeout')), SESSION_HYDRATE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (e) {
+    getLogger().warn(
+      'SESSION_HYDRATE',
+      `${sessionId}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
 
 export const TURN_TIMEOUT_MS = 600_000;
 /**
@@ -13,9 +36,10 @@ export const TURN_TIMEOUT_MS = 600_000;
  * (tool/step/heartbeat/stream) for this long, the turn is aborted. Activity
  * resets the clock so tool-heavy hands-free turns aren't killed mid-work.
  */
-export const VOICE_TURN_TIMEOUT_MS = 90_000;
+/** Idle timeout for voice — if the provider never streams, fail the turn (was 90s of stuck Thinking…). */
+export const VOICE_TURN_TIMEOUT_MS = 45_000;
 /** Hard ceiling for a single voice turn regardless of ongoing activity. */
-export const VOICE_TURN_MAX_MS = 300_000;
+export const VOICE_TURN_MAX_MS = 120_000;
 
 export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boolean): string | null {
   if (!forceWebSearch) return null;
@@ -26,27 +50,8 @@ export function getForceWebSearchError(cfg: AgentXConfig, forceWebSearch?: boole
   return null;
 }
 
-export const sessionSettings: { mode: 'agent' | 'plan' } = { mode: 'plan' };
-
 export function isCrewPrivateSessionRecord(session: { contextKind?: string } | null | undefined): boolean {
   return (session?.contextKind ?? 'agent_x') === 'crew_private';
-}
-
-/** Sync global sessionSettings from active session record (per-session mode). */
-export function applySessionModeToAgent(agent: Agent): 'agent' | 'plan' {
-  // Hyperdrive is an overlay — keep agent in build mode and use agent instructions
-  if (agent.hyperdriveMode) {
-    return 'agent';
-  }
-  const eng = getEngine();
-  try {
-    const sess = eng.sessionManager.getActiveSession?.() as { mode?: string; contextKind?: string } | null | undefined;
-    if (sess?.mode === 'agent' || sess?.mode === 'plan') {
-      sessionSettings.mode = sess.mode;
-    }
-  } catch { /* best-effort */ }
-  agent.setPlanMode(sessionSettings.mode === 'plan');
-  return sessionSettings.mode;
 }
 
 export function buildFullText(text: string, attachments?: { name: string; content: string }[]): string {
@@ -56,44 +61,19 @@ export function buildFullText(text: string, attachments?: { name: string; conten
   return safeText + attachmentSection;
 }
 
-export function buildPlanInstruction(): string {
-  return `🔒 PLAN MODE
-
-Plan mode allows reads, web search, new file creation, shell/scripts, notifications, and automation scheduling.
-
-REQUIRES AGENT MODE OR HYPERDRIVE (edits/deletes only):
-- Editing existing files (file_edit, code_replace, apply_patch, json_set, …)
-- Deleting files, folders, or todos
-- Destructive git operations (reset, rebase, merge, stash)
-
-AVAILABLE IN PLAN MODE:
-- file_read, glob, grep, web_search, deep_web_search, automation_register, bash, file_write (new files), doc_markdown, notify_desktop, memory_store, and most create/execute tools
-
-SCHEDULING:
-- For reminders or "at <time>" / "in X minutes" tasks: call automation_register FIRST — do NOT research now.
-- automation_register works in Plan mode without switching modes.
-
-IF USER ASKS TO EDIT OR DELETE EXISTING FILES:
-1. Acknowledge the request
-2. Explain that edit/delete requires Agent mode or Hyperdrive
-3. Offer to plan the steps in chat, or ask them to switch modes for the edit
-
-Do NOT ask to switch modes for: web search, scheduling, new file creation, scripts, or read-only analysis.`;
-}
-
-export function buildCrewPrivatePlanInstruction(): string {
-  return `CREW PRIVATE CHAT — conversational specialist mode.
+function buildCrewPrivateInstruction(): string {
+  return `PRIVATE CHAT — conversational specialist mode.
 
 - Deliver complete plans, itineraries, analysis, and expertise as rich markdown IN THIS CHAT.
 - Planning is internal reasoning between you and the system — NEVER ask the user to approve a plan in a modal.
-- Do NOT tell the user to switch to Agent mode for conversational deliverables (travel plans, advice, outlines, questionnaires).
+- Do NOT tell the user to switch tools for conversational deliverables (travel plans, advice, outlines, questionnaires).
 - After the last questionnaire answer, include the FULL plan or response in the same turn — never stop at a transition phrase.
 - Use read/analysis tools when they genuinely help your domain expertise.
-- Only mention Agent mode if they explicitly asked you to write files or run commands on their machine.`;
+- Only mention tool execution if they explicitly asked you to write files or run commands on their machine.`;
 }
 
 export function buildAgentInstruction(): string {
-  return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL (Agent Mode)
+  return `🛡️ AUTONOMOUS DIAGNOSTICS PROTOCOL
 
 You have access to an intelligent file resolution system that automatically handles file path errors:
 
@@ -112,10 +92,10 @@ YOUR RESPONSIBILITIES:
 export function refreshAgentPersona(agent: Agent): void {
   try {
     const eng = getEngine();
-    const store = (eng.sessionManager as unknown as { store?: { getPersona?: () => AgentPersonaConfig | null } })?.store;
+    const store = eng.sessionManager.getStorageAdapter();
     if (!store?.getPersona) return;
     const persona = store.getPersona();
-    const current = (agent as unknown as { persona?: AgentPersonaConfig | null }).persona;
+    const current = agent.getPersona();
     if (JSON.stringify(persona) === JSON.stringify(current)) return;
     agent.applyPersona(persona);
   } catch { /* best-effort */ }
@@ -129,19 +109,16 @@ export function applyClientSituation(agent: Agent, situation: unknown): ClientSi
   return normalized;
 }
 
-export function buildInstructionForMode(
-  mode: 'agent' | 'plan',
-  opts?: { crewPrivate?: boolean },
-): string | undefined {
+export function buildTurnInstruction(opts?: { crewPrivate?: boolean }): string | undefined {
   if (opts?.crewPrivate) {
-    return mode === 'plan' ? buildCrewPrivatePlanInstruction() : undefined;
+    return buildCrewPrivateInstruction();
   }
-  return mode === 'plan' ? buildPlanInstruction() : buildAgentInstruction();
+  return buildAgentInstruction();
 }
 
 export function persistToolLedger(agent: Agent, sessionId: string): void {
   try {
-    const ledger = (agent as unknown as { getToolLedgerContent?: () => string }).getToolLedgerContent?.() ?? '';
+    const ledger = agent.getToolLedgerContent?.() ?? '';
     if (ledger) {
       persistMessageDirect(sessionId, 'system', ledger);
     }
@@ -212,6 +189,10 @@ export function runAgentTurnAsync(
       primaryCrewId?: string;
     };
     clientSituation?: ClientSituation | null;
+    crewSuggestionRequested?: boolean;
+    signal?: AbortSignal;
+    /** Resolved user attachments (storage id + metadata). */
+    attachments?: TurnAttachment[];
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -269,7 +250,7 @@ export function runAgentTurnAsync(
       agent.cancel();
       turnCompleted = true;
       finalizeTurn();
-      const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+      const partial = agent.getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, 'The operation was aborted due to timeout', partial);
       if (partial) {
         persistMessageDirect(sessionId, 'assistant', partial + '\n\n⚠ Turn timed out — partial output saved.');
@@ -341,18 +322,26 @@ export function runAgentTurnAsync(
     ...(extra?.voiceMergeIntoMessage ? { voiceMergeIntoMessage: extra.voiceMergeIntoMessage } : {}),
     ...(extra?.resumeCrewIntake ? { resumeCrewIntake: extra.resumeCrewIntake } : {}),
     ...(clientSituation ? { clientSituation } : {}),
+    ...(extra?.crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
+    ...(extra?.signal ? { signal: extra.signal } : {}),
+    ...(extra?.attachments ? { attachments: extra.attachments } : {}),
   })
     .then((message) => {
       turnCompleted = true;
       finalizeTurn();
       persistToolLedger(agent, sessionId);
-      if (!message || (message as unknown as Record<string, unknown>).id === '__clarify__') {
-        turnRegistry.complete(turnId, message as any);
+      if (!message) {
+        turnRegistry.complete(turnId, message as Message);
+        onComplete?.(message as Message);
+        return;
+      }
+      if (message.id === '__clarify__') {
+        turnRegistry.complete(turnId, message);
         onComplete?.(message);
         return;
       }
       turnRegistry.complete(turnId, message);
-      try { getEngine().sessionManager.updateSession({ updatedAt: new Date().toISOString() } as any); } catch { /* best-effort */ }
+      try { getEngine().sessionManager.updateSession({ updatedAt: new Date().toISOString() }); } catch { /* best-effort */ }
       onComplete?.(message);
     })
     .catch((e: unknown) => {
@@ -360,14 +349,14 @@ export function runAgentTurnAsync(
       finalizeTurn();
       const isAbort = e instanceof Error && (e.name === 'AbortError' || /aborted/i.test(e.message));
       if (isAbort) {
-        const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+        const partial = agent.getPartialTurnContent?.() ?? '';
         turnRegistry.cancel(turnId);
         persistToolLedger(agent, sessionId);
         onError?.('Cancelled', partial);
         return;
       }
       const errMsg = e instanceof Error ? e.message : 'chat-failed';
-      const partial = (agent as unknown as { getPartialTurnContent?: () => string }).getPartialTurnContent?.() ?? '';
+      const partial = agent.getPartialTurnContent?.() ?? '';
       turnRegistry.fail(turnId, errMsg, partial);
       persistToolLedger(agent, sessionId);
       if (partial) {
@@ -383,36 +372,24 @@ type TurnFeedbackStoreLike = {
   getTurnFeedbackBySession?: (sessionId: string) => Array<Record<string, unknown>>;
 };
 
-export function getSessionStore(): TurnFeedbackStoreLike | null {
+export function getSessionStore(): StorageAdapter | null {
   const eng = getEngine();
-  return (eng.sessionManager as unknown as { store?: TurnFeedbackStoreLike })?.store ?? null;
+  return eng.sessionManager?.getStorageAdapter() ?? null;
 }
 
-type MessagePageStore = {
-  getMessagesPage?: (
-    sessionId: string,
-    opts: { limit?: number; before?: string },
-  ) => { messages: Array<Record<string, unknown>>; total: number; hasMore: boolean } | Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }>;
-  getMessages?: (sessionId: string) => Array<Record<string, unknown>>;
-  getParts?: (sessionId: string) => Array<Record<string, unknown>>;
-  getPartsForMessages?: (sessionId: string, messages: Array<Record<string, unknown>>) => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
-};
-
-export function getMessageStore(): MessagePageStore | null {
+export function getMessageStore(): StorageAdapter | null {
   const eng = getEngine();
-  return (eng.sessionManager as unknown as { store?: MessagePageStore })?.store ?? null;
+  return eng.sessionManager?.getStorageAdapter() ?? null;
 }
 
 export async function loadSessionMessagesPage(
   sessionId: string,
   opts: { limit?: number; before?: string },
-): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
+): Promise<{ messages: Array<Record<string, unknown> | StorableMessage>; total: number; hasMore: boolean }> {
   const store = getMessageStore();
   if (!store) return { messages: [], total: 0, hasMore: false };
 
-  if ('ensureSessionHydrated' in store && typeof (store as { ensureSessionHydrated?: (id: string) => Promise<void> }).ensureSessionHydrated === 'function') {
-    await (store as { ensureSessionHydrated: (id: string) => Promise<void> }).ensureSessionHydrated(sessionId);
-  }
+  await store.ensureSessionHydrated?.(sessionId);
 
   if (store.getMessagesPage) {
     return await store.getMessagesPage(sessionId, opts);
@@ -452,7 +429,7 @@ export function recordTurnFeedback(input: {
   metadata?: Record<string, unknown> | null;
 }): { ok: true } | { ok: false; error: string } {
   const eng = getEngine();
-  const agent = eng.agent as Agent | null;
+  const agent = eng.agent;
   const service = agent?.turnFeedbackService;
   if (!service) {
     const store = getSessionStore();
@@ -483,12 +460,11 @@ export function recordTurnFeedback(input: {
   if (input.rating === 'positive' || input.rating === 'negative') {
     if (input.crewId) {
       try {
-        (agent as Agent & { recordCrewFeedback?: (crewId: string, positive: boolean) => void })?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
+        agent?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
       } catch { /* best-effort */ }
     }
     try {
-      const exp = agent as unknown as { experienceEngine?: { recordTrial: (sid: string, trial: Record<string, unknown>) => void } } | null;
-      exp?.experienceEngine?.recordTrial(input.sessionId, {
+      agent?.recordTrial?.(input.sessionId, {
         category: 'user_feedback',
         action: input.turnSummary || 'assistant_turn',
         result: input.rating === 'positive' ? 'success' : 'failure',

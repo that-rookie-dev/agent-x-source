@@ -7,6 +7,7 @@ import { OllamaProvider } from './OllamaProvider.js';
 import { GoogleProvider } from './GoogleProvider.js';
 import { LMStudioProvider } from './LMStudioProvider.js';
 import { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';
+import { CommandCodeProvider } from './CommandCodeProvider.js';
 
 function getDefaultBaseUrl(providerId: ProviderId): string {
   const fromCatalog = PROVIDERS[providerId]?.defaultBaseUrl;
@@ -60,7 +61,6 @@ export class ProviderFactory {
       case 'xai':
       case 'fireworks':
       case 'perplexity':
-      case 'commandcode':
       case 'opencode':
       case 'opencode-zen':
         return new OpenAICompatibleProvider(
@@ -69,6 +69,8 @@ export class ProviderFactory {
           apiKey ?? '',
           baseUrl ?? getDefaultBaseUrl(providerId),
         );
+      case 'commandcode':
+        return new CommandCodeProvider(apiKey ?? '', baseUrl);
       case 'cohere':
         // List/validate via Cohere OpenAI Compatibility API; chat uses native @ai-sdk/cohere.
         return new OpenAICompatibleProvider(
@@ -96,3 +98,4 @@ export { OllamaProvider } from './OllamaProvider.js';
 export { GoogleProvider } from './GoogleProvider.js';
 export { LMStudioProvider } from './LMStudioProvider.js';
 export { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';
+export { CommandCodeProvider } from './CommandCodeProvider.js';

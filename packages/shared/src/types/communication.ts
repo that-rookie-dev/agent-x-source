@@ -26,6 +26,12 @@ export interface TurnAttachment {
   mimeType?: string;
   data?: string;
   url?: string;
+  /** Optional server-side storage id for persisted attachments. */
+  storageId?: string;
+  /** Optional source origin (upload, gmail, tool, mcp, ...). */
+  source?: string;
+  /** If the file is already on disk, reference its original path instead of copying. */
+  originalPath?: string;
   resolvedAt?: number;
 }
 
@@ -50,6 +56,8 @@ export interface NormalizedAttachment {
   type: 'file' | 'image' | 'url';
   name: string;
   mimeType: string;
+  /** Server-side attachment id; used to fetch content on demand. */
+  storageId?: string;
   content: string;
   isInline: boolean;
 }

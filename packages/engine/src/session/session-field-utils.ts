@@ -18,29 +18,8 @@ export function normalizeSessionUpdates(updates: Record<string, unknown>): Recor
   return normalized;
 }
 
-export interface SessionListKpis {
-  messageCount: number;
-  childSessionCount: number;
-  crewCount: number;
-  crewCallsigns: string[];
-  totalCostUsd: number;
-  compactionCount: number;
-  tokensUsed: number;
-  tokenAvailable: number;
-  tokenUsagePct: number;
-}
-
-export const EMPTY_SESSION_KPIS: SessionListKpis = {
-  messageCount: 0,
-  childSessionCount: 0,
-  crewCount: 0,
-  crewCallsigns: [],
-  totalCostUsd: 0,
-  compactionCount: 0,
-  tokensUsed: 0,
-  tokenAvailable: 128_000,
-  tokenUsagePct: 0,
-};
+export type { SessionListKpis } from '@agentx/shared';
+export { EMPTY_SESSION_KPIS } from '@agentx/shared';
 
 export type HostCrewSnapshotSource = HostCrewIdentityInput & {
   id: string;
@@ -124,12 +103,4 @@ export function hostCrewSnapshotPatch(
   }
 
   return patch;
-}
-
-/** @deprecated Use hostCrewSnapshotPatch */
-export function missingHostCrewSnapshotPatch(
-  existing: Parameters<typeof hostCrewSnapshotPatch>[0],
-  crew: HostCrewSnapshotSource,
-): Record<string, string | null> {
-  return hostCrewSnapshotPatch(existing, crew);
 }

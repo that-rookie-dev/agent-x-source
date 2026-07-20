@@ -10,6 +10,8 @@ export interface CrewRosterHintInput {
   priorUserMessages?: string[];
   /** User skipped/dismissed the crew suggestion modal — do not re-prompt. */
   crewSuggestionResolved?: boolean;
+  /** User explicitly requested crew evaluation for this turn via the toggle. */
+  crewSuggestionRequested?: boolean;
   expandKeywords?: CrewKeywordExpandFn;
 }
 
@@ -58,7 +60,8 @@ export function buildCrewRosterHintFromEvaluation(
 /** Evaluate catalog + roster and return a turn instruction block, or null. */
 export async function buildCrewRosterHintBlock(input: CrewRosterHintInput): Promise<string | null> {
   if (input.crewSuggestionResolved) return null;
-  if (explicitCrewRequest(input.message)) return null;
+  // Skip evaluation entirely when the user hasn't requested suggestions and there's no explicit crew request.
+  if (!input.crewSuggestionRequested && !explicitCrewRequest(input.message) && !prefersCrewRosterFirst(input.message)) return null;
 
   const service = getCrewSuggestionService(input.store);
   if (!service) return null;
@@ -70,6 +73,18 @@ export async function buildCrewRosterHintBlock(input: CrewRosterHintInput): Prom
     explicitCrewRequest: explicitCrewRequest(input.message),
     expandKeywords: input.expandKeywords,
   });
+
+  // When the user explicitly requested a suggestion, always emit a hint block
+  // (even with zero candidates) so the agent acknowledges the request.
+  if (input.crewSuggestionRequested) {
+    return buildCrewRosterHintFromEvaluation(evaluation, input.message)
+      ?? [
+        '[CREW_ROSTER_HINT]',
+        'User requested crew suggestions for this turn, but no Crew Hub specialists matched.',
+        'Proceed as Agent-X and offer general guidance; mention they can refine via @mentions or search_crew_hub.',
+        '[/CREW_ROSTER_HINT]',
+      ].join('\n');
+  }
 
   if (!prefersCrewRosterFirst(input.message) && evaluation.candidates.length === 0) {
     return null;

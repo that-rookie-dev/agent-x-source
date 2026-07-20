@@ -1,0 +1,669 @@
+import { useEffect, useMemo, useState } from 'react';
+import Box from '@mui/material/Box';
+import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
+import Popover from '@mui/material/Popover';
+import MenuItem from '@mui/material/MenuItem';
+import MicIcon from '@mui/icons-material/Mic';
+import MicOffIcon from '@mui/icons-material/MicOff';
+import PublicIcon from '@mui/icons-material/Public';
+import ShieldIcon from '@mui/icons-material/Shield';
+import { colors, alphaColor, MONO } from '../../theme';
+import { useVoiceOptional, useVoiceCommsOptional } from './VoiceProvider';
+import { voiceDisabledReason } from '../../voice/support';
+import { VoiceWaveform } from './VoiceWaveform';
+import { CommsSpinner } from './CommsSpinner';
+import type { ParticlePhase } from './VoiceParticleField';
+import { voice as voiceApi, providers as providersApi, models as modelsApi } from '../../api';
+import type { ConfiguredProvider, ModelInfo, VoiceConfig } from '../../api';
+import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
+
+/**
+ * Voice Agent card for the Bento dashboard — futuristic centerpiece.
+ *
+ * Uses a segregated voice-only session (__channel__:voice) with a lean prompt
+ * profile. The comms session lives in VoiceProvider so it stays alive across
+ * page navigation. This component is a pure presentation layer that reads
+ * voiceActive and comms state from context.
+ *
+ * Features:
+ *  - Particle physics canvas background (80+ particles, phase-reactive)
+ *  - Circular mic button with phase-reactive glow
+ *  - Toggle chips (web search, bypass) in card header — icon-only, circular
+ *  - Provider/model profile dropdowns inside card (separate voice config)
+ *  - No message listing, questionnaire, or deep web search UI
+ */
+
+type ButtonPhase = 'disabled' | 'connecting' | 'idle' | 'recording' | 'thinking' | 'speaking';
+
+export function VoiceAgentCard({
+  onActiveChange,
+  onPhaseChange,
+  searchWeb,
+  bypassChip,
+}: {
+  onActiveChange?: (active: boolean) => void;
+  onPhaseChange?: (phase: ParticlePhase) => void;
+  searchWeb: boolean;
+  bypassChip: boolean;
+}) {
+  const voiceCtx = useVoiceOptional();
+  const commsCtx = useVoiceCommsOptional();
+  const envBlocked = voiceDisabledReason();
+  const voiceActive = voiceCtx?.voiceActive ?? false;
+  const setVoiceActive = voiceCtx?.setVoiceActive;
+  const comms = commsCtx?.comms;
+
+  const sessionReady = Boolean(voiceCtx?.voiceReady) && !envBlocked;
+
+  // Push toggle state to backend
+  useEffect(() => {
+    if (voiceActive && sessionReady && comms) {
+      comms.session.setToggles({ searchWeb, bypassChip });
+    }
+  }, [voiceActive, sessionReady, searchWeb, bypassChip, comms]);
+
+  // Derive button phase — connecting stays blue; thinking is orange only after a turn.
+  const phase: ButtonPhase = useMemo(() => {
+    if (!voiceActive || !sessionReady || !comms) return 'disabled';
+    if (comms.commsPhase === 'boot' || comms.commsPhase === 'link') return 'connecting';
+    if (comms.session.state === 'connecting') return 'connecting';
+    if (comms.commsPhase === 'operator_record') return 'recording';
+    if (comms.commsPhase === 'agent_tx') return 'speaking';
+    if (comms.commsPhase === 'operator_stt' || comms.commsPhase === 'relay_process' || comms.commsPhase === 'agent_prep') return 'thinking';
+    return 'idle';
+  }, [voiceActive, sessionReady, comms]);
+
+  const particlePhase: ParticlePhase = phase;
+
+  const handleClick = () => {
+    if (!sessionReady || !setVoiceActive) return;
+    setVoiceActive(!voiceActive);
+  };
+
+  // Notify parent of active state changes (for connection pulses)
+  useEffect(() => {
+    onActiveChange?.(voiceActive && sessionReady);
+  }, [voiceActive, sessionReady, onActiveChange]);
+
+  // Notify parent of phase changes (for dashboard-wide particle field)
+  useEffect(() => {
+    onPhaseChange?.(particlePhase);
+  }, [particlePhase, onPhaseChange]);
+
+  const waveLevel = phase === 'recording'
+    ? (comms?.session.audioLevel ?? 0)
+    : phase === 'speaking'
+      ? (comms?.session.playbackLevel ?? 0)
+      : 0;
+
+  const statusText = (() => {
+    if (!voiceActive) return 'Click to activate';
+    if (!sessionReady) return 'Voice kit required';
+    if (phase === 'disabled') return 'Click to activate';
+    if (phase === 'connecting') return comms?.statusLabel || 'Connecting…';
+    if (phase === 'recording') return comms?.isDuplex ? 'Listening…' : 'Listening… release Space';
+    if (phase === 'thinking') return comms?.statusLabel || 'Thinking…';
+    if (phase === 'speaking') return 'Agent speaking';
+    return comms?.statusLabel || (comms?.isDuplex ? 'Listening…' : 'Hold Space to speak');
+  })();
+
+  return (
+    <Box sx={{
+      position: 'relative',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 0.75,
+      height: '100%',
+      minHeight: 200,
+      py: 1,
+      overflow: 'hidden',
+    }}>
+      {/* Mic button + waveform overlay */}
+      <Box sx={{ position: 'relative', zIndex: 2 }}>
+        <Tooltip title={sessionReady ? (voiceActive ? 'Click to disable voice' : 'Click to enable voice') : 'Deploy voice kit first'}>
+          <Box
+            onClick={handleClick}
+            sx={{
+              width: 64,
+              height: 64,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: sessionReady ? 'pointer' : 'default',
+              transition: 'all 0.25s ease',
+              position: 'relative',
+              border: `2px solid ${phaseColor(phase, true)}`,
+              bgcolor: phase === 'disabled'
+                ? alphaColor(colors.text.dim, '0a')
+                : phase === 'idle' || phase === 'connecting'
+                  ? alphaColor(colors.accent.blue, '14')
+                  : phase === 'recording'
+                    ? alphaColor(colors.accent.green, '1a')
+                    : phase === 'speaking'
+                      ? alphaColor(colors.accent.purple, '1a')
+                      : alphaColor(colors.accent.orange, '14'),
+              '&:hover': sessionReady && phase === 'idle' ? {
+                borderColor: colors.accent.blue,
+                transform: 'scale(1.05)',
+                boxShadow: `0 0 20px ${alphaColor(colors.accent.blue, '44')}`,
+              } : {},
+              ...(phase === 'connecting' && {
+                animation: 'voicePulseLink 1.4s ease-in-out infinite',
+                '@keyframes voicePulseLink': {
+                  '0%, 100%': { boxShadow: `0 0 10px ${alphaColor(colors.accent.blue, '33')}` },
+                  '50%': { boxShadow: `0 0 22px ${alphaColor(colors.accent.blue, '66')}` },
+                },
+              }),
+              ...(phase === 'recording' && {
+                animation: 'voicePulseRec 1.5s ease-in-out infinite',
+                '@keyframes voicePulseRec': {
+                  '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.green, '44')}` },
+                  '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.green, '77')}` },
+                },
+              }),
+              ...(phase === 'speaking' && {
+                animation: 'voicePulseSpeak 1.2s ease-in-out infinite',
+                '@keyframes voicePulseSpeak': {
+                  '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.purple, '44')}` },
+                  '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.purple, '77')}` },
+                },
+              }),
+            }}
+          >
+            {phase === 'recording' || phase === 'speaking' ? (
+              <Box sx={{ width: '100%', height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <VoiceWaveform
+                  level={waveLevel}
+                  active
+                  accent={phase === 'recording' ? colors.accent.green : colors.accent.purple}
+                  bars={12}
+                  height={36}
+                />
+              </Box>
+            ) : phase === 'connecting' ? (
+              <CommsSpinner color={colors.accent.blue} size={28} />
+            ) : phase === 'thinking' ? (
+              <CommsSpinner color={colors.accent.orange} size={28} />
+            ) : phase === 'disabled' ? (
+              <MicOffIcon sx={{ fontSize: 26, color: colors.text.dim, opacity: 0.5 }} />
+            ) : (
+              <MicIcon sx={{ fontSize: 26, color: colors.accent.blue }} />
+            )}
+          </Box>
+        </Tooltip>
+      </Box>
+
+      <Typography sx={{
+        fontSize: '0.6rem',
+        fontFamily: MONO,
+        color: phase === 'disabled'
+          ? colors.text.dim
+          : phase === 'recording'
+            ? colors.accent.green
+            : phase === 'speaking'
+              ? colors.accent.purple
+              : phase === 'thinking'
+                ? colors.accent.orange
+                : phase === 'connecting'
+                  ? colors.accent.blue
+                  : colors.text.secondary,
+        textAlign: 'center',
+        letterSpacing: '0.03em',
+        transition: 'color 0.2s',
+        zIndex: 2,
+      }}>
+        {statusText}
+      </Typography>
+    </Box>
+  );
+}
+
+/** Circular icon-only toggle chip for the card header. */
+export function VoiceToggleChip({
+  icon,
+  active,
+  activeColor,
+  onClick,
+  title,
+}: {
+  icon: React.ReactNode;
+  active: boolean;
+  activeColor: string;
+  onClick: () => void;
+  title: string;
+}) {
+  return (
+    <Tooltip title={title}>
+      <Box
+        onClick={onClick}
+        sx={{
+          width: 22,
+          height: 22,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          border: `1px solid ${active ? alphaColor(activeColor, '66') : colors.border.default}`,
+          bgcolor: active ? alphaColor(activeColor, '1a') : 'transparent',
+          color: active ? activeColor : colors.text.dim,
+          transition: 'all 0.2s',
+          '&:hover': {
+            borderColor: activeColor,
+            color: activeColor,
+            transform: 'scale(1.1)',
+          },
+        }}
+      >
+        {icon}
+      </Box>
+    </Tooltip>
+  );
+}
+
+/** Exported so BentoDashboard can render toggles in the card header (right-aligned). */
+export function VoiceAgentHeaderToggles({
+  searchWeb,
+  bypassChip,
+  onSearchWebChange,
+  onBypassChipChange,
+}: {
+  searchWeb: boolean;
+  bypassChip: boolean;
+  onSearchWebChange: (v: boolean) => void;
+  onBypassChipChange: (v: boolean) => void;
+}) {
+  return (
+    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+      <VoiceToggleChip
+        icon={<PublicIcon sx={{ fontSize: 13 }} />}
+        active={searchWeb}
+        activeColor={colors.accent.blue}
+        onClick={() => onSearchWebChange(!searchWeb)}
+        title={searchWeb ? 'Web search enabled' : 'Enable web search'}
+      />
+      <VoiceToggleChip
+        icon={<ShieldIcon sx={{ fontSize: 13 }} />}
+        active={bypassChip}
+        activeColor={colors.accent.orange}
+        onClick={() => onBypassChipChange(!bypassChip)}
+        title={bypassChip ? 'Bypass enabled — auto-approve tools' : 'Enable bypass — auto-approve tools'}
+      />
+    </Box>
+  );
+}
+
+/**
+ * Full header controls for the Voice Agent card: toggle chips + engine/voice
+ * selectors. The engine chip shows the active voice engine (Local or xAI) and
+ * allows switching. The voice chip loads voices based on the selected engine
+ * (Kokoro voices for local, xAI voices for realtime). For the local engine,
+ * provider/model selectors are also shown.
+ */
+export function VoiceAgentHeaderControls({
+  searchWeb,
+  bypassChip,
+  onSearchWebChange,
+  onBypassChipChange,
+}: {
+  searchWeb: boolean;
+  bypassChip: boolean;
+  onSearchWebChange: (v: boolean) => void;
+  onBypassChipChange: (v: boolean) => void;
+}) {
+  const [configuredProviders, setConfiguredProviders] = useState<ConfiguredProvider[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [voiceCfg, setVoiceCfg] = useState<VoiceConfig | null>(null);
+  const [defaultProvider, setDefaultProvider] = useState<string>('');
+  const [defaultModel, setDefaultModel] = useState<string>('');
+  const [xaiVoices, setXaiVoices] = useState<Array<{ id: string; name: string; language?: string }>>([]);
+  const [engineAnchor, setEngineAnchor] = useState<HTMLElement | null>(null);
+  const [providerAnchor, setProviderAnchor] = useState<HTMLElement | null>(null);
+  const [modelAnchor, setModelAnchor] = useState<HTMLElement | null>(null);
+  const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  const engine = voiceCfg?.engine ?? 'stt_llm_tts';
+  const voiceProvider = voiceCfg?.provider?.activeProvider ?? null;
+  const voiceModel = voiceCfg?.provider?.activeModel ?? null;
+  const kokoroVoiceId = voiceCfg?.tts?.voiceId ?? 'kokoro-af';
+  const xaiVoiceId = voiceCfg?.xai?.voice ?? 'eve';
+
+  // Load configured providers, current default, and voice config
+  const loadConfig = async () => {
+    try {
+      const [configured, current, cfg] = await Promise.all([
+        providersApi.configured(),
+        modelsApi.current(),
+        voiceApi.getConfig(),
+      ]);
+      setConfiguredProviders(configured);
+      setDefaultProvider(current.provider || '');
+      setDefaultModel(current.model || '');
+      setVoiceCfg(cfg);
+      if (cfg.engine === 'realtime_xai') {
+        try {
+          const voiceRes = await voiceApi.xaiVoices();
+          setXaiVoices(voiceRes.voices);
+        } catch {
+          setXaiVoices([]);
+        }
+      }
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    void loadConfig();
+    const onVoiceUpdated = () => { void loadConfig(); };
+    window.addEventListener('agentx:voice-updated', onVoiceUpdated);
+    return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
+  }, []);
+
+  // Load models when provider changes (local engine only)
+  useEffect(() => {
+    if (engine !== 'stt_llm_tts') return;
+    const providerId = voiceProvider || defaultProvider;
+    if (!providerId) return;
+    let cancelled = false;
+    setLoadingModels(true);
+    void (async () => {
+      try {
+        const m = await providersApi.models(providerId);
+        if (!cancelled) setModels(m);
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setLoadingModels(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [voiceProvider, defaultProvider, engine]);
+
+  const handleEngineSelect = async (nextEngine: 'stt_llm_tts' | 'realtime_xai') => {
+    setEngineAnchor(null);
+    if (nextEngine === engine) return;
+    const isXai = nextEngine === 'realtime_xai';
+    const currentWeb = voiceCfg?.mode?.web ?? 'off';
+    const nextWeb = voiceCfg?.enabled ? (isXai ? 'duplex' : 'push-to-talk') : currentWeb;
+    try {
+      await voiceApi.updateConfig({
+        ...voiceCfg,
+        engine: nextEngine,
+        mode: { ...voiceCfg?.mode, web: nextWeb },
+      } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const handleProviderSelect = async (providerId: string) => {
+    setProviderAnchor(null);
+    try {
+      await voiceApi.updateConfig({ provider: { activeProvider: providerId || undefined } } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const handleModelSelect = async (modelId: string) => {
+    setModelAnchor(null);
+    try {
+      await voiceApi.updateConfig({ provider: { activeModel: modelId || undefined } } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const handleKokoroVoiceSelect = async (vid: string) => {
+    setVoiceAnchor(null);
+    try {
+      await voiceApi.updateConfig({ tts: { voiceId: vid } } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const handleXaiVoiceSelect = async (vid: string) => {
+    setVoiceAnchor(null);
+    try {
+      await voiceApi.updateConfig({ xai: { voice: vid } } as VoiceConfig);
+    } catch { /* ignore */ }
+  };
+
+  const engineLabel = engine === 'realtime_xai' ? 'xAI' : 'Local';
+  const effectiveProvider = voiceProvider || defaultProvider;
+  const effectiveModel = voiceModel || defaultModel;
+  const matchedProvider = configuredProviders.find((p) => p.id === effectiveProvider);
+  const profileLabel = matchedProvider?.activeProfile
+    || matchedProvider?.name
+    || effectiveProvider
+    || '—';
+  const modelLabel = effectiveModel ? effectiveModel.split('/').pop() || effectiveModel : '—';
+  const kokoroProfile = KOKORO_VOICE_PROFILES.find((p) => p.id === kokoroVoiceId);
+  const kokoroVoiceLabel = kokoroProfile?.name || kokoroVoiceId;
+  const xaiVoiceMatch = xaiVoices.find((v) => v.id === xaiVoiceId);
+  const xaiVoiceLabel = xaiVoiceMatch?.name || xaiVoiceId;
+  const voiceLabel = engine === 'realtime_xai' ? xaiVoiceLabel : kokoroVoiceLabel;
+
+  return (
+    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+      <VoiceToggleChip
+        icon={<PublicIcon sx={{ fontSize: 13 }} />}
+        active={searchWeb}
+        activeColor={colors.accent.blue}
+        onClick={() => onSearchWebChange(!searchWeb)}
+        title={searchWeb ? 'Web search enabled' : 'Enable web search'}
+      />
+      <VoiceToggleChip
+        icon={<ShieldIcon sx={{ fontSize: 13 }} />}
+        active={bypassChip}
+        activeColor={colors.accent.orange}
+        onClick={() => onBypassChipChange(!bypassChip)}
+        title={bypassChip ? 'Bypass enabled — auto-approve tools' : 'Enable bypass — auto-approve tools'}
+      />
+      <ConfigChip
+        label={engineLabel}
+        onClick={(e) => setEngineAnchor(e.currentTarget)}
+        active={engine === 'realtime_xai'}
+      />
+      {engine === 'stt_llm_tts' && (
+        <>
+          <ConfigChip
+            label={profileLabel}
+            onClick={(e) => setProviderAnchor(e.currentTarget)}
+          />
+          <ConfigChip
+            label={modelLabel}
+            onClick={(e) => setModelAnchor(e.currentTarget)}
+          />
+        </>
+      )}
+      <ConfigChip
+        label={voiceLabel}
+        onClick={(e) => setVoiceAnchor(e.currentTarget)}
+      />
+
+      {/* Engine dropdown — switch between Local and xAI */}
+      <Popover
+        open={Boolean(engineAnchor)}
+        anchorEl={engineAnchor}
+        onClose={() => setEngineAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1 } }}
+      >
+        <Box sx={{ py: 0.5, minWidth: 160 }}>
+          <MenuItem
+            onClick={() => handleEngineSelect('stt_llm_tts')}
+            selected={engine === 'stt_llm_tts'}
+            sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+          >
+            Local · STT+LLM+TTS
+          </MenuItem>
+          <MenuItem
+            onClick={() => handleEngineSelect('realtime_xai')}
+            selected={engine === 'realtime_xai'}
+            sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+          >
+            xAI · Grok Voice Agent
+          </MenuItem>
+        </Box>
+      </Popover>
+
+      {/* Provider dropdown — local engine only */}
+      {engine === 'stt_llm_tts' && (
+        <Popover
+          open={Boolean(providerAnchor)}
+          anchorEl={providerAnchor}
+          onClose={() => setProviderAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1 } }}
+        >
+          <Box sx={{ py: 0.5, minWidth: 160 }}>
+            <MenuItem
+              onClick={() => handleProviderSelect('')}
+              selected={!voiceProvider}
+              sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
+            >
+              <em>Use default ({defaultProvider || '—'})</em>
+            </MenuItem>
+            {configuredProviders.map((p) => (
+              <MenuItem
+                key={p.id}
+                onClick={() => handleProviderSelect(p.id)}
+                selected={p.id === voiceProvider}
+                sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+              >
+                {p.name}{p.activeProfile ? ` · ${p.activeProfile}` : ''}
+              </MenuItem>
+            ))}
+          </Box>
+        </Popover>
+      )}
+
+      {/* Model dropdown — local engine only */}
+      {engine === 'stt_llm_tts' && (
+        <Popover
+          open={Boolean(modelAnchor)}
+          anchorEl={modelAnchor}
+          onClose={() => setModelAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+          PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 200, overflow: 'auto' } }}
+        >
+          <Box sx={{ py: 0.5, minWidth: 200 }}>
+            {loadingModels ? (
+              <MenuItem disabled sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}>
+                Loading models…
+              </MenuItem>
+            ) : (
+              <>
+                <MenuItem
+                  onClick={() => handleModelSelect('')}
+                  selected={!voiceModel}
+                  sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}
+                >
+                  <em>Use default ({defaultModel ? defaultModel.split('/').pop() : '—'})</em>
+                </MenuItem>
+                {models.map((m) => (
+                  <MenuItem
+                    key={m.id}
+                    onClick={() => handleModelSelect(m.id)}
+                    selected={m.id === voiceModel}
+                    sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}
+                  >
+                    {m.name || m.id}
+                  </MenuItem>
+                ))}
+              </>
+            )}
+          </Box>
+        </Popover>
+      )}
+
+      {/* Voice dropdown — Kokoro (local) or xAI voices */}
+      <Popover
+        open={Boolean(voiceAnchor)}
+        anchorEl={voiceAnchor}
+        onClose={() => setVoiceAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxHeight: 280, overflow: 'auto' } }}
+      >
+        <Box sx={{ py: 0.5, minWidth: 180 }}>
+          {engine === 'realtime_xai' ? (
+            xaiVoices.length === 0 ? (
+              <MenuItem disabled sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.dim }}>
+                No voices loaded — check xAI API key
+              </MenuItem>
+            ) : (
+              xaiVoices.map((v) => (
+                <MenuItem
+                  key={v.id}
+                  onClick={() => handleXaiVoiceSelect(v.id)}
+                  selected={v.id === xaiVoiceId}
+                  sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.secondary, minHeight: 'auto', py: 0.25 }}
+                >
+                  {v.name} {v.language ? <span style={{ color: colors.text.dim, marginLeft: 4 }}>({v.language})</span> : null}
+                </MenuItem>
+              ))
+            )
+          ) : (
+            Array.from(new Set(KOKORO_VOICE_PROFILES.map((p) => p.language))).map((language) => (
+              <Box key={language}>
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: colors.text.dim, px: 1, pt: 0.5, pb: 0.25, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {language}
+                </Typography>
+                {KOKORO_VOICE_PROFILES.filter((p) => p.language === language).map((p) => (
+                  <MenuItem
+                    key={p.id}
+                    onClick={() => handleKokoroVoiceSelect(p.id)}
+                    selected={p.id === kokoroVoiceId}
+                    sx={{ fontSize: '0.6rem', fontFamily: MONO, color: colors.text.secondary, minHeight: 'auto', py: 0.25 }}
+                  >
+                    {p.name} <span style={{ color: colors.text.dim, marginLeft: 4 }}>({p.gender})</span>
+                  </MenuItem>
+                ))}
+              </Box>
+            ))
+          )}
+        </Box>
+      </Popover>
+    </Box>
+  );
+}
+
+/** Capsule-shaped chip (same height as VoiceToggleChip) with label only, opens dropdown on click. */
+function ConfigChip({ label, onClick, active }: { label: string; onClick: (e: React.MouseEvent<HTMLElement>) => void; active?: boolean }) {
+  return (
+    <Box
+      onClick={onClick}
+      sx={{
+        height: 22,
+        display: 'flex',
+        alignItems: 'center',
+        px: 0.75,
+        borderRadius: '11px',
+        cursor: 'pointer',
+        border: `1px solid ${active ? alphaColor(colors.accent.blue, '66') : colors.border.subtle}`,
+        bgcolor: active ? alphaColor(colors.accent.blue, '1a') : alphaColor(colors.bg.primary, '80'),
+        color: active ? colors.accent.blue : colors.text.dim,
+        transition: 'all 0.15s',
+        maxWidth: 120,
+        '&:hover': {
+          borderColor: colors.border.accent,
+          color: colors.text.secondary,
+        },
+      }}
+    >
+      <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {label}
+      </Typography>
+    </Box>
+  );
+}
+
+function phaseColor(phase: ButtonPhase, border: boolean): string {
+  switch (phase) {
+    case 'disabled': return colors.border.default;
+    case 'connecting':
+    case 'idle': return border ? alphaColor(colors.accent.blue, '66') : colors.accent.blue;
+    case 'recording': return border ? alphaColor(colors.accent.green, '66') : colors.accent.green;
+    case 'thinking': return border ? alphaColor(colors.accent.orange, '66') : colors.accent.orange;
+    case 'speaking': return border ? alphaColor(colors.accent.purple, '66') : colors.accent.purple;
+  }
+}

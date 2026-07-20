@@ -10,6 +10,7 @@ export interface SessionContext {
   directoryStructure: DirectoryTree;
   timestamps: { initialized: number; lastUpdate: number };
   discoveredPaths: Map<string, string>; // filename -> full path mapping
+  fallbackReason?: string;
 }
 
 export interface DirectoryTree {

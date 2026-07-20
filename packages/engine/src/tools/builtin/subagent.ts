@@ -1,5 +1,6 @@
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import type { SubAgentManager } from '../../agent/SubAgentManager.js';
+import { getSubAgentServiceInstance } from '../../agent/SubAgentService.js';
 
 let subAgentManagerInstance: SubAgentManager | null = null;
 
@@ -17,7 +18,7 @@ export function getSubAgentManagerInstance(): SubAgentManager | null {
  */
 export async function subAgentSpawn(
   args: Record<string, unknown>,
-  _context: ToolExecutionContext,
+  context: ToolExecutionContext,
 ): Promise<ToolResult> {
   const instruction = args['instruction'] as string;
   const toolsRaw = args['tools'] as string | string[] | undefined;
@@ -37,7 +38,15 @@ export async function subAgentSpawn(
     return { success: false, output: 'Sub-agent manager not available', error: 'NOT_CONFIGURED' };
   }
 
-  const task = manager.spawn(instruction, tools, timeout);
+  const channelContext = (context.sourceChannel || context.sourceThreadId)
+    ? {
+        channel: context.sourceChannel,
+        threadId: context.sourceThreadId,
+        messageId: context.sourceMessageId,
+      }
+    : undefined;
+
+  const task = manager.spawn(instruction, tools, timeout, undefined, undefined, false, channelContext);
   return {
     success: true,
     output: `Sub-agent spawned (ID: ${task.id}, status=${task.status}). It will process the task: "${instruction.slice(0, 100)}"`,
@@ -52,17 +61,17 @@ export async function subAgentStatus(
   args: Record<string, unknown>,
   _context: ToolExecutionContext,
 ): Promise<ToolResult> {
+  const service = getSubAgentServiceInstance();
   const manager = subAgentManagerInstance;
-  if (!manager) {
-    return { success: false, output: 'Sub-agent manager not available', error: 'NOT_CONFIGURED' };
-  }
-
   const agentId = args['agent_id'] as string | undefined;
 
-  // List all active sub-agents (running + queued)
-  const active = manager.getAll().filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending');
+  // Use the global service so background sub-agents are visible even when the
+  // spawning Agent instance has been replaced (e.g. page navigation).
+  const all = service.listTasks();
+  const running = all.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending');
+
   if (agentId) {
-    const task = active.find((t) => t.id === agentId) ?? manager.getAllIncludingCompleted().find((t) => t.id === agentId);
+    const task = service.getTask(agentId) ?? manager?.getAllIncludingCompleted().find((t) => t.id === agentId);
     if (task) {
       return {
         success: true,
@@ -72,11 +81,11 @@ export async function subAgentStatus(
     return { success: false, output: `No agent with ID: ${agentId}`, error: 'NOT_FOUND' };
   }
 
-  if (active.length === 0) {
+  if (running.length === 0) {
     return { success: true, output: 'No sub-agents currently running or queued.' };
   }
 
-  const lines = active.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
+  const lines = running.map((t) => `• ${t.id} | "${t.instruction.slice(0, 60)}" | ${t.status}`);
   return { success: true, output: `Active sub-agents:\n${lines.join('\n')}` };
 }
 

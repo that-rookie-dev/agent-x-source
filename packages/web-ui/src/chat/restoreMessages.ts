@@ -1,5 +1,5 @@
-import type { ChatMessage, SessionInfo, AgentMode } from '../api';
-import { parseModeChange, mapRestoreHistoryMessage } from './utils';
+import type { ChatMessage, SessionInfo } from '../api';
+import { mapRestoreHistoryMessage } from './utils';
 import type { UIMessage } from './types';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import { sessionHostCrewDisplay } from '../utils/crew-display';
@@ -13,7 +13,7 @@ export interface SessionShellPatch {
   crewPrivate: boolean;
   privateHost: { name: string; callsign: string; title?: string } | null;
   privateHostCrewId: string | null;
-  agentMode?: AgentMode;
+  bypassPermissions?: boolean;
   title: string;
 }
 
@@ -26,7 +26,7 @@ export function buildSessionShellPatch(session: SessionInfo): SessionShellPatch 
       crewPrivate: false,
       privateHost: null,
       privateHostCrewId: null,
-      agentMode: 'plan',
+      bypassPermissions: session.bypassPermissions,
       title,
     };
   }
@@ -35,7 +35,7 @@ export function buildSessionShellPatch(session: SessionInfo): SessionShellPatch 
       crewPrivate: false,
       privateHost: null,
       privateHostCrewId: null,
-      agentMode: session.mode === 'plan' || session.mode === 'agent' ? session.mode : undefined,
+      bypassPermissions: session.bypassPermissions,
       title,
     };
   }
@@ -48,7 +48,7 @@ export function buildSessionShellPatch(session: SessionInfo): SessionShellPatch 
       title: session.hostCrewTitle,
     },
     privateHostCrewId: session.hostCrewId ?? null,
-    agentMode: session.mode === 'agent' ? 'agent' : 'plan',
+    bypassPermissions: session.bypassPermissions,
     title,
   };
 }
@@ -76,7 +76,6 @@ export function applyTurnFeedbackRows(
 export function mapHistoryToUiMessages(historyMsgs: ChatMessage[]): UIMessage[] {
   const visible = historyMsgs.filter((m) => m.role !== 'part' && m.role !== 'system');
   return visible.map((m) => {
-    const modeChange = parseModeChange(m.content);
     const restored = mapRestoreHistoryMessage(m as unknown as Record<string, unknown>);
     return {
       ...restored,
@@ -86,7 +85,6 @@ export function mapHistoryToUiMessages(historyMsgs: ChatMessage[]): UIMessage[] 
       streaming: false,
       subAgents: m.subAgents?.map((sa) => ({ ...sa, status: 'done' as const })),
       plan: typeof m.plan === 'string' ? JSON.parse(m.plan) : (m.plan || undefined),
-      ...(modeChange ? { isModeChange: modeChange } : {}),
     };
   }) as unknown as UIMessage[];
 }

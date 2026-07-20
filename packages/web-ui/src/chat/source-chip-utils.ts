@@ -145,8 +145,3 @@ export function prepareWebSourcedMarkdown(content: string, knownSourceUrls: stri
   }
   return out;
 }
-
-/** @deprecated use prepareWebSourcedMarkdown */
-export function injectSourceLinksInMarkdown(content: string): string {
-  return prepareWebSourcedMarkdown(content);
-}

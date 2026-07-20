@@ -6,24 +6,32 @@ import Switch from '@mui/material/Switch';
 import Collapse from '@mui/material/Collapse';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Alert from '@mui/material/Alert';
 import TelegramIcon from '@mui/icons-material/Telegram';
 import ForumIcon from '@mui/icons-material/Forum';
 import EmailIcon from '@mui/icons-material/Email';
 import HeadphonesIcon from '@mui/icons-material/Headphones';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import type { NotificationChannelsConfig } from '@agentx/shared/browser';
-import { channels as channelsApi } from '../../api';
+import { channels as channelsApi, bridges } from '../../api';
 import {
   settingsTheme,
   settingsMonoSx,
-  settingsTextFieldSx,
   settingsHelperSx,
-  settingsScanlineSx,
+  settingsTextFieldSx,
+  settingsOverlineSx,
   settingsBtnGhostSx,
+  settingsBtnDangerSx,
+  settingsBtnPrimarySx,
+  settingsStatusBadgeSx,
   settingsCardSx,
 } from '../../styles/settings-theme';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
-import { SettingsCard } from './SettingsCard';
 import { brands } from '../../styles/brands';
 
 export interface ChannelsTabProps {
@@ -46,7 +54,7 @@ const CHANNELS: ChannelMeta[] = [
     name: 'Telegram',
     tagline: 'Chat with Agent-X via your bot',
     accent: brands.telegram,
-    icon: <TelegramIcon sx={{ fontSize: 16, color: brands.telegram }} />,
+    icon: <TelegramIcon sx={{ fontSize: 16 }} />,
     instructions: [
       'Create a bot with @BotFather and paste the token below.',
       'Send any message to your bot in Telegram, then click Verify token.',
@@ -57,7 +65,7 @@ const CHANNELS: ChannelMeta[] = [
     name: 'Slack',
     tagline: 'Receive tasks and send alerts',
     accent: brands.slack,
-    icon: <ForumIcon sx={{ fontSize: 16, color: brands.slack }} />,
+    icon: <ForumIcon sx={{ fontSize: 16 }} />,
     instructions: [
       'Create a Slack app with Socket Mode enabled (bot + app tokens).',
       'Add an Incoming Webhook for automation alerts.',
@@ -68,7 +76,7 @@ const CHANNELS: ChannelMeta[] = [
     name: 'Discord',
     tagline: 'Receive tasks and send alerts',
     accent: brands.discord,
-    icon: <HeadphonesIcon sx={{ fontSize: 16, color: brands.discord }} />,
+    icon: <HeadphonesIcon sx={{ fontSize: 16 }} />,
     instructions: [
       'Discord Developer Portal → create a bot and copy the token.',
       'Server Integrations → Webhook URL for alerts.',
@@ -79,7 +87,7 @@ const CHANNELS: ChannelMeta[] = [
     name: 'Email',
     tagline: 'SMTP alerts',
     accent: settingsTheme.accent.hud,
-    icon: <EmailIcon sx={{ fontSize: 16, color: settingsTheme.accent.hud }} />,
+    icon: <EmailIcon sx={{ fontSize: 16 }} />,
     instructions: [
       'Configure SMTP for automation summaries and alerts.',
     ],
@@ -132,6 +140,53 @@ function channelStatusLabel(id: keyof NotificationChannelsConfig, section: Recor
   return 'SETUP';
 }
 
+function statusState(status: string): 'active' | 'warn' | 'idle' {
+  if (status === 'READY') return 'active';
+  if (status === 'PARTIAL' || status === 'VERIFY') return 'warn';
+  return 'idle';
+}
+
+function FieldLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
+  return (
+    <Typography sx={{ ...settingsOverlineSx, fontSize: '0.52rem', letterSpacing: '1.5px', mb: 0.5 }}>
+      {children}
+      {required && <Box component="span" sx={{ color: settingsTheme.accent.alert, ml: 0.5 }}>*</Box>}
+    </Typography>
+  );
+}
+
+function CredentialField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  required,
+  gridColumn,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: 'text' | 'password' | 'number';
+  placeholder?: string;
+  required?: boolean;
+  gridColumn?: string;
+}) {
+  return (
+    <Box sx={{ gridColumn, display: 'flex', flexDirection: 'column' }}>
+      <FieldLabel required={required}>{label}</FieldLabel>
+      <TextField
+        size="small"
+        type={type}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        sx={{ ...settingsTextFieldSx }}
+      />
+    </Box>
+  );
+}
+
 function AllowedUserIdsField({
   section,
   value,
@@ -142,16 +197,26 @@ function AllowedUserIdsField({
   onChange: (next: NotificationChannelsConfig) => void;
 }) {
   return (
-    <TextField
-      size="small"
-      fullWidth
-      label="Allowed user IDs"
-      placeholder="123456789, 987654321 (comma-separated)"
-      helperText="In server mode, inbound messaging requires at least one allowed user ID per channel."
-      value={getField(value, section, 'allowedUserIds')}
-      onChange={(e) => onChange(setField(value, section, 'allowedUserIds', e.target.value))}
-      sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }}
-    />
+    <Box sx={{ gridColumn: '1 / -1' }}>
+      <FieldLabel>Allowed User IDs</FieldLabel>
+      <TextField
+        size="small"
+        fullWidth
+        placeholder="123456789, 987654321"
+        helperText="Inbound messaging requires at least one allowed user ID per channel."
+        value={getField(value, section, 'allowedUserIds')}
+        onChange={(e) => onChange(setField(value, section, 'allowedUserIds', e.target.value))}
+        sx={{
+          ...settingsTextFieldSx,
+          '& .MuiFormHelperText-root': {
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '0.55rem',
+            color: settingsTheme.text.dim,
+            mt: 0.5,
+          },
+        }}
+      />
+    </Box>
   );
 }
 
@@ -241,58 +306,41 @@ function TelegramFields({
     try {
       const result = await channelsApi.sendTelegramGreeting(
         getField(value, 'telegram', 'botToken'),
-        chatId,
+        chatId || allowedUserId,
       );
-      if (!result.ok) {
-        setGreetingMsg(result.error ?? 'Greeting failed');
-        return;
-      }
-      onChange({
-        ...value,
-        telegram: {
-          ...value.telegram,
-          enabled: true,
-          inbound: true,
-          outbound: true,
-          botToken: getField(value, 'telegram', 'botToken'),
-          chatId,
-          allowedUserIds: allowedUserId || value.telegram?.allowedUserIds,
-        },
-      });
-      setGreetingMsg(result.message ? `Sent: ${result.message}` : 'Greeting sent. Inbound listener started.');
+      setGreetingMsg(result.ok ? `Greeting sent. ${result.message ?? ''}` : (result.error ?? 'Failed to send greeting'));
     } catch (e) {
-      setGreetingMsg(e instanceof Error ? e.message : 'Greeting failed');
+      setGreetingMsg(e instanceof Error ? e.message : 'Failed to send greeting');
     } finally {
       setGreeting(false);
     }
   };
 
+  const message = greetingMsg ?? verifyMsg;
+
   return (
-    <>
-      <TextField
-        size="small"
-        fullWidth
-        type="password"
-        label="Bot token"
-        placeholder="123456:ABC…"
-        value={getField(value, 'telegram', 'botToken')}
-        onChange={(e) => onChange(setField(value, 'telegram', 'botToken', e.target.value))}
-        sx={settingsTextFieldSx}
-      />
-      <Typography sx={{
-        ...settingsMonoSx,
-        fontSize: '0.62rem',
-        color: allowedUserId ? settingsTheme.text.secondary : settingsTheme.text.dim,
-        gridColumn: '1 / -1',
-      }}>
-        {allowedUserId
-          ? `Linked owner user ID: ${allowedUserId}`
-          : 'Linked owner user ID: not set — verify after messaging the bot privately'}
-      </Typography>
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Button size="small" onClick={() => { void handleVerify(); }} disabled={verifying} sx={settingsBtnGhostSx}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.5 }}>
+        <CredentialField
+          label="Bot Token"
+          value={getField(value, 'telegram', 'botToken')}
+          onChange={(v) => onChange(setField(value, 'telegram', 'botToken', v))}
+          type="password"
+          placeholder="123456:ABC-DEF..."
+          required
+          gridColumn="1 / -1"
+        />
+      </Box>
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
+        <Button
+          size="small"
+          onClick={() => { void handleVerify(); }}
+          disabled={verifying || !hasToken}
+          sx={settingsBtnPrimarySx}
+        >
           {verifying ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}
-          Verify token
+          Verify Token
         </Button>
         <Button
           size="small"
@@ -301,15 +349,15 @@ function TelegramFields({
           sx={settingsBtnGhostSx}
         >
           {greeting ? <CircularProgress size={12} sx={{ mr: 0.75 }} /> : null}
-          Send greeting
+          Send Greeting
         </Button>
-        {(verifyMsg || greetingMsg) && (
-          <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, flex: 1, minWidth: 160 }}>
-            {greetingMsg ?? verifyMsg}
+        {message && (
+          <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, ...settingsMonoSx, flex: 1, minWidth: 160 }}>
+            {message}
           </Typography>
         )}
       </Box>
-    </>
+    </Box>
   );
 }
 
@@ -323,9 +371,28 @@ function ChannelCard({
   onChange: (next: NotificationChannelsConfig) => void;
 }) {
   const [instructionsOpen, setInstructionsOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearLoading, setClearLoading] = useState(false);
+  const [clearError, setClearError] = useState('');
+  const [clearSuccess, setClearSuccess] = useState('');
   const section = (value[meta.id] ?? {}) as Record<string, unknown>;
   const enabled = section.enabled === true;
   const status = channelStatusLabel(meta.id, section);
+
+  const handleClearConfirm = async () => {
+    setClearLoading(true);
+    setClearError('');
+    setClearSuccess('');
+    try {
+      const result = await bridges.clearConversation(String(meta.id));
+      setClearSuccess(result.message ?? `Cleared ${meta.name} conversation`);
+      setClearOpen(false);
+    } catch (e) {
+      setClearError(e instanceof Error ? e.message : 'Failed to clear conversation');
+    } finally {
+      setClearLoading(false);
+    }
+  };
 
   const enableSection = (checked: boolean) => ({
     ...section,
@@ -334,139 +401,265 @@ function ChannelCard({
     outbound: true,
   });
 
-  const headerRow = (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-        {meta.icon}
-        <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: settingsTheme.text.primary }}>
-          {meta.name}
-        </Typography>
-        <Typography sx={{
-          fontSize: '0.55rem',
-          color: enabled ? settingsTheme.accent.signal : settingsTheme.text.dim,
-          ...settingsMonoSx,
-          letterSpacing: '0.08em',
-        }}>
-          {status}
-        </Typography>
-      </Box>
-      <Switch
-        size="small"
-        checked={enabled}
-        onChange={(e) => onChange({ ...value, [meta.id]: enableSection(e.target.checked) })}
-        sx={{
-          '& .MuiSwitch-switchBase.Mui-checked': { color: meta.accent },
-          '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: meta.accent },
-        }}
-      />
-    </Box>
-  );
-
-  if (!enabled) {
-    return (
-      <Box sx={{ ...settingsCardSx(meta.accent, false), mb: 1, py: 1, px: 1.25 }}>
-        {headerRow}
-      </Box>
-    );
-  }
-
   return (
-    <SettingsCard title={meta.name} subtitle={meta.tagline} accent={meta.accent} active sx={{ mb: 1.5 }}>
-      <Box sx={{ mb: 1 }}>{headerRow}</Box>
-
-      <Box
-        onClick={() => setInstructionsOpen((o) => !o)}
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer', py: 0.5, userSelect: 'none' }}
-      >
-        <ExpandMoreIcon sx={{
-          fontSize: 16,
-          color: settingsTheme.text.dim,
-          transform: instructionsOpen ? 'rotate(180deg)' : 'none',
-          transition: 'transform 0.2s',
-        }} />
-        <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
-          SETUP INSTRUCTIONS
-        </Typography>
-      </Box>
-      <Collapse in={instructionsOpen}>
-        <Box sx={{ mb: 1, pl: 0.5 }}>
-          {meta.instructions.map((line, i) => (
-            <Typography key={i} sx={{ ...settingsHelperSx, fontSize: '0.62rem', mb: 0.35 }}>
-              {i + 1}. {line}
-            </Typography>
-          ))}
+    <Box sx={settingsCardSx(meta.accent, enabled)}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.75 }}>
+        {/* Header — always visible */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, justifyContent: 'space-between' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
+            <Box sx={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 28, height: 28, borderRadius: '4px',
+              bgcolor: `${meta.accent}14`,
+              color: meta.accent,
+              border: `1px solid ${meta.accent}44`,
+            }}>
+              {meta.icon}
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: settingsTheme.text.primary, lineHeight: 1.3 }}>
+                {meta.name}
+              </Typography>
+              <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx, letterSpacing: '0.5px' }}>
+                {meta.tagline}
+              </Typography>
+            </Box>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexShrink: 0 }}>
+            <Box sx={{ ...settingsStatusBadgeSx(statusState(status)), flexShrink: 0 }}>
+              {status}
+            </Box>
+            <Switch
+              size="small"
+              checked={enabled}
+              onChange={(e) => onChange({ ...value, [meta.id]: enableSection(e.target.checked) })}
+              sx={{
+                '& .MuiSwitch-switchBase.Mui-checked': { color: meta.accent },
+                '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': { bgcolor: meta.accent },
+              }}
+            />
+          </Box>
         </Box>
-      </Collapse>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1, mt: 0.5 }}>
-        {meta.id === 'telegram' && <Box sx={{ gridColumn: '1 / -1' }}><TelegramFields value={value} onChange={onChange} /></Box>}
+        {/* Expanded configuration */}
+        <Collapse in={enabled}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.75 }}>
+            {/* Instructions */}
+            <Box sx={{
+              border: `1px solid ${settingsTheme.border.subtle}`,
+              borderRadius: '4px',
+              bgcolor: settingsTheme.bg.void,
+              overflow: 'hidden',
+            }}>
+              <Box
+                onClick={() => setInstructionsOpen((o) => !o)}
+                sx={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  px: 1.25, py: 0.75, cursor: 'pointer', userSelect: 'none',
+                }}
+              >
+                <Typography sx={{ ...settingsOverlineSx, fontSize: '0.5rem', letterSpacing: '1.5px' }}>
+                  Setup Instructions
+                </Typography>
+                <ExpandMoreIcon sx={{
+                  fontSize: 14, color: settingsTheme.text.dim,
+                  transform: instructionsOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.2s',
+                }} />
+              </Box>
+              <Collapse in={instructionsOpen}>
+                <Box sx={{ px: 1.25, pb: 1 }}>
+                  {meta.instructions.map((line, i) => (
+                    <Typography key={i} sx={{ ...settingsHelperSx, fontSize: '0.6rem', mb: 0.35 }}>
+                      {i + 1}. {line}
+                    </Typography>
+                  ))}
+                </Box>
+              </Collapse>
+            </Box>
 
-        {meta.id === 'slack' && (
-          <>
-            <TextField size="small" fullWidth type="password" label="Bot token" placeholder="xoxb-…"
-              value={getField(value, 'slack', 'botToken')}
-              onChange={(e) => onChange(setField(value, 'slack', 'botToken', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth type="password" label="App token" placeholder="xapp-…"
-              value={getField(value, 'slack', 'appToken')}
-              onChange={(e) => onChange(setField(value, 'slack', 'appToken', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth type="password" label="Webhook URL" placeholder="https://hooks.slack.com/…"
-              value={getField(value, 'slack', 'webhookUrl')}
-              onChange={(e) => onChange(setField(value, 'slack', 'webhookUrl', e.target.value))}
-              sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }} />
-            <AllowedUserIdsField section="slack" value={value} onChange={onChange} />
-          </>
-        )}
+            {/* Alerts */}
+            {clearSuccess && (
+              <Alert severity="success" sx={{ fontSize: '0.65rem', py: 0.5 }} onClose={() => setClearSuccess('')}>
+                {clearSuccess}
+              </Alert>
+            )}
+            {clearError && (
+              <Alert severity="error" sx={{ fontSize: '0.65rem', py: 0.5 }} onClose={() => setClearError('')}>
+                {clearError}
+              </Alert>
+            )}
 
-        {meta.id === 'discord' && (
-          <>
-            <TextField size="small" fullWidth type="password" label="Bot token" placeholder="MTQ…"
-              value={getField(value, 'discord', 'botToken')}
-              onChange={(e) => onChange(setField(value, 'discord', 'botToken', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth label="Channel ID (optional)"
-              value={getField(value, 'discord', 'channelId')}
-              onChange={(e) => onChange(setField(value, 'discord', 'channelId', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth type="password" label="Webhook URL" placeholder="https://discord.com/api/webhooks/…"
-              value={getField(value, 'discord', 'webhookUrl')}
-              onChange={(e) => onChange(setField(value, 'discord', 'webhookUrl', e.target.value))}
-              sx={{ ...settingsTextFieldSx, gridColumn: '1 / -1' }} />
-            <AllowedUserIdsField section="discord" value={value} onChange={onChange} />
-          </>
-        )}
+            {/* Credentials */}
+            {meta.id === 'telegram' && <TelegramFields value={value} onChange={onChange} />}
 
-        {meta.id === 'email' && (
-          <>
-            <TextField size="small" fullWidth label="SMTP host" placeholder="smtp.example.com"
-              value={getField(value, 'email', 'smtpHost')}
-              onChange={(e) => onChange(setField(value, 'email', 'smtpHost', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth label="Port" type="number" placeholder="587"
-              value={getField(value, 'email', 'smtpPort')}
-              onChange={(e) => onChange(setField(value, 'email', 'smtpPort', e.target.value, 'number'))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth label="Username"
-              value={getField(value, 'email', 'smtpUser')}
-              onChange={(e) => onChange(setField(value, 'email', 'smtpUser', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth type="password" label="Password"
-              value={getField(value, 'email', 'smtpPassword')}
-              onChange={(e) => onChange(setField(value, 'email', 'smtpPassword', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth label="From" placeholder="agent@example.com"
-              value={getField(value, 'email', 'fromAddress')}
-              onChange={(e) => onChange(setField(value, 'email', 'fromAddress', e.target.value))}
-              sx={settingsTextFieldSx} />
-            <TextField size="small" fullWidth label="To" placeholder="you@example.com"
-              value={getField(value, 'email', 'toAddress')}
-              onChange={(e) => onChange(setField(value, 'email', 'toAddress', e.target.value))}
-              sx={settingsTextFieldSx} />
-          </>
-        )}
+            {meta.id === 'slack' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.5 }}>
+                  <CredentialField
+                    label="Bot Token"
+                    value={getField(value, 'slack', 'botToken')}
+                    onChange={(v) => onChange(setField(value, 'slack', 'botToken', v))}
+                    type="password"
+                    placeholder="xoxb-..."
+                  />
+                  <CredentialField
+                    label="App Token"
+                    value={getField(value, 'slack', 'appToken')}
+                    onChange={(v) => onChange(setField(value, 'slack', 'appToken', v))}
+                    type="password"
+                    placeholder="xapp-..."
+                  />
+                  <CredentialField
+                    label="Webhook URL"
+                    value={getField(value, 'slack', 'webhookUrl')}
+                    onChange={(v) => onChange(setField(value, 'slack', 'webhookUrl', v))}
+                    type="password"
+                    placeholder="https://hooks.slack.com/..."
+                    gridColumn="1 / -1"
+                  />
+                  <AllowedUserIdsField section="slack" value={value} onChange={onChange} />
+                </Box>
+              </Box>
+            )}
+
+            {meta.id === 'discord' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.5 }}>
+                  <CredentialField
+                    label="Bot Token"
+                    value={getField(value, 'discord', 'botToken')}
+                    onChange={(v) => onChange(setField(value, 'discord', 'botToken', v))}
+                    type="password"
+                    placeholder="MTQ..."
+                  />
+                  <CredentialField
+                    label="Channel ID (optional)"
+                    value={getField(value, 'discord', 'channelId')}
+                    onChange={(v) => onChange(setField(value, 'discord', 'channelId', v))}
+                    placeholder="Optional"
+                  />
+                  <CredentialField
+                    label="Webhook URL"
+                    value={getField(value, 'discord', 'webhookUrl')}
+                    onChange={(v) => onChange(setField(value, 'discord', 'webhookUrl', v))}
+                    type="password"
+                    placeholder="https://discord.com/api/webhooks/..."
+                    gridColumn="1 / -1"
+                  />
+                  <AllowedUserIdsField section="discord" value={value} onChange={onChange} />
+                </Box>
+              </Box>
+            )}
+
+            {meta.id === 'email' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.5 }}>
+                  <CredentialField
+                    label="SMTP Host"
+                    value={getField(value, 'email', 'smtpHost')}
+                    onChange={(v) => onChange(setField(value, 'email', 'smtpHost', v))}
+                    placeholder="smtp.example.com"
+                  />
+                  <CredentialField
+                    label="Port"
+                    value={getField(value, 'email', 'smtpPort')}
+                    onChange={(v) => onChange(setField(value, 'email', 'smtpPort', v, 'number'))}
+                    type="number"
+                    placeholder="587"
+                  />
+                  <CredentialField
+                    label="Username"
+                    value={getField(value, 'email', 'smtpUser')}
+                    onChange={(v) => onChange(setField(value, 'email', 'smtpUser', v))}
+                  />
+                  <CredentialField
+                    label="Password"
+                    value={getField(value, 'email', 'smtpPassword')}
+                    onChange={(v) => onChange(setField(value, 'email', 'smtpPassword', v))}
+                    type="password"
+                  />
+                  <CredentialField
+                    label="From"
+                    value={getField(value, 'email', 'fromAddress')}
+                    onChange={(v) => onChange(setField(value, 'email', 'fromAddress', v))}
+                    placeholder="agent@example.com"
+                  />
+                  <CredentialField
+                    label="To"
+                    value={getField(value, 'email', 'toAddress')}
+                    onChange={(v) => onChange(setField(value, 'email', 'toAddress', v))}
+                    placeholder="you@example.com"
+                  />
+                </Box>
+              </Box>
+            )}
+
+            {/* Danger zone */}
+            <Box sx={{
+              border: `1px dashed ${settingsTheme.border.alert}`,
+              borderRadius: '4px',
+              bgcolor: `${settingsTheme.accent.alert}08`,
+              p: 1.25,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5,
+              flexWrap: 'wrap',
+            }}>
+              <Box>
+                <Typography sx={{ ...settingsOverlineSx, fontSize: '0.5rem', color: settingsTheme.accent.alert, mb: 0.25 }}>
+                  Danger Zone
+                </Typography>
+                <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+                  Wipe all conversation history and session data for this channel.
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                startIcon={<DeleteOutlineIcon sx={{ fontSize: 14 }} />}
+                onClick={() => setClearOpen(true)}
+                sx={settingsBtnDangerSx}
+              >
+                Clear Conversation
+              </Button>
+            </Box>
+          </Box>
+        </Collapse>
       </Box>
-    </SettingsCard>
+      
+      <Dialog
+        open={clearOpen}
+        onClose={() => { if (!clearLoading) setClearOpen(false); }}
+        PaperProps={{ sx: {
+          bgcolor: settingsTheme.bg.void,
+          border: `1px solid ${settingsTheme.border.default}`,
+          borderRadius: '6px',
+          maxWidth: 420,
+          width: '100%',
+        }}}
+      >
+        <DialogTitle sx={{ fontSize: '0.85rem', fontWeight: 700, pb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+          {meta.icon}
+          Clear {meta.name} Conversation
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: settingsTheme.text.dim, mt: 1, fontSize: '0.72rem' }}>
+            This will permanently delete <strong>all messages, tool executions, and conversation history</strong> for {meta.name}.
+            The agent will start fresh with no memory of prior conversations. This cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setClearOpen(false)} sx={{ color: settingsTheme.text.dim }}>Cancel</Button>
+          <Button
+            onClick={handleClearConfirm}
+            variant="contained"
+            disabled={clearLoading}
+            sx={{ bgcolor: settingsTheme.accent.alert, color: '#fff' }}
+          >
+            {clearLoading ? <CircularProgress size={14} sx={{ mr: 1 }} /> : null}
+            Clear All
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
   );
 }
 
@@ -483,22 +676,20 @@ export function ChannelsTab({ value, onChange }: ChannelsTabProps) {
   const cfg = mergeChannelsConfig(value);
 
   return (
-    <Box>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <SettingsSectionHeader
         icon={<EmailIcon sx={{ fontSize: 16 }} />}
         title="Channels"
-        subtitle="Send tasks in and get results out via Agent-X"
+        subtitle="Secure channels for Agent-X inbound and outbound traffic"
       />
-      <Box sx={{ position: 'relative' }}>
-        <Box sx={settingsScanlineSx} />
-        <Box sx={{ position: 'relative', zIndex: 1 }}>
-          {CHANNELS.map((meta) => (
-            <ChannelCard key={String(meta.id)} meta={meta} value={cfg} onChange={onChange} />
-          ))}
-        </Box>
-      </Box>
-      <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
-        Enable a channel and enter credentials. Verify saves Telegram settings automatically — no need to re-verify after restart. Commit other changes when ready.
+
+      {CHANNELS.map((meta) => (
+        <ChannelCard key={String(meta.id)} meta={meta} value={cfg} onChange={onChange} />
+      ))}
+
+      <Typography sx={{ ...settingsHelperSx, mt: 0.5 }}>
+        Enable a channel to configure credentials. Telegram verifies and saves automatically on success.
+        Commit other changes when ready.
       </Typography>
     </Box>
   );

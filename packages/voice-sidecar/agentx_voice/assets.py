@@ -69,6 +69,21 @@ def _promote_tmp(tmp_target: Path, target: Path) -> None:
     tmp_target.rename(target)
 
 
+def _flatten_dir(root: Path) -> None:
+    """Move all files from subdirectories into the root directory, then remove empty dirs."""
+    for path in root.rglob("*"):
+        if path.is_file() and path.parent != root:
+            dest = root / path.name
+            shutil.move(str(path), str(dest))
+    # Remove now-empty subdirectories
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_dir():
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
+
 def copy_bundled_asset(asset_id: str, data_dir: Path, spec: dict[str, Any]) -> dict[str, object]:
     bundled = bundled_asset_dir(asset_id)
     if bundled is None:
@@ -135,7 +150,7 @@ def download_from_hf(spec: dict[str, Any], source: dict[str, Any], data_dir: Pat
                     if path.is_file()
                 )
                 if isinstance(expected_mb, (int, float)) and expected_mb > 0:
-                    pct = min(88, 20 + int((total / (expected_mb * 1024 * 1024)) * 68))
+                    pct = min(85, 10 + int((total / (expected_mb * 1024 * 1024)) * 75))
                     emit_progress(pct, f"Downloading {asset_id} · {total // (1024 * 1024)} MB")
                 else:
                     emit_progress(40, f"Downloading {asset_id} · {total // (1024 * 1024)} MB")
@@ -143,20 +158,29 @@ def download_from_hf(spec: dict[str, Any], source: dict[str, Any], data_dir: Pat
                 pass
             time.sleep(1.5)
 
-    emit_progress(15, f"Starting download for {asset_id}")
+    emit_progress(5, f"Starting download for {asset_id}")
     watcher = threading.Thread(target=watch_size, daemon=True)
     watcher.start()
     try:
-        snapshot_download(
-            repo_id=str(source["repo"]),
-            revision=str(source.get("revision") or "main"),
-            local_dir=str(tmp_target),
-            local_dir_use_symlinks=False,
-        )
+        download_kwargs: dict[str, Any] = {
+            "repo_id": str(source["repo"]),
+            "revision": str(source.get("revision") or "main"),
+            "local_dir": str(tmp_target),
+            "local_dir_use_symlinks": False,
+        }
+        # allow_patterns lets us download only specific files from large repos
+        # (e.g. a single voice from a multi-language repo).
+        allow_patterns = source.get("allowPatterns")
+        if isinstance(allow_patterns, list) and allow_patterns:
+            download_kwargs["allow_patterns"] = [str(p) for p in allow_patterns]
+        snapshot_download(**download_kwargs)
     finally:
         stop_event.set()
         watcher.join(timeout=2)
-    emit_progress(92, f"Finalizing {asset_id}")
+    emit_progress(90, f"Finalizing {asset_id}")
+    # If flatten is requested, move all files from subdirectories to the root of tmp_target
+    if source.get("flatten"):
+        _flatten_dir(tmp_target)
     _promote_tmp(tmp_target, target)
     return _finalize_asset(asset_id, spec, target)
 
@@ -182,6 +206,83 @@ def download_from_mirror(spec: dict[str, Any], source: dict[str, Any], data_dir:
     return _finalize_asset(asset_id, spec, target)
 
 
+def download_from_github_release(spec: dict[str, Any], source: dict[str, Any], data_dir: Path, asset_id: str) -> dict[str, object]:
+    repo = str(source["repo"])
+    tag = str(source["tag"])
+    assets = source.get("assets") or [source.get("asset")]
+    assets = [str(a) for a in assets if a]
+    if not assets:
+        raise ValueError(f"github-release source for {asset_id} must specify 'asset' or 'assets'")
+
+    target, tmp_target = _stage_target(data_dir, spec)
+    tmp_target.mkdir(parents=True)
+    expected_mb = spec.get("sizeMB") or 0
+
+    for i, asset_name in enumerate(assets):
+        url = f"https://github.com/{repo}/releases/download/{tag}/{asset_name}"
+        emit_progress(5 + int(i * 80 / max(len(assets), 1)), f"Downloading {asset_id} · {asset_name}")
+        _download_file_streaming(url, tmp_target / asset_name, asset_id, asset_name, expected_mb)
+
+    emit_progress(90, f"Finalizing {asset_id}")
+    _promote_tmp(tmp_target, target)
+    return _finalize_asset(asset_id, spec, target)
+
+
+def _download_file_streaming(url: str, dest_path: Path, asset_id: str, asset_name: str, expected_mb: float) -> None:
+    """Download a file with progress reporting, streaming to disk.
+
+    Prefers httpx (handles SSL certs correctly on macOS). Falls back to urllib
+    with an unverified SSL context as a last resort — the bundled Python venv
+    may not have system CA certificates configured.
+    """
+    try:
+        import httpx
+
+        with httpx.stream("GET", url, timeout=300, follow_redirects=True, headers={"User-Agent": "agentx-voice/1.0"}) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            with dest_path.open("wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    _emit_download_progress(asset_id, downloaded, total, expected_mb)
+        return
+    except ImportError:
+        pass
+
+    # Fallback: urllib with unverified SSL context (macOS bundled Python)
+    import ssl
+    import urllib.request
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    req = urllib.request.Request(url, headers={"User-Agent": "agentx-voice/1.0"})
+    with urllib.request.urlopen(req, timeout=300, context=ctx) as resp:
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with dest_path.open("wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                _emit_download_progress(asset_id, downloaded, total, expected_mb)
+
+
+def _emit_download_progress(asset_id: str, downloaded: int, total: int, expected_mb: float) -> None:
+    if total > 0:
+        pct = min(85, 5 + int((downloaded / total) * 80))
+    elif expected_mb and expected_mb > 0:
+        pct = min(85, 5 + int((downloaded / (expected_mb * 1024 * 1024)) * 80))
+    else:
+        pct = 50
+    emit_progress(pct, f"Downloading {asset_id} · {downloaded // (1024 * 1024)} MB")
+
+
 def download_from_source(asset_id: str, spec: dict[str, Any], source: dict[str, Any], data_dir: Path) -> dict[str, object]:
     source_type = str(source.get("type"))
     if source_type == "github":
@@ -190,6 +291,8 @@ def download_from_source(asset_id: str, spec: dict[str, Any], source: dict[str, 
         return download_from_hf(spec, source, data_dir, asset_id)
     if source_type == "mirror":
         return download_from_mirror(spec, source, data_dir, asset_id)
+    if source_type == "github-release":
+        return download_from_github_release(spec, source, data_dir, asset_id)
     raise ValueError(f"Unsupported source type: {source_type}")
 
 

@@ -4,363 +4,113 @@ import type {
   StorageAdapter,
   StorableSession,
   StorableMessage,
+  StorableMessageInput,
   StorableTokenLog,
-  StorablePermission,
   RecordMeta,
 } from '@agentx/shared';
-import type { SessionEvent, Crew, CrewCreateInput } from '@agentx/shared';
+import type { SessionEvent, Crew, CrewCreateInput, AgentPersonaConfig, SessionListKpis, Session } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { normalizeSessionUpdates } from '../session/session-field-utils.js';
 import { estimateTokensFromMessages } from '../session/session-token-utils.js';
-import { buildCrewSearchText } from '@agentx/shared';
-import { purgeOrphanChildSessionsPg } from '../session/child-session-cleanup.js';
-import {
-  runPgCrewCatalogMigration,
-  backfillPgCrewSearchColumns,
-  createPgCrewCatalogStore,
-} from '../crew/postgres-crew-catalog.js';
+import { createPgCrewCatalogStore } from '../crew/postgres-crew-catalog.js';
 import type { CrewCatalogStore } from '../crew/CrewSuggestionService.js';
-import { MemoryFabric } from '../neural/MemoryFabric.js';
-import { auditCriticalTables } from '../db/database-healer.js';
+import { PostgresBackgroundTaskStore } from '../agent/background/BackgroundTaskStore.js';
+import type { BackgroundTaskStore } from '../agent/background/BackgroundTaskStore.js';
+import {
+  getEnvInt,
+  getEnvBool,
+  type CacheState,
+  type PostgresConfig,
+} from './pg-helpers.js';
+import {
+  hydrateEssentialCache,
+  ensureSessionHydrated,
+  hydrateCache,
+  flushWriteQueue,
+  hydrateMessageCache,
+  collectDescendantSessionIds,
+  purgeSessionCache,
+  type HydrationContext,
+} from './pg-hydration.js';
+import {
+  deleteLastMessages,
+  createCheckpoint,
+  restoreCheckpoint,
+  type CheckpointContext,
+} from './pg-checkpoints.js';
+import {
+  crewFromRow as crewFromRowImpl,
+  migrate as migrateImpl,
+  doConnect as doConnectImpl,
+  type MigrationContext,
+} from './pg-migration.js';
+import {
+  addMessage as addMessageImpl,
+  getMessages as getMessagesImpl,
+  deleteMessages as deleteMessagesImpl,
+  getMessageCount as getMessageCountImpl,
+  insertMessage as insertMessageImpl,
+  updateMessage as updateMessageImpl,
+  insertPart as insertPartImpl,
+  getParts as getPartsImpl,
+  getPartsForMessages as getPartsForMessagesImpl,
+  purgeSessionContent as purgeSessionContentImpl,
+  archiveSessionMessages as archiveSessionMessagesImpl,
+  getMessagesPage as getMessagesPageImpl,
+  type MessageContext,
+} from './pg-messages.js';
+import {
+  addTokenLog as addTokenLogImpl,
+  getTokenLogs as getTokenLogsImpl,
+  getTokenLogsAsync as getTokenLogsAsyncImpl,
+  type TokenLogContext,
+} from './pg-token-logs.js';
+import {
+  setSessionResumeState as setSessionResumeStateImpl,
+  getSessionResumeState as getSessionResumeStateImpl,
+  clearSessionResumeState as clearSessionResumeStateImpl,
+  type ResumeStateContext,
+} from './pg-resume-state.js';
+import {
+  getVoiceRealtimeState as getVoiceRealtimeStateImpl,
+  upsertVoiceRealtimeState as upsertVoiceRealtimeStateImpl,
+  touchVoiceRealtimeActive as touchVoiceRealtimeActiveImpl,
+  type VoiceRealtimeContext,
+  type VoiceRealtimeStatePatch,
+} from './pg-voice-realtime.js';
+import type { VoiceRealtimeState } from '@agentx/shared';
+import {
+  listCrews as listCrewsImpl,
+  getCrew as getCrewImpl,
+  getDefaultCrew as getDefaultCrewImpl,
+  createCrew as createCrewImpl,
+  updateCrew as updateCrewImpl,
+  deleteCrew as deleteCrewImpl,
+  type CrewContext,
+} from './pg-crews.js';
+import {
+  saveTaskSnapshot as saveTaskSnapshotImpl,
+  getTaskSnapshot as getTaskSnapshotImpl,
+  deleteTaskSnapshot as deleteTaskSnapshotImpl,
+  addToolExecution as addToolExecutionImpl,
+  addPermissionRule as addPermissionRuleImpl,
+  clearPermissionRules as clearPermissionRulesImpl,
+  getPermissionRules as getPermissionRulesImpl,
+  saveCrewState as saveCrewStateImpl,
+  getCrewStates as getCrewStatesImpl,
+  loadCrewStates as loadCrewStatesImpl,
+  insertSessionEvent as insertSessionEventImpl,
+  getSessionEvents as getSessionEventsImpl,
+  addCrewFeedback as addCrewFeedbackImpl,
+  getCrewFeedback as getCrewFeedbackImpl,
+  upsertTurnFeedback as upsertTurnFeedbackImpl,
+  getTurnFeedbackBySession as getTurnFeedbackBySessionImpl,
+  type SessionExtrasContext,
+} from './pg-session-extras.js';
+
+export type { PostgresConfig } from './pg-helpers.js';
 
 const logger = getLogger();
-
-const SCHEMA_SQL = `
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL DEFAULT 'New Session',
-        provider_id TEXT NOT NULL,
-        model_id TEXT NOT NULL,
-        scope_path TEXT NOT NULL,
-        mode TEXT NOT NULL DEFAULT 'plan',
-        parent_id TEXT REFERENCES sessions(id),
-        hyperdrive BOOLEAN NOT NULL DEFAULT FALSE,
-        token_used INTEGER DEFAULT 0,
-        token_available INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-CREATE TABLE IF NOT EXISTS child_sessions (
-  id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-  parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL DEFAULT 'sub_agent',
-  label TEXT,
-  status TEXT NOT NULL DEFAULT 'active',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_child_sessions_parent ON child_sessions(parent_session_id);
-
-CREATE TABLE IF NOT EXISTS messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  tool_calls TEXT,
-  plan TEXT,
-  parts TEXT,
-  metadata TEXT,
-  token_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS message_parts (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  message_id TEXT,
-  type TEXT NOT NULL,
-  content TEXT,
-  tool_name TEXT,
-  tool_call_id TEXT,
-  tool_args TEXT,
-  tool_result TEXT,
-  tool_success INTEGER,
-  usage_input INTEGER,
-  usage_output INTEGER,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS token_logs (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  message_id TEXT,
-  provider_id TEXT NOT NULL DEFAULT '',
-  model_id TEXT NOT NULL,
-  input_tokens INTEGER NOT NULL,
-  output_tokens INTEGER NOT NULL,
-  reasoning_tokens INTEGER DEFAULT 0,
-  cost_usd REAL,
-  crew_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS permissions (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  tool_name TEXT NOT NULL,
-  target_path TEXT,
-  decision TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS checkpoints (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  label TEXT NOT NULL,
-  messages TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS session_crew_states (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  crew_id TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  last_active TIMESTAMPTZ,
-  message_count INTEGER DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(session_id, crew_id)
-);
-
-CREATE TABLE IF NOT EXISTS tool_executions (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  agent_task_id TEXT,
-  tool_name TEXT NOT NULL,
-  input TEXT NOT NULL,
-  output TEXT,
-  success INTEGER,
-  elapsed_ms INTEGER,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS session_events (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  sequence INTEGER NOT NULL,
-  event_type TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS permission_rules (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  action TEXT NOT NULL,
-  pattern TEXT NOT NULL DEFAULT '*',
-  effect TEXT NOT NULL,
-  comment TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS agent_tasks (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  parent_id TEXT,
-  instruction TEXT NOT NULL,
-  tools TEXT,
-  scope TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued',
-  result TEXT,
-  started_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS crews (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL DEFAULT '',
-  title TEXT,
-  description TEXT NOT NULL DEFAULT '',
-  system_prompt TEXT NOT NULL DEFAULT '',
-  expertise TEXT,
-  traits TEXT,
-  tool_preferences TEXT,
-  enabled_tools TEXT,
-  disabled_tools TEXT,
-  is_default INTEGER DEFAULT 0,
-  metadata TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS crew_feedback (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  crew_id TEXT NOT NULL,
-  positive INTEGER NOT NULL,
-  comment TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS turn_feedback (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  message_id TEXT NOT NULL,
-  context_kind TEXT NOT NULL DEFAULT 'agent_x',
-  crew_id TEXT,
-  rating TEXT NOT NULL,
-  turn_summary TEXT,
-  metadata TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(session_id, message_id)
-);
-
-CREATE TABLE IF NOT EXISTS session_resume_state (
-  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
-CREATE INDEX IF NOT EXISTS idx_token_logs_session ON token_logs(session_id);
-CREATE INDEX IF NOT EXISTS idx_permissions_session ON permissions(session_id);
-CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
-CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
-CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
-CREATE INDEX IF NOT EXISTS idx_crew_feedback_crew ON crew_feedback(crew_id);
-CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id);
-CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id);
-CREATE INDEX IF NOT EXISTS idx_session_crew_states_session ON session_crew_states(session_id);
-
-CREATE TABLE IF NOT EXISTS bot_credentials (
-  platform TEXT PRIMARY KEY,
-  config_enc TEXT NOT NULL,
-  iv TEXT NOT NULL,
-  tag TEXT NOT NULL,
-  version TEXT NOT NULL DEFAULT '1.0',
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS skills (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
-  trigger_patterns_json TEXT NOT NULL DEFAULT '[]',
-  prompt TEXT NOT NULL DEFAULT '',
-  tools_json TEXT NOT NULL DEFAULT '[]',
-  is_bundled INTEGER NOT NULL DEFAULT 0,
-  usage_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS agent_persona (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  name TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
-  communication_style TEXT NOT NULL DEFAULT 'direct',
-  decision_making TEXT NOT NULL DEFAULT 'balanced',
-  domain_context TEXT NOT NULL DEFAULT '',
-  traits TEXT NOT NULL DEFAULT '[]',
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS task_snapshots (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  session_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
-  step_index INTEGER NOT NULL DEFAULT 0,
-  goal TEXT NOT NULL DEFAULT '',
-  plan_state TEXT NOT NULL DEFAULT '{}',
-  failure_history TEXT NOT NULL DEFAULT '[]',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS agent_experiences (
-  id TEXT PRIMARY KEY,
-  session_id TEXT,
-  category TEXT,
-  action TEXT,
-  context TEXT,
-  result TEXT,
-  confidence REAL,
-  reward REAL,
-  correction TEXT,
-  learnings TEXT,
-  metadata TEXT,
-  created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agent_growth_state (
-  id INTEGER PRIMARY KEY DEFAULT 1,
-  level TEXT DEFAULT 'Fresh',
-  wisdom_score REAL DEFAULT 0,
-  total_experiences INTEGER DEFAULT 0,
-  total_interactions INTEGER DEFAULT 0,
-  total_corrections INTEGER DEFAULT 0,
-  avg_confidence REAL DEFAULT 0.5,
-  emotional_range REAL DEFAULT 0,
-  capabilities TEXT DEFAULT '[]',
-  next_milestone_at INTEGER,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS agent_emotions (
-  id TEXT PRIMARY KEY,
-  mood TEXT,
-  intensity REAL,
-  context TEXT,
-  created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agent_memories (
-  id TEXT PRIMARY KEY,
-  content TEXT,
-  category TEXT,
-  importance REAL,
-  created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agent_diary (
-  id TEXT PRIMARY KEY,
-  entry TEXT,
-  importance INTEGER,
-  highlights TEXT,
-  tags TEXT,
-  created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS agent_identity (
-  id INTEGER PRIMARY KEY DEFAULT 1,
-  interaction_count INTEGER DEFAULT 0
-);
-`;
-
-interface CacheState {
-  sessions: Map<string, StorableSession>;
-  childSessions: Map<string, Array<Record<string, unknown>>>;
-  messages: Map<string, StorableMessage[]>;
-  parts: Map<string, Array<Record<string, unknown>>>;
-  crews: Crew[];
-  persona: { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] } | null;
-  checkpoints: Map<string, Array<{ id: string; session_id: string; label: string; messages: string; created_at: string }>>;
-  crewStates: Map<string, Array<Record<string, unknown>>>;
-  sessionEvents: Map<string, SessionEvent[]>;
-  tokenLogs: Map<string, StorableTokenLog[]>;
-  permissions: Map<string, StorablePermission[]>;
-  crewFeedback: Map<string, Array<Record<string, unknown>>>;
-  turnFeedback: Map<string, Array<Record<string, unknown>>>;
-  resumeState: Map<string, Record<string, unknown>>;
-  permissionRules: Map<string, Array<Record<string, unknown>>>;
-  taskSnapshots: Map<string, Record<string, unknown>>;
-}
-
-export interface PostgresConfig extends PoolConfig {
-  autoMigrate?: boolean;
-  /** When true (default), only load session metadata at connect; messages load on demand. */
-  lazyHydrate?: boolean;
-  /** Optional progress lines for setup wizards and first-connect provisioning. */
-  onProgress?: (line: string) => void;
-}
 
 export class PostgresStorageAdapter implements StorageAdapter {
   private pool: Pool;
@@ -368,10 +118,17 @@ export class PostgresStorageAdapter implements StorageAdapter {
   private lazyHydrate: boolean;
   private onProgress?: (line: string) => void;
   private hydratedSessions = new Set<string>();
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), permissions: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map(), voiceRealtime: new Map() };
 
   constructor(config: PostgresConfig) {
-    this.pool = new Pool(config);
+    const poolConfig = {
+      ...config,
+      max: getEnvInt('PG_POOL_MAX', config.max, 20),
+      idleTimeoutMillis: getEnvInt('PG_POOL_IDLE_TIMEOUT_MS', config.idleTimeoutMillis, 30_000),
+      connectionTimeoutMillis: getEnvInt('PG_CONNECTION_TIMEOUT_MS', config.connectionTimeoutMillis, 5_000),
+      allowExitOnIdle: getEnvBool('PG_POOL_ALLOW_EXIT_ON_IDLE', config.allowExitOnIdle, false),
+    };
+    this.pool = new Pool(poolConfig as PoolConfig);
     this.lazyHydrate = config.lazyHydrate !== false;
     this.onProgress = config.onProgress;
   }
@@ -418,40 +175,22 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   private async doConnect(): Promise<void> {
-    try {
-      this.progress('Opening PostgreSQL connection pool…');
-      const client = await this.pool.connect();
-      client.release();
-      await this.migrate();
-      this.progress('Checking default agent persona…');
-      const persona = await this.seedDefaultPersona();
-      if (persona.created) this.progress('Default persona created.');
-      else this.progress('Default persona found.');
-      if (this.lazyHydrate) {
-        this.progress('Loading session metadata cache…');
-        await this.hydrateEssentialCache();
-      } else {
-        this.progress('Loading full storage cache…');
-        await this.hydrateCache();
-      }
-      this.connected = true;
-      this.progress('PostgreSQL storage connected.');
-      logger.info('PG_CONNECTED', 'PostgreSQL connection established');
-    } catch (error) {
-      this.connected = false;
-      const message = error instanceof Error ? error.message : String(error);
-      this.progress(`[ERROR] PostgreSQL connect failed: ${message}`);
-      logger.error('PG_CONNECT_FAILED', {
-        error: message,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
-    }
+    await doConnectImpl(this.migrationCtx());
   }
 
   async disconnect(): Promise<void> {
+    try {
+      await this.flushWriteQueue();
+    } catch (error) {
+      logger.error('PG_DISCONNECT_FLUSH', error);
+    }
     await this.pool.end();
     this.connected = false;
+  }
+
+  /** Gracefully shut down the PG pool. */
+  async shutdown(): Promise<void> {
+    await this.disconnect();
   }
 
   isConnected(): boolean {
@@ -463,188 +202,8 @@ export class PostgresStorageAdapter implements StorageAdapter {
     return this.pool;
   }
 
-  /** True when crew-catalog schema marker (v20) is already recorded. */
-  private async isIncrementalSchemaCurrent(
-    client: { query: (sql: string) => Promise<{ rows: Array<Record<string, unknown>> }> },
-  ): Promise<boolean> {
-    try {
-      const { rows } = await client.query(`SELECT 1 AS ok FROM _schema WHERE version >= 20 LIMIT 1`);
-      return rows.length > 0;
-    } catch {
-      return false;
-    }
-  }
-
   async migrate(): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      const tablesBefore = await auditCriticalTables(this.pool);
-      const { rows: vectorRows } = await client.query<{ installed: boolean }>(
-        `SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') AS installed`,
-      );
-      if (vectorRows[0]?.installed) {
-        this.progress('pgvector extension found.');
-      } else {
-        this.progress('Installing pgvector extension…');
-      }
-      await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
-
-      if (tablesBefore.missing.length === 0) {
-        this.progress(`Core tables present (${tablesBefore.total}/${tablesBefore.total}).`);
-      } else {
-        this.progress(
-          `Core tables: ${tablesBefore.present.length}/${tablesBefore.total} present — creating ${tablesBefore.missing.join(', ')}…`,
-        );
-      }
-      await client.query(SCHEMA_SQL);
-
-      const incrementalCurrent = await this.isIncrementalSchemaCurrent(client);
-      if (incrementalCurrent) {
-        this.progress('Incremental schema current (verifying columns and indexes)…');
-      } else {
-        this.progress('Applying incremental schema updates…');
-      }
-      // Incremental migrations for columns added after initial schema
-      await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS parts TEXT');
-      // Soft-archive: hidden from UI/history reads but kept in DB (memory ingestion untouched)
-      await client.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ');
-      await client.query('CREATE INDEX IF NOT EXISTS idx_messages_session_active ON messages(session_id, created_at) WHERE archived_at IS NULL');
-      await client.query('ALTER TABLE message_parts ADD COLUMN IF NOT EXISTS message_id TEXT');
-      await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_message_id ON message_parts(message_id)');
-      await client.query('CREATE INDEX IF NOT EXISTS idx_message_parts_session_created ON message_parts(session_id, created_at)');
-      await client.query('CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at)');
-      await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS title TEXT');
-      await client.query('ALTER TABLE crews ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT \'\'');
-      await client.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS compaction_count INTEGER NOT NULL DEFAULT 0');
-      await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS context_kind TEXT NOT NULL DEFAULT 'agent_x'`);
-      await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS host_crew_id TEXT`);
-      for (const col of [
-        'host_crew_name',
-        'host_crew_callsign',
-        'host_crew_title',
-        'host_crew_color',
-        'host_crew_catalog_id',
-        'host_crew_category_id',
-      ]) {
-        await client.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS ${col} TEXT`);
-      }
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind)`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS turn_feedback (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-          message_id TEXT NOT NULL,
-          context_kind TEXT NOT NULL DEFAULT 'agent_x',
-          crew_id TEXT,
-          rating TEXT NOT NULL,
-          turn_summary TEXT,
-          metadata TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          UNIQUE(session_id, message_id)
-        )
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id)`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS session_resume_state (
-          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-          kind TEXT NOT NULL,
-          message_id TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`
-        INSERT INTO child_sessions (id, parent_session_id, kind, label, status, created_at, updated_at)
-        SELECT id, parent_id, 'sub_agent', title, status, created_at, updated_at
-        FROM sessions WHERE parent_id IS NOT NULL
-        ON CONFLICT (id) DO NOTHING
-      `);
-      await purgeOrphanChildSessionsPg(this.pool);
-      this.progress('Setting up Crew Hub catalog tables…');
-      await runPgCrewCatalogMigration(this.pool);
-      await backfillPgCrewSearchColumns(this.pool, (row) => this.crewFromRow(row));
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS automation_tasks (
-          id TEXT PRIMARY KEY,
-          task_key TEXT,
-          title TEXT NOT NULL,
-          instruction TEXT NOT NULL,
-          schedule_type TEXT NOT NULL CHECK (schedule_type IN ('once', 'recurring')),
-          cron_expression TEXT,
-          run_at TIMESTAMPTZ,
-          timezone TEXT NOT NULL DEFAULT 'UTC',
-          status TEXT NOT NULL DEFAULT 'active',
-          source_channel TEXT NOT NULL DEFAULT 'web',
-          source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-          notify_channels JSONB NOT NULL DEFAULT '["in_app"]'::jsonb,
-          permission_snapshot JSONB,
-          pgboss_job_id TEXT,
-          pgboss_schedule_name TEXT,
-          last_run_at TIMESTAMPTZ,
-          last_run_status TEXT,
-          next_run_at TIMESTAMPTZ,
-          run_count INTEGER NOT NULL DEFAULT 0,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_automation_tasks_status ON automation_tasks(status)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_automation_tasks_session ON automation_tasks(source_session_id)`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_tasks_active_key ON automation_tasks(task_key) WHERE task_key IS NOT NULL AND status = 'active'`);
-      await client.query(`ALTER TABLE automation_tasks ADD COLUMN IF NOT EXISTS display_id TEXT`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_tasks_display_id ON automation_tasks(display_id) WHERE display_id IS NOT NULL`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS automation_run_logs (
-          id TEXT PRIMARY KEY,
-          task_id TEXT NOT NULL REFERENCES automation_tasks(id) ON DELETE CASCADE,
-          run_id TEXT NOT NULL,
-          level TEXT NOT NULL,
-          label TEXT NOT NULL,
-          detail TEXT,
-          event_type TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_automation_run_logs_task_created ON automation_run_logs(task_id, created_at)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_automation_run_logs_run ON automation_run_logs(run_id, created_at)`);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS notifications (
-          id TEXT PRIMARY KEY,
-          task_id TEXT REFERENCES automation_tasks(id) ON DELETE SET NULL,
-          kind TEXT NOT NULL,
-          title TEXT NOT NULL,
-          body TEXT NOT NULL,
-          payload JSONB,
-          channels JSONB NOT NULL DEFAULT '["in_app"]'::jsonb,
-          delivery_status JSONB NOT NULL DEFAULT '{}'::jsonb,
-          read_at TIMESTAMPTZ,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC)`);
-      await client.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(read_at) WHERE read_at IS NULL AND dismissed_at IS NULL`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_notifications_active ON notifications(created_at DESC) WHERE dismissed_at IS NULL`);
-      const { CanvasStore } = await import('../canvas/CanvasStore.js');
-      await CanvasStore.ensureSchema(this.pool);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS automation_session_confirmations (
-          session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-          confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          confirmation_note TEXT
-        )
-      `);
-      const mig = await new MemoryFabric(this.pool).migrate();
-      if (mig.applied === 0) {
-        this.progress(`Neural memory schema current (v${mig.currentVersion}, 0 new migrations).`);
-      } else {
-        this.progress(`Applied ${mig.applied} neural memory migration(s) — now at v${mig.currentVersion}.`);
-      }
-      this.progress('Core schema migrations complete.');
-    } finally {
-      client.release();
-    }
+    await migrateImpl(this.migrationCtx());
   }
 
   /** Idempotent schema repair — safe after manual table drops. */
@@ -666,44 +225,24 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   private crewFromRow(row: Record<string, unknown>): Crew {
-    const metadata = row['metadata'] ? JSON.parse(row['metadata'] as string) as Partial<Crew> : {};
-    return {
-      id: row['id'] as string,
-      name: row['name'] as string,
-      title: (row['title'] as string) || metadata.title,
-      callsign: metadata.callsign ?? (row['id'] as string),
-      systemPrompt: row['system_prompt'] as string ?? metadata.systemPrompt ?? '',
-      description: (row['description'] as string) || metadata.description || '',
-      emotion: metadata.emotion,
-      source: (row['source'] as Crew['source']) ?? metadata.source ?? 'custom',
-      catalogId: (row['catalog_id'] as string) ?? metadata.catalogId,
-      searchText: (row['search_text'] as string) ?? metadata.searchText,
-      suggestable: row['suggestable'] !== undefined ? !!(row['suggestable']) : (metadata.suggestable ?? true),
-      isDefault: !!(row['is_default'] ?? metadata.isDefault),
-      enabled: metadata.enabled ?? true,
-      expertise: metadata.expertise ?? (row['expertise'] ? (row['expertise'] as string).split(',') : undefined),
-      traits: metadata.traits ?? (row['traits'] ? (row['traits'] as string).split(',') : undefined),
-      toolPreferences: metadata.toolPreferences,
-      tools: metadata.tools,
-      tags: metadata.tags,
-      permissions: metadata.permissions,
-      model: metadata.model,
-      protocol: metadata.protocol,
-      quotas: metadata.quotas,
-      color: metadata.color,
-      icon: metadata.icon,
-      createdAt: row['created_at'] as string ?? metadata.createdAt ?? new Date().toISOString(),
-      updatedAt: row['updated_at'] as string ?? metadata.updatedAt ?? new Date().toISOString(),
-    };
+    return crewFromRowImpl(row);
   }
 
   getCrewCatalogStore(): CrewCatalogStore {
-    return createPgCrewCatalogStore(this.pool, (row) => this.crewFromRow(row));
+    return createPgCrewCatalogStore(this.pool, (row) => this.crewFromRow(row), () => this.flushWriteQueue());
   }
 
-  private writeQueue: Array<{ sql: string; params: unknown[] }> = [];
+  getBackgroundTaskStore(): BackgroundTaskStore {
+    return new PostgresBackgroundTaskStore({
+      pool: this.pool,
+      write: (sql, params) => this.write(sql, params ?? []),
+    });
+  }
+
+  private writeQueue: Array<{ sql: string; params: unknown[]; retries: number }> = [];
   private drainPromise: Promise<void> | null = null;
   private static readonly MAX_WRITE_QUEUE = 10_000;
+  private static readonly MAX_WRITE_RETRIES = 3;
 
   private scheduleWriteDrain(): void {
     if (this.drainPromise) return;
@@ -713,14 +252,54 @@ export class PostgresStorageAdapter implements StorageAdapter {
     });
   }
 
+  /**
+   * Classify a PG error as transient (retryable) or permanent (drop).
+   * Transient: connection issues, timeouts, server crashes.
+   * Permanent: FK violations, duplicate keys, syntax errors, permission errors.
+   */
+  private isTransientPgError(error: unknown): boolean {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = (error as { code?: string }).code ?? '';
+      // Class 08: Connection exception
+      // Class 53: Insufficient resources
+      // Class 57: Operator intervention (server restart)
+      // Class 40: Transaction rollback
+      // 40001: serialization_failure
+      // 40P01: deadlock_detected
+      return code.startsWith('08') || code.startsWith('53') || code.startsWith('57')
+        || code.startsWith('40') || code === '40001' || code === '40P01';
+    }
+    // Network errors, timeouts, EPIPE, etc. — retry
+    return true;
+  }
+
   private async drainWriteQueue(): Promise<void> {
-    await this.connect();
+    // doConnect → hydrateEssentialCache → flushWriteQueue → drainWriteQueue must not
+    // await connect() while doConnect is still in flight (same connectPromise) — that
+    // deadlocks startup and every later ensureSessionHydrated/chat turn.
+    if (!this.connected && !this.connectPromise) {
+      await this.connect();
+    }
     while (this.writeQueue.length > 0) {
-      const { sql, params } = this.writeQueue.shift()!;
+      const item = this.writeQueue.shift()!;
       try {
-        await this.pool.query(sql, params);
+        await this.pool.query(item.sql, item.params);
       } catch (error) {
-        logger.error('PG_WRITE_ERROR', error, { sql: sql.slice(0, 100) });
+        const isTransient = this.isTransientPgError(error);
+        const shouldRetry = isTransient && item.retries < PostgresStorageAdapter.MAX_WRITE_RETRIES;
+        if (shouldRetry) {
+          // Re-enqueue at the front to preserve ordering
+          this.writeQueue.unshift({ sql: item.sql, params: item.params, retries: item.retries + 1 });
+          logger.warn('PG_WRITE_RETRY', `Retrying write (attempt ${item.retries + 1}/${PostgresStorageAdapter.MAX_WRITE_RETRIES})`, {
+            sql: item.sql.slice(0, 100),
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // Brief backoff before next drain cycle
+          await new Promise((r) => setTimeout(r, 100 * (item.retries + 1)));
+          // Re-schedule drain to process the re-enqueued item
+          return;
+        }
+        logger.error('PG_WRITE_ERROR', error, { sql: item.sql.slice(0, 100), retries: item.retries, dropped: true });
       }
     }
   }
@@ -730,263 +309,124 @@ export class PostgresStorageAdapter implements StorageAdapter {
       logger.warn('PG_WRITE_QUEUE_FULL', 'Dropping write — queue at capacity', { sql: sql.slice(0, 80) });
       return;
     }
-    this.writeQueue.push({ sql, params });
+    this.writeQueue.push({ sql, params, retries: 0 });
     this.scheduleWriteDrain();
   }
 
+  /** Build the HydrationContext snapshot used by the extracted hydration helpers. */
+  private hydrationCtx(): HydrationContext {
+    const ctx: HydrationContext = {
+      pool: this.pool,
+      cache: this.cache,
+      hydratedSessions: this.hydratedSessions,
+      lazyHydrate: this.lazyHydrate,
+      crewFromRow: (row) => this.crewFromRow(row),
+      writeQueue: this.writeQueue,
+      drainPromise: this.drainPromise,
+      scheduleWriteDrain: () => this.scheduleWriteDrain(),
+    };
+    Object.defineProperty(ctx, 'drainPromise', {
+      get: () => this.drainPromise,
+      enumerable: true,
+      configurable: true,
+    });
+    return ctx;
+  }
+
+  /** Build the CheckpointContext snapshot used by the extracted checkpoint helpers. */
+  private checkpointCtx(): CheckpointContext {
+    return {
+      cache: this.cache,
+      flushWriteQueue: () => this.flushWriteQueue(),
+      getMessages: (sessionId) => this.getMessages(sessionId),
+      write: (sql, params) => this.write(sql, params),
+      getCheckpoint: (sessionId, checkpointId) => this.getCheckpoint(sessionId, checkpointId),
+      deleteMessages: (sessionId) => this.deleteMessages(sessionId),
+      insertMessage: (msg) => this.insertMessage(msg),
+      hydrateMessageCache: (sessionId) => this.hydrateMessageCache(sessionId),
+    };
+  }
+
+  /** Build the MigrationContext snapshot used by the extracted migration helpers. */
+  private migrationCtx(): MigrationContext {
+    return {
+      pool: this.pool,
+      progress: (line) => this.progress(line),
+      crewFromRow: (row) => this.crewFromRow(row),
+      seedDefaultPersona: () => this.seedDefaultPersona(),
+      hydrateEssentialCache: () => this.hydrateEssentialCache(),
+      hydrateCache: () => this.hydrateCache(),
+      lazyHydrate: this.lazyHydrate,
+      setConnected: (value) => { this.connected = value; },
+    };
+  }
+
+  /** Build the MessageContext snapshot used by the extracted message helpers. */
+  private messageCtx(): MessageContext {
+    return {
+      pool: this.pool,
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  /** Build the TokenLogContext snapshot used by the extracted token-log helpers. */
+  private tokenLogCtx(): TokenLogContext {
+    return {
+      pool: this.pool,
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  /** Build the ResumeStateContext snapshot used by the extracted resume-state helpers. */
+  private resumeStateCtx(): ResumeStateContext {
+    return {
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  /** Build the CrewContext snapshot used by the extracted crew CRUD helpers. */
+  private crewCtx(): CrewContext {
+    return {
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  /** Build the SessionExtrasContext snapshot used by the extracted session-extras helpers. */
+  private sessionExtrasCtx(): SessionExtrasContext {
+    return {
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
   private async hydrateEssentialCache(): Promise<void> {
-    try {
-      const sessions = await this.pool.query(
-        `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
-                scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
-                compaction_count as "compactionCount",
-                context_kind as "contextKind",host_crew_id as "hostCrewId",
-                host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
-                host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
-                host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
-                mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
-         FROM sessions`,
-      );
-      for (const row of sessions.rows) {
-        this.cache.sessions.set((row as StorableSession).id, row as StorableSession);
-      }
-
-      const childSessions = await this.pool.query(
-        'SELECT id, parent_session_id, kind, label, status, created_at, updated_at FROM child_sessions ORDER BY created_at ASC',
-      );
-      for (const row of childSessions.rows) {
-        const r = row as Record<string, unknown>;
-        const parentId = r['parent_session_id'] as string;
-        const arr = this.cache.childSessions.get(parentId) ?? [];
-        arr.push({
-          id: r['id'],
-          parentSessionId: parentId,
-          kind: r['kind'],
-          label: r['label'],
-          status: r['status'],
-          createdAt: r['created_at'],
-          updatedAt: r['updated_at'],
-        });
-        this.cache.childSessions.set(parentId, arr);
-      }
-
-      const crews = await this.pool.query('SELECT * FROM crews ORDER BY created_at ASC');
-      this.cache.crews = crews.rows.map((row: Record<string, unknown>) => this.crewFromRow(row));
-
-      const persona = await this.pool.query('SELECT * FROM agent_persona LIMIT 1');
-      if (persona.rows[0]) {
-        const p = persona.rows[0] as Record<string, unknown>;
-        this.cache.persona = {
-          name: p['name'] as string,
-          description: p['description'] as string,
-          communicationStyle: p['communication_style'] as string,
-          decisionMaking: p['decision_making'] as string,
-          domainContext: p['domain_context'] as string,
-          traits: JSON.parse((p['traits'] as string) || '[]') as string[],
-        };
-      }
-
-      logger.info('PG_HYDRATE', `Essential cache loaded (${this.cache.sessions.size} sessions, lazy message load enabled)`);
-    } catch (error) {
-      logger.error('PG_HYDRATE_FAILED', error);
-    }
+    await hydrateEssentialCache(this.hydrationCtx());
   }
 
   /** Load messages and per-session data on first access (lazy cache). */
   async ensureSessionHydrated(sessionId: string): Promise<void> {
-    if (!this.lazyHydrate || this.hydratedSessions.has(sessionId)) return;
-    await this.hydrateMessageCache(sessionId);
-    this.hydratedSessions.add(sessionId);
+    await ensureSessionHydrated(this.hydrationCtx(), sessionId);
   }
 
   private async hydrateCache(): Promise<void> {
-    try {
-      const sessions = await this.pool.query(
-        `SELECT id,title,status,provider_id as "providerId",model_id as "modelId",
-                scope_path as "scopePath",token_used as "tokenUsed",token_available as "tokenAvailable",
-                compaction_count as "compactionCount",
-                context_kind as "contextKind",host_crew_id as "hostCrewId",
-                host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
-                host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
-                host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
-                mode,parent_id as "parentId",hyperdrive,created_at as "createdAt",updated_at as "updatedAt"
-         FROM sessions`,
-      );
-      for (const row of sessions.rows) {
-        this.cache.sessions.set((row as StorableSession).id, row as StorableSession);
-      }
-
-      const childSessions = await this.pool.query(
-        'SELECT id, parent_session_id, kind, label, status, created_at, updated_at FROM child_sessions ORDER BY created_at ASC',
-      );
-      for (const row of childSessions.rows) {
-        const r = row as Record<string, unknown>;
-        const parentId = r['parent_session_id'] as string;
-        const arr = this.cache.childSessions.get(parentId) ?? [];
-        arr.push({
-          id: r['id'],
-          parentSessionId: parentId,
-          kind: r['kind'],
-          label: r['label'],
-          status: r['status'],
-          createdAt: r['created_at'],
-          updatedAt: r['updated_at'],
-        });
-        this.cache.childSessions.set(parentId, arr);
-      }
-
-      const messages = await this.pool.query(
-        `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",
-                token_count as "tokenCount",parts,metadata,created_at as "createdAt"
-         FROM messages ORDER BY created_at ASC`,
-      );
-      for (const row of messages.rows) {
-        const raw = row as Record<string, unknown>;
-        let parts = raw['parts'];
-        if (typeof parts === 'string') {
-          try { parts = JSON.parse(parts); } catch { parts = undefined; }
-        }
-        let metadata = raw['metadata'];
-        if (typeof metadata === 'string') {
-          try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
-        }
-        const msg = { ...raw, parts, metadata } as StorableMessage;
-        const msgs = this.cache.messages.get(msg.sessionId) ?? [];
-        msgs.push(msg);
-        this.cache.messages.set(msg.sessionId, msgs);
-      }
-      const checkpoints = await this.pool.query('SELECT id, session_id, label, messages, created_at FROM checkpoints ORDER BY created_at ASC');
-      for (const row of checkpoints.rows) {
-        const r = row as { id: string; session_id: string; label: string; messages: string; created_at: string };
-        const arr = this.cache.checkpoints.get(r.session_id) ?? [];
-        arr.push(r);
-        this.cache.checkpoints.set(r.session_id, arr);
-      }
-      const crews = await this.pool.query('SELECT * FROM crews ORDER BY created_at ASC');
-      this.cache.crews = crews.rows.map((row: Record<string, unknown>) => this.crewFromRow(row));
-      const crewStates = await this.pool.query('SELECT * FROM session_crew_states ORDER BY created_at ASC');
-      for (const row of crewStates.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        const arr = this.cache.crewStates.get(sid) ?? [];
-        arr.push(r);
-        this.cache.crewStates.set(sid, arr);
-      }
-      const sessionEvents = await this.pool.query("SELECT * FROM session_events WHERE event_type <> 'text_delta' ORDER BY sequence ASC");
-      for (const row of sessionEvents.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        const arr = this.cache.sessionEvents.get(sid) ?? [];
-        arr.push({
-          id: r['id'] as string,
-          sessionId: sid,
-          sequence: r['sequence'] as number,
-          type: r['event_type'] as string,
-          timestamp: r['created_at'] ? new Date(r['created_at'] as string).getTime() : Date.now(),
-          payload: (() => { try { return JSON.parse(r['payload'] as string); } catch { return {}; } })(),
-        } as unknown as SessionEvent);
-        this.cache.sessionEvents.set(sid, arr);
-      }
-      const tokenLogs = await this.pool.query('SELECT id,session_id as "sessionId",provider_id,model_id as "model",input_tokens as "inputTokens",output_tokens as "outputTokens",cost_usd as "costUsd",crew_id as "crewId",created_at as "createdAt" FROM token_logs ORDER BY created_at ASC');
-      for (const row of tokenLogs.rows) {
-        const r = row as StorableTokenLog;
-        const arr = this.cache.tokenLogs.get(r.sessionId) ?? [];
-        arr.push(r);
-        this.cache.tokenLogs.set(r.sessionId, arr);
-      }
-      const permissions = await this.pool.query('SELECT id,session_id as "sessionId",tool_name as "toolName",target_path as "targetPath",decision,created_at as "createdAt" FROM permissions ORDER BY created_at ASC');
-      for (const row of permissions.rows) {
-        const r = row as StorablePermission;
-        const arr = this.cache.permissions.get(r.sessionId) ?? [];
-        arr.push(r);
-        this.cache.permissions.set(r.sessionId, arr);
-      }
-      const crewFeedback = await this.pool.query('SELECT * FROM crew_feedback ORDER BY created_at ASC');
-      for (const row of crewFeedback.rows) {
-        const r = row as Record<string, unknown>;
-        const cid = r['crew_id'] as string;
-        const arr = this.cache.crewFeedback.get(cid) ?? [];
-        arr.push(r);
-        this.cache.crewFeedback.set(cid, arr);
-      }
-      const turnFeedback = await this.pool.query('SELECT * FROM turn_feedback ORDER BY created_at ASC');
-      for (const row of turnFeedback.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        const arr = this.cache.turnFeedback.get(sid) ?? [];
-        arr.push(r);
-        this.cache.turnFeedback.set(sid, arr);
-      }
-      const resumeStates = await this.pool.query('SELECT * FROM session_resume_state');
-      for (const row of resumeStates.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        this.cache.resumeState.set(sid, r);
-      }
-      const permissionRules = await this.pool.query('SELECT * FROM permission_rules ORDER BY created_at ASC');
-      for (const row of permissionRules.rows) {
-        const r = row as Record<string, unknown>;
-        const sid = r['session_id'] as string;
-        const arr = this.cache.permissionRules.get(sid) ?? [];
-        arr.push(r);
-        this.cache.permissionRules.set(sid, arr);
-      }
-      const taskSnapshots = await this.pool.query(
-        `SELECT DISTINCT ON (session_id) id, session_id, task_id, step_index, goal, plan_state, failure_history, created_at
-         FROM task_snapshots ORDER BY session_id, created_at DESC`,
-      );
-      for (const row of taskSnapshots.rows) {
-        const r = row as Record<string, unknown>;
-        this.cache.taskSnapshots.set(r['session_id'] as string, r);
-      }
-      const personaId = '00000000-0000-0000-0000-000000000001';
-      const persona = await this.pool.query('SELECT * FROM agent_persona WHERE id = $1', [personaId]);
-      if (persona.rows.length > 0) {
-        const r = persona.rows[0] as Record<string, unknown>;
-        this.cache.persona = {
-          name: (r['name'] as string) ?? '',
-          description: (r['description'] as string) ?? '',
-          communicationStyle: (r['communication_style'] as string) ?? 'direct',
-          decisionMaking: (r['decision_making'] as string) ?? 'balanced',
-          domainContext: (r['domain_context'] as string) ?? '',
-          traits: JSON.parse((r['traits'] as string) ?? '[]'),
-        };
-      }
-    } catch (error) {
-      logger.error('PG_HYDRATE_FAILED', error);
-    }
+    await hydrateCache(this.hydrationCtx());
   }
 
-  private async flushWriteQueue(): Promise<void> {
-    // Drain until idle so hydrate/checkpoint never race ahead of pending INSERTs.
-    for (let i = 0; i < 20; i++) {
-      if (this.writeQueue.length === 0 && !this.drainPromise) return;
-      this.scheduleWriteDrain();
-      if (this.drainPromise) await this.drainPromise;
-    }
+  async flushWriteQueue(): Promise<void> {
+    await flushWriteQueue(this.hydrationCtx());
+  }
+
+  /** Public StorageAdapter hook — drain the write queue before shutdown / after crew mutations. */
+  async flushWrites(): Promise<void> {
+    await this.flushWriteQueue();
   }
 
   private async hydrateMessageCache(sessionId: string): Promise<void> {
-    try {
-      await this.flushWriteQueue();
-      const messages = await this.pool.query(
-        `SELECT id,session_id as "sessionId",role,content,tool_calls as "toolCalls",token_count as "tokenCount",created_at as "createdAt"
-         FROM messages WHERE session_id = $1 AND archived_at IS NULL ORDER BY created_at ASC`,
-        [sessionId]
-      );
-      const msgs = messages.rows as StorableMessage[];
-      this.cache.messages.set(sessionId, msgs);
-      const parts = await this.pool.query(
-        'SELECT * FROM message_parts WHERE session_id = $1 ORDER BY created_at ASC',
-        [sessionId]
-      );
-      this.cache.parts.set(sessionId, parts.rows as Array<Record<string, unknown>>);
-      const ckpts = await this.pool.query(
-        'SELECT id, session_id, label, messages, created_at FROM checkpoints WHERE session_id = $1 ORDER BY created_at ASC',
-        [sessionId]
-      );
-      this.cache.checkpoints.set(sessionId, ckpts.rows as Array<{ id: string; session_id: string; label: string; messages: string; created_at: string }>);
-    } catch { /* best effort */ }
+    await hydrateMessageCache(this.hydrationCtx(), sessionId);
   }
 
   // ─── Session CRUD ──────────────────────────────────────────────
@@ -997,7 +437,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const now = new Date().toISOString();
     const session: StorableSession = {
       id, ...input,
-      mode: (inputAny['mode'] as string) ?? 'plan',
       parentId: (inputAny['parentId'] as string) ?? null,
       contextKind: (inputAny['contextKind'] as StorableSession['contextKind']) ?? 'agent_x',
       hostCrewId: (inputAny['hostCrewId'] as string | null) ?? null,
@@ -1007,15 +446,31 @@ export class PostgresStorageAdapter implements StorageAdapter {
       hostCrewColor: (inputAny['hostCrewColor'] as string | null) ?? null,
       hostCrewCatalogId: (inputAny['hostCrewCatalogId'] as string | null) ?? null,
       hostCrewCategoryId: (inputAny['hostCrewCategoryId'] as string | null) ?? null,
-      hyperdrive: !!(inputAny['hyperdrive']),
       createdAt: now, updatedAt: now,
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,mode,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       ON CONFLICT (id) DO UPDATE SET
+         title = EXCLUDED.title,
+         status = EXCLUDED.status,
+         provider_id = EXCLUDED.provider_id,
+         model_id = EXCLUDED.model_id,
+         scope_path = EXCLUDED.scope_path,
+         parent_id = EXCLUDED.parent_id,
+         token_available = EXCLUDED.token_available,
+         context_kind = EXCLUDED.context_kind,
+         host_crew_id = EXCLUDED.host_crew_id,
+         host_crew_name = EXCLUDED.host_crew_name,
+         host_crew_callsign = EXCLUDED.host_crew_callsign,
+         host_crew_title = EXCLUDED.host_crew_title,
+         host_crew_color = EXCLUDED.host_crew_color,
+         host_crew_catalog_id = EXCLUDED.host_crew_catalog_id,
+         host_crew_category_id = EXCLUDED.host_crew_category_id,
+         updated_at = NOW()`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
-       session.mode, session.parentId, input.tokenUsed, input.tokenAvailable,
+       session.parentId, input.tokenUsed, input.tokenAvailable,
        session.contextKind ?? 'agent_x', session.hostCrewId ?? null,
        session.hostCrewName ?? null, session.hostCrewCallsign ?? null, session.hostCrewTitle ?? null,
        session.hostCrewColor ?? null, session.hostCrewCatalogId ?? null, session.hostCrewCategoryId ?? null,
@@ -1041,7 +496,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       modelId: 'model_id', scopePath: 'scope_path',
       tokenUsed: 'token_used', tokenAvailable: 'token_available',
       compactionCount: 'compaction_count',
-      mode: 'mode', parentId: 'parent_id',
+      parentId: 'parent_id',
       contextKind: 'context_kind', hostCrewId: 'host_crew_id',
       hostCrewName: 'host_crew_name', hostCrewCallsign: 'host_crew_callsign',
       hostCrewTitle: 'host_crew_title', hostCrewColor: 'host_crew_color',
@@ -1053,10 +508,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
         values.push(normalized[key]);
       }
     }
-    if ('hyperdrive' in normalized) {
-      fields.push(`hyperdrive = $${idx++}`);
-      values.push(normalized['hyperdrive'] ? 1 : 0);
-    }
     if (fields.length === 0) return;
     fields.push('updated_at = NOW()');
     values.push(id);
@@ -1064,36 +515,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   private collectDescendantSessionIds(rootId: string): string[] {
-    const out: string[] = [];
-    const visit = (parentId: string) => {
-      for (const s of this.cache.sessions.values()) {
-        if (s.parentId === parentId) {
-          out.push(s.id);
-          visit(s.id);
-        }
-      }
-    };
-    visit(rootId);
-    return out;
+    return collectDescendantSessionIds(this.hydrationCtx(), rootId);
   }
 
   private purgeSessionCache(id: string): void {
-    this.cache.sessions.delete(id);
-    for (const [parentId, children] of this.cache.childSessions.entries()) {
-      const filtered = children.filter((c) => c['id'] !== id);
-      if (filtered.length === 0) this.cache.childSessions.delete(parentId);
-      else this.cache.childSessions.set(parentId, filtered);
-    }
-    this.cache.messages.delete(id);
-    this.cache.parts.delete(id);
-    this.cache.checkpoints.delete(id);
-    this.cache.crewStates.delete(id);
-    this.cache.sessionEvents.delete(id);
-    this.cache.tokenLogs.delete(id);
-    this.cache.permissions.delete(id);
-    this.cache.permissionRules.delete(id);
-    this.cache.taskSnapshots.delete(id);
-    this.cache.turnFeedback.delete(id);
+    purgeSessionCache(this.hydrationCtx(), id);
   }
 
   deleteSession(id: string): void {
@@ -1127,7 +553,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   listRootSessions(limit = 20): StorableSession[] {
     return [...this.cache.sessions.values()]
-      .filter((s) => !s.parentId && (s.contextKind ?? 'agent_x') !== 'automation' && (s.contextKind ?? 'agent_x') !== 'agent_x_core' && !s.id.startsWith('automation:'))
+      .filter((s) => !s.parentId && (s.contextKind ?? 'agent_x') !== 'automation' && (s.contextKind ?? 'agent_x') !== 'agent_x_core' && !s.id.startsWith('automation:') && !s.id.startsWith('voice:'))
       .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))
       .slice(0, limit);
   }
@@ -1184,7 +610,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')));
   }
 
-  getSessionListKpis(sessionId: string, base?: Record<string, unknown>): Record<string, unknown> {
+  getSessionListKpis(sessionId: string, base?: Session | Record<string, unknown>): SessionListKpis {
     const messageCount = this.getMessageCount(sessionId);
     const childSessionCount = this.listChildSessions(sessionId).length;
     const states = this.getCrewStates(sessionId);
@@ -1194,14 +620,15 @@ export class PostgresStorageAdapter implements StorageAdapter {
       .filter(Boolean);
     const logs = this.getTokenLogs(sessionId) as unknown as Array<Record<string, unknown>>;
     const totalCostUsd = logs.reduce((sum, l) => sum + (Number(l['costUsd'] ?? l['cost_usd']) || 0), 0);
-    const cached = this.cache.sessions.get(sessionId) as Record<string, unknown> | undefined;
-    let compactionCount = Number(base?.['compactionCount'] ?? cached?.['compactionCount'] ?? 0);
+    const cached = this.cache.sessions.get(sessionId);
+    const baseRecord = base && 'compactionCount' in base ? (base as Record<string, unknown>) : undefined;
+    let compactionCount = Number(baseRecord?.['compactionCount'] ?? cached?.compactionCount ?? 0);
     if (compactionCount === 0) {
       const msgs = this.getMessages(sessionId);
       compactionCount = msgs.filter((m) => m.content.includes('[COMPACTION SUMMARY')).length;
     }
-    const tokensUsed = Number(base?.['tokensUsed'] ?? base?.['tokenUsed'] ?? cached?.['tokenUsed'] ?? 0);
-    const tokenAvailable = Number(base?.['tokenAvailable'] ?? cached?.['tokenAvailable'] ?? 128_000);
+    const tokensUsed = Number(base?.['tokenUsed'] ?? cached?.tokenUsed ?? 0);
+    const tokenAvailable = Number(base?.['tokenAvailable'] ?? cached?.tokenAvailable ?? 128_000);
     let resolvedTokensUsed = tokensUsed;
     if (resolvedTokensUsed === 0) {
       const logSum = logs.reduce(
@@ -1230,28 +657,24 @@ export class PostgresStorageAdapter implements StorageAdapter {
 
   // ─── Message CRUD ──────────────────────────────────────────────
 
-  addMessage(sessionId: string, message: Omit<StorableMessage, 'id' | 'createdAt'>): StorableMessage {
-    const id = generateId();
-    const now = new Date().toISOString();
-    const msg: StorableMessage = { id, ...message, createdAt: now };
-    const msgs = this.cache.messages.get(sessionId) ?? [];
-    msgs.push(msg);
-    this.cache.messages.set(sessionId, msgs);
-    this.write(
-      'INSERT INTO messages (id,session_id,role,content,tool_calls,token_count,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, sessionId, msg.role, msg.content, msg.toolCalls ?? null, msg.tokenCount, now]
-    );
-    return msg;
+  addMessage(sessionId: string, message: StorableMessageInput): StorableMessage {
+    return addMessageImpl(this.messageCtx(), sessionId, message);
   }
 
   getMessages(sessionId: string): StorableMessage[] {
-    return [...(this.cache.messages.get(sessionId) ?? [])];
+    return getMessagesImpl(this.messageCtx(), sessionId);
   }
 
   deleteMessages(sessionId: string): void {
-    this.cache.messages.delete(sessionId);
-    this.cache.parts.delete(sessionId);
-    this.write('DELETE FROM messages WHERE session_id = $1', [sessionId]);
+    deleteMessagesImpl(this.messageCtx(), sessionId);
+  }
+
+  /**
+   * Hard-delete all session content: messages, parts, checkpoints, feedback, resume
+   * state, and related artifacts. The session row itself is preserved.
+   */
+  purgeSessionContent(sessionId: string): void {
+    purgeSessionContentImpl(this.messageCtx(), sessionId, (id, updates) => this.updateSession(id, updates));
   }
 
   /**
@@ -1259,13 +682,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
    * kept in the DB so memory ingestion/backfill and audits are unaffected.
    */
   archiveSessionMessages(sessionId: string): void {
-    this.cache.messages.set(sessionId, []);
-    this.cache.parts.set(sessionId, []);
-    this.write('UPDATE messages SET archived_at = NOW() WHERE session_id = $1 AND archived_at IS NULL', [sessionId]);
+    archiveSessionMessagesImpl(this.messageCtx(), sessionId);
   }
 
   getMessageCount(sessionId: string): number {
-    return (this.cache.messages.get(sessionId) ?? []).length;
+    return getMessageCountImpl(this.messageCtx(), sessionId);
   }
 
   insertMessage(msg: {
@@ -1280,78 +701,25 @@ export class PostgresStorageAdapter implements StorageAdapter {
     plan?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    attachments?: unknown;
+    createdAt?: string;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   }): void {
-    const msgs = this.cache.messages.get(msg.sessionId) ?? [];
-    const id = msg.id ?? crypto.randomUUID();
-    const now = new Date().toISOString();
-    const existingIdx = msgs.findIndex((m) => m.id === id);
-    const row = {
-      id, sessionId: msg.sessionId, role: msg.role, content: msg.content,
-      toolCalls: msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : undefined,
-      tokenCount: msg.tokenCount ?? 0, createdAt: now,
-      parts: msg.parts,
-      metadata: msg.metadata,
-    };
-    if (existingIdx >= 0) {
-      const prev = msgs[existingIdx]!;
-      msgs[existingIdx] = {
-        ...prev,
-        ...row,
-        createdAt: prev.createdAt,
-        parts: msg.parts ?? prev.parts,
-        metadata: msg.metadata ?? prev.metadata,
-      };
-    } else {
-      msgs.push(row);
-    }
-    this.cache.messages.set(msg.sessionId, msgs);
-    this.write(
-      `INSERT INTO messages (id,session_id,role,content,tool_calls,token_count,plan,parts,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         content = EXCLUDED.content,
-         tool_calls = COALESCE(EXCLUDED.tool_calls, messages.tool_calls),
-         token_count = EXCLUDED.token_count,
-         plan = COALESCE(EXCLUDED.plan, messages.plan),
-         parts = COALESCE(EXCLUDED.parts, messages.parts),
-         metadata = COALESCE(EXCLUDED.metadata, messages.metadata)`,
-      [
-        id, msg.sessionId, msg.role, msg.content,
-        msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : null,
-        msg.tokenCount ?? 0,
-        msg.plan || null,
-        msg.parts ? JSON.stringify(msg.parts) : null,
-        msg.metadata ? JSON.stringify(msg.metadata) : null,
-      ]
-    );
+    insertMessageImpl(this.messageCtx(), msg);
   }
 
   updateMessage(sessionId: string, messageId: string, patch: {
     content?: string;
     parts?: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
+    attachments?: unknown;
+    platformMessageId?: number | null;
+    platformMessageIds?: number[] | null;
+    platformChatId?: number | null;
   }): void {
-    const msgs = this.cache.messages.get(sessionId) ?? [];
-    const idx = msgs.findIndex((m) => m.id === messageId);
-    if (idx >= 0) {
-      const cur = msgs[idx]!;
-      msgs[idx] = {
-        ...cur,
-        content: patch.content ?? cur.content,
-        parts: patch.parts ?? cur.parts,
-        metadata: patch.metadata ?? cur.metadata,
-      };
-      this.cache.messages.set(sessionId, msgs);
-    }
-    const sets: string[] = [];
-    const vals: unknown[] = [];
-    let n = 1;
-    if (patch.content !== undefined) { sets.push(`content = $${n++}`); vals.push(patch.content); }
-    if (patch.parts !== undefined) { sets.push(`parts = $${n++}`); vals.push(JSON.stringify(patch.parts)); }
-    if (patch.metadata !== undefined) { sets.push(`metadata = $${n++}`); vals.push(JSON.stringify(patch.metadata)); }
-    if (sets.length === 0) return;
-    vals.push(messageId, sessionId);
-    this.write(`UPDATE messages SET ${sets.join(', ')} WHERE id = $${n} AND session_id = $${n + 1}`, vals);
+    updateMessageImpl(this.messageCtx(), sessionId, messageId, patch);
   }
 
   insertPart(sessionId: string, part: {
@@ -1365,113 +733,26 @@ export class PostgresStorageAdapter implements StorageAdapter {
     toolSuccess?: boolean;
     usage?: { inputTokens: number; outputTokens: number };
   }): void {
-    const id = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const messageId = part.messageId ?? null;
-    const cached = this.cache.parts.get(sessionId) ?? [];
-    cached.push({
-      id, session_id: sessionId, message_id: messageId, type: part.type,
-      content: part.content || null, tool_name: part.toolName || null,
-      tool_call_id: part.toolCallId || null,
-      tool_args: part.toolArgs ? JSON.stringify(part.toolArgs) : null,
-      tool_result: part.toolResult || null,
-      tool_success: part.toolSuccess != null ? (part.toolSuccess ? 1 : 0) : null,
-      usage_input: part.usage?.inputTokens || null,
-      usage_output: part.usage?.outputTokens || null,
-      created_at: now,
-    });
-    this.cache.parts.set(sessionId, cached);
-    this.write(
-      `INSERT INTO message_parts (id,session_id,message_id,type,content,tool_name,tool_call_id,tool_args,tool_result,tool_success,usage_input,usage_output)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [
-        id, sessionId, messageId, part.type,
-        part.content || null, part.toolName || null, part.toolCallId || null,
-        part.toolArgs ? JSON.stringify(part.toolArgs) : null,
-        part.toolResult || null,
-        part.toolSuccess != null ? (part.toolSuccess ? 1 : 0) : null,
-        part.usage?.inputTokens || null, part.usage?.outputTokens || null,
-      ]
-    );
+    insertPartImpl(this.messageCtx(), sessionId, part);
   }
 
   getParts(sessionId: string): Array<Record<string, unknown>> {
-    return this.cache.parts.get(sessionId) ?? [];
+    return getPartsImpl(this.messageCtx(), sessionId);
   }
 
   async getPartsForMessages(
     sessionId: string,
-    messages: Array<Record<string, unknown>>,
+    messages: Array<Record<string, unknown> | StorableMessage>,
   ): Promise<Array<Record<string, unknown>>> {
-    if (messages.length === 0) return [];
-    const messageIds = messages.map((m) => m['id'] as string).filter((id): id is string => !!id);
-    if (messageIds.length === 0) return [];
-    const times = messages
-      .map((m) => (m['createdAt'] as string) || (m['created_at'] as string))
-      .filter((t): t is string => !!t);
-    const min = times.length ? times.reduce((a, b) => (a < b ? a : b)) : null;
-    const max = times.length ? times.reduce((a, b) => (a > b ? a : b)) : null;
-    const result = await this.pool.query(
-      `SELECT * FROM message_parts
-       WHERE session_id = $1
-         AND (
-           message_id = ANY($2::text[])
-           OR (
-             message_id IS NULL
-             AND $3::timestamptz IS NOT NULL
-             AND $4::timestamptz IS NOT NULL
-             AND created_at >= $3 AND created_at <= $4
-           )
-         )
-       ORDER BY created_at ASC`,
-      [sessionId, messageIds, min, max],
-    );
-    return result.rows as Array<Record<string, unknown>>;
+    return getPartsForMessagesImpl(this.messageCtx(), sessionId, messages);
   }
 
   deleteLastMessages(sessionId: string, count: number, roles: string[]): void {
-    const placeholders = roles.map((_, i) => `$${i + 2}`).join(',');
-    this.write(
-      `DELETE FROM messages WHERE id IN (
-        SELECT id FROM messages
-        WHERE session_id = $1 AND role IN (${placeholders})
-        ORDER BY created_at DESC
-        LIMIT $${roles.length + 2}
-      )`,
-      [sessionId, ...roles, count]
-    );
-    this.cache.messages.delete(sessionId);
-    this.hydrateMessageCache(sessionId).catch(() => {});
+    deleteLastMessages(this.checkpointCtx(), sessionId, count, roles);
   }
 
   createCheckpoint(sessionId: string, label: string): { id: string } | null {
-    // Best-effort: kick a drain so recent inserts are less likely to be missing from cache/PG.
-    void this.flushWriteQueue();
-    const msgs = this.getMessages(sessionId);
-    if (!msgs || msgs.length === 0) return null;
-    const id = crypto.randomUUID();
-    const messagesJson = JSON.stringify(msgs);
-
-    this.write(
-      `DELETE FROM checkpoints WHERE id IN (
-        SELECT id FROM checkpoints WHERE session_id = $1
-        ORDER BY created_at ASC
-        LIMIT GREATEST(0, (SELECT COUNT(*) FROM checkpoints WHERE session_id = $1) - 19)
-      )`,
-      [sessionId]
-    );
-
-    this.write(
-      `INSERT INTO checkpoints (id,session_id,label,messages,created_at) VALUES ($1,$2,$3,$4,NOW())`,
-      [id, sessionId, label, messagesJson]
-    );
-
-    const arr = this.cache.checkpoints.get(sessionId) ?? [];
-    if (arr.length >= 20) arr.shift();
-    arr.push({ id, session_id: sessionId, label, messages: messagesJson, created_at: new Date().toISOString() });
-    this.cache.checkpoints.set(sessionId, arr);
-
-    return { id };
+    return createCheckpoint(this.checkpointCtx(), sessionId, label);
   }
 
   listCheckpoints(sessionId: string): Array<{ id: string; label: string; createdAt: string; messageCount: number }> {
@@ -1492,20 +773,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   }
 
   restoreCheckpoint(sessionId: string, checkpointId: string): boolean {
-    const msgs = this.getCheckpoint(sessionId, checkpointId);
-    if (!msgs) return false;
-    this.deleteMessages(sessionId);
-    for (const msg of msgs) {
-      if (msg['role'] === 'part') continue;
-      this.insertMessage({
-        sessionId,
-        role: msg['role'] as string || 'system',
-        content: msg['content'] as string || '',
-        toolCalls: msg['tool_calls'] as string || undefined,
-        tokenCount: msg['token_count'] as number || undefined,
-      });
-    }
-    return true;
+    return restoreCheckpoint(this.checkpointCtx(), sessionId, checkpointId);
   }
 
   deleteCheckpoint(sessionId: string, checkpointId: string): boolean {
@@ -1524,158 +792,29 @@ export class PostgresStorageAdapter implements StorageAdapter {
     planState: string;
     failureHistory: string;
   }): void {
-    const id = generateId();
-    const now = new Date().toISOString();
-    const row: Record<string, unknown> = {
-      id,
-      session_id: snapshot.sessionId,
-      task_id: snapshot.taskId,
-      step_index: snapshot.stepIndex,
-      goal: snapshot.goal,
-      plan_state: snapshot.planState,
-      failure_history: snapshot.failureHistory,
-      created_at: now,
-    };
-    this.cache.taskSnapshots.set(snapshot.sessionId, row);
-    this.write('DELETE FROM task_snapshots WHERE session_id = $1', [snapshot.sessionId]);
-    this.write(
-      `INSERT INTO task_snapshots (id, session_id, task_id, step_index, goal, plan_state, failure_history, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, snapshot.sessionId, snapshot.taskId, snapshot.stepIndex, snapshot.goal, snapshot.planState, snapshot.failureHistory, now],
-    );
+    saveTaskSnapshotImpl(this.sessionExtrasCtx(), snapshot);
   }
 
   getTaskSnapshot(sessionId: string): Record<string, unknown> | null {
-    return this.cache.taskSnapshots.get(sessionId) ?? null;
+    return getTaskSnapshotImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   deleteTaskSnapshot(sessionId: string): void {
-    this.cache.taskSnapshots.delete(sessionId);
-    this.write('DELETE FROM task_snapshots WHERE session_id = $1', [sessionId]);
+    deleteTaskSnapshotImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   // ─── Token Logs ────────────────────────────────────────────────
 
   addTokenLog(sessionId: string, log: Omit<StorableTokenLog, 'id' | 'createdAt'>): void {
-    const id = generateId();
-    const extraLog = log as Record<string, unknown>;
-    const now = new Date().toISOString();
-    const entry = {
-      id,
-      sessionId,
-      model: (extraLog['model'] as string) || log.model,
-      inputTokens: log.inputTokens,
-      outputTokens: log.outputTokens,
-      costUsd: extraLog['costUsd'] ?? null,
-      crewId: extraLog['crewId'] ?? null,
-      createdAt: now,
-    } as StorableTokenLog & { costUsd?: unknown; crewId?: unknown };
-    const arr = this.cache.tokenLogs.get(sessionId) ?? [];
-    arr.push(entry);
-    this.cache.tokenLogs.set(sessionId, arr);
-    this.write(
-      `INSERT INTO token_logs (id,session_id,provider_id,model_id,input_tokens,output_tokens,reasoning_tokens,cost_usd,crew_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [
-        id, sessionId, extraLog['providerId'] || 'unknown',
-        extraLog['model'] || log.model,
-        log.inputTokens, log.outputTokens,
-        extraLog['reasoningTokens'] || 0,
-        extraLog['costUsd'] || null,
-        extraLog['crewId'] || null,
-      ]
-    );
+    addTokenLogImpl(this.tokenLogCtx(), sessionId, log);
   }
 
   getTokenLogs(sessionId: string): StorableTokenLog[] {
-    return this.cache.tokenLogs.get(sessionId) ?? [];
+    return getTokenLogsImpl(this.tokenLogCtx(), sessionId);
   }
 
   async getTokenLogsAsync(sessionId: string): Promise<StorableTokenLog[]> {
-    try {
-      const result = await this.pool.query(
-        `SELECT id,session_id as "sessionId",provider_id,model_id as "model",input_tokens as "inputTokens",output_tokens as "outputTokens",created_at as "createdAt"
-         FROM token_logs WHERE session_id = $1 ORDER BY created_at ASC`,
-        [sessionId]
-      );
-      return result.rows as StorableTokenLog[];
-    } catch { return []; }
-  }
-
-  // ─── Permissions ───────────────────────────────────────────────
-
-  addPermission(
-    sessionIdOrPerm: string | {
-      id: string;
-      sessionId: string;
-      toolName: string;
-      targetPath?: string | null;
-      decision: string;
-    },
-    perm?: Omit<StorablePermission, 'id' | 'createdAt'>,
-  ): void {
-    if (typeof sessionIdOrPerm === 'object') {
-      const p = sessionIdOrPerm;
-      this.addPermissionEntry(p.sessionId, {
-        id: p.id,
-        toolName: p.toolName,
-        targetPath: p.targetPath ?? null,
-        decision: p.decision,
-      });
-      return;
-    }
-    this.addPermissionEntry(sessionIdOrPerm, {
-      toolName: perm!.toolName,
-      targetPath: perm!.targetPath ?? null,
-      decision: perm!.decision,
-    });
-  }
-
-  private addPermissionEntry(
-    sessionId: string,
-    perm: { id?: string; toolName: string; targetPath: string | null; decision: string },
-  ): void {
-    const id = perm.id ?? generateId();
-    const now = new Date().toISOString();
-    const entry: StorablePermission = {
-      id, sessionId, toolName: perm.toolName, targetPath: perm.targetPath,
-      decision: perm.decision, createdAt: now,
-    };
-    const arr = this.cache.permissions.get(sessionId) ?? [];
-    arr.push(entry);
-    this.cache.permissions.set(sessionId, arr);
-    this.write(
-      'INSERT INTO permissions (id,session_id,tool_name,target_path,decision) VALUES ($1,$2,$3,$4,$5)',
-      [id, sessionId, perm.toolName, perm.targetPath, perm.decision]
-    );
-  }
-
-  getPermissions(sessionId: string): StorablePermission[] {
-    return this.cache.permissions.get(sessionId) ?? [];
-  }
-
-  async getPermissionsAsync(sessionId: string): Promise<StorablePermission[]> {
-    try {
-      const result = await this.pool.query(
-        `SELECT id,session_id as "sessionId",tool_name as "toolName",target_path as "targetPath",decision,created_at as "createdAt"
-         FROM permissions WHERE session_id = $1 ORDER BY created_at ASC`,
-        [sessionId]
-      );
-      return result.rows as StorablePermission[];
-    } catch { return []; }
-  }
-
-  removePermissions(sessionId: string, toolName?: string): void {
-    const arr = this.cache.permissions.get(sessionId) ?? [];
-    if (toolName) {
-      const next = arr.filter((p) => p.toolName !== toolName && p.id !== toolName);
-      if (next.length) this.cache.permissions.set(sessionId, next);
-      else this.cache.permissions.delete(sessionId);
-      this.write('DELETE FROM permissions WHERE session_id = $1 AND tool_name = $2', [sessionId, toolName]);
-      return;
-    }
-    this.cache.permissions.delete(sessionId);
-    this.write('DELETE FROM permissions WHERE session_id = $1', [sessionId]);
+    return getTokenLogsAsyncImpl(this.tokenLogCtx(), sessionId);
   }
 
   // ─── Tool Executions ───────────────────────────────────────────
@@ -1690,16 +829,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
     success?: boolean;
     elapsedMs?: number;
   }): void {
-    this.write(
-      `INSERT INTO tool_executions (id,session_id,agent_task_id,tool_name,input,output,success,elapsed_ms)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [
-        exec.id, exec.sessionId, exec.agentTaskId ?? null,
-        exec.toolName, exec.input, exec.output ?? null,
-        exec.success != null ? (exec.success ? 1 : 0) : null,
-        exec.elapsedMs ?? null,
-      ]
-    );
+    addToolExecutionImpl(this.sessionExtrasCtx(), exec);
   }
 
   // ─── Permission Rules ──────────────────────────────────────────
@@ -1712,28 +842,15 @@ export class PostgresStorageAdapter implements StorageAdapter {
     effect: string;
     comment?: string;
   }): void {
-    const entry: Record<string, unknown> = {
-      id: rule.id, session_id: rule.sessionId, action: rule.action,
-      pattern: rule.pattern ?? '*', effect: rule.effect,
-      comment: rule.comment ?? null,
-    };
-    const arr = this.cache.permissionRules.get(rule.sessionId) ?? [];
-    arr.push(entry);
-    this.cache.permissionRules.set(rule.sessionId, arr);
-    this.write(
-      `INSERT INTO permission_rules (id,session_id,action,pattern,effect,comment)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [rule.id, rule.sessionId, rule.action, rule.pattern ?? '*', rule.effect, rule.comment ?? null]
-    );
+    addPermissionRuleImpl(this.sessionExtrasCtx(), rule);
   }
 
   clearPermissionRules(sessionId: string): void {
-    this.cache.permissionRules.delete(sessionId);
-    this.write('DELETE FROM permission_rules WHERE session_id = $1', [sessionId]);
+    clearPermissionRulesImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   getPermissionRules(sessionId: string): Array<Record<string, unknown>> {
-    return this.cache.permissionRules.get(sessionId) ?? [];
+    return getPermissionRulesImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   // ─── Crew States ───────────────────────────────────────────────
@@ -1746,64 +863,25 @@ export class PostgresStorageAdapter implements StorageAdapter {
     lastActive?: string;
     messageCount?: number;
   }): void {
-    const now = new Date().toISOString();
-    const arr = this.cache.crewStates.get(state.sessionId) ?? [];
-    const idx = arr.findIndex((r) => r['crew_id'] === state.crewId);
-    const row: Record<string, unknown> = {
-      id: state.id, session_id: state.sessionId, crew_id: state.crewId,
-      enabled: state.enabled ? 1 : 0,
-      last_active: state.lastActive ?? null,
-      message_count: state.messageCount ?? 0,
-      created_at: idx >= 0 ? arr[idx]!['created_at'] : now,
-      updated_at: now,
-    };
-    if (idx >= 0) arr[idx] = row; else arr.push(row);
-    this.cache.crewStates.set(state.sessionId, arr);
-    this.write(
-      `INSERT INTO session_crew_states (id,session_id,crew_id,enabled,last_active,message_count,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW())
-       ON CONFLICT (session_id, crew_id) DO UPDATE SET
-         enabled = $4, last_active = $5, message_count = $6, updated_at = NOW()`,
-      [
-        state.id, state.sessionId, state.crewId,
-        state.enabled ? 1 : 0, state.lastActive ?? null, state.messageCount ?? 0,
-      ]
-    );
+    saveCrewStateImpl(this.sessionExtrasCtx(), state);
   }
 
   getCrewStates(sessionId: string): Array<Record<string, unknown>> {
-    return this.cache.crewStates.get(sessionId) ?? [];
+    return getCrewStatesImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   loadCrewStates(sessionId: string): Array<{ crewId: string; enabled: boolean; lastActive?: string; messageCount?: number }> {
-    const rows = this.cache.crewStates.get(sessionId) ?? [];
-    return rows.map((row) => ({
-      crewId: row['crew_id'] as string,
-      enabled: (row['enabled'] as number) === 1,
-      lastActive: row['last_active'] as string | undefined,
-      messageCount: row['message_count'] as number | undefined,
-    }));
+    return loadCrewStatesImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   // ─── Session Events ────────────────────────────────────────────
 
   insertSessionEvent(event: SessionEvent): void {
-    const arr = this.cache.sessionEvents.get(event.sessionId) ?? [];
-    arr.push(event);
-    this.cache.sessionEvents.set(event.sessionId, arr);
-    this.write(
-      `INSERT INTO session_events (id,session_id,sequence,event_type,payload)
-       VALUES ($1,$2,$3,$4,$5)`,
-      [crypto.randomUUID(), event.sessionId, event.sequence, event.type, JSON.stringify(event)]
-    );
+    insertSessionEventImpl(this.sessionExtrasCtx(), event);
   }
 
   getSessionEvents(sessionId: string, sinceSequence?: number): SessionEvent[] {
-    const events = this.cache.sessionEvents.get(sessionId) ?? [];
-    if (sinceSequence != null) {
-      return events.filter((e) => e.sequence >= sinceSequence);
-    }
-    return [...events];
+    return getSessionEventsImpl(this.sessionExtrasCtx(), sessionId, sinceSequence);
   }
 
   // ─── Crew Feedback ─────────────────────────────────────────────
@@ -1816,24 +894,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
     comment?: string | null;
     createdAt: string;
   }): void {
-    const entry: Record<string, unknown> = {
-      id: feedback.id, session_id: feedback.sessionId, crew_id: feedback.crewId,
-      positive: feedback.positive ? 1 : 0,
-      comment: feedback.comment ?? null,
-      created_at: feedback.createdAt,
-    };
-    const arr = this.cache.crewFeedback.get(feedback.crewId) ?? [];
-    arr.push(entry);
-    this.cache.crewFeedback.set(feedback.crewId, arr);
-    this.write(
-      `INSERT INTO crew_feedback (id,session_id,crew_id,positive,comment)
-       VALUES ($1,$2,$3,$4,$5)`,
-      [feedback.id, feedback.sessionId, feedback.crewId, feedback.positive ? 1 : 0, feedback.comment ?? null]
-    );
+    addCrewFeedbackImpl(this.sessionExtrasCtx(), feedback);
   }
 
   getCrewFeedback(crewId: string): Array<Record<string, unknown>> {
-    return this.cache.crewFeedback.get(crewId) ?? [];
+    return getCrewFeedbackImpl(this.sessionExtrasCtx(), crewId);
   }
 
   upsertTurnFeedback(feedback: {
@@ -1847,46 +912,11 @@ export class PostgresStorageAdapter implements StorageAdapter {
     metadata?: Record<string, unknown> | null;
     createdAt: string;
   }): void {
-    const entry: Record<string, unknown> = {
-      id: feedback.id,
-      session_id: feedback.sessionId,
-      message_id: feedback.messageId,
-      context_kind: feedback.contextKind,
-      crew_id: feedback.crewId ?? null,
-      rating: feedback.rating,
-      turn_summary: feedback.turnSummary ?? null,
-      metadata: feedback.metadata ? JSON.stringify(feedback.metadata) : null,
-      created_at: feedback.createdAt,
-    };
-    const arr = this.cache.turnFeedback.get(feedback.sessionId) ?? [];
-    const idx = arr.findIndex((e) => e['message_id'] === feedback.messageId);
-    if (idx >= 0) arr[idx] = entry;
-    else arr.push(entry);
-    this.cache.turnFeedback.set(feedback.sessionId, arr);
-    this.write(
-      `INSERT INTO turn_feedback (id,session_id,message_id,context_kind,crew_id,rating,turn_summary,metadata,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (session_id, message_id) DO UPDATE SET
-         rating = EXCLUDED.rating,
-         turn_summary = EXCLUDED.turn_summary,
-         metadata = EXCLUDED.metadata,
-         created_at = EXCLUDED.created_at`,
-      [
-        feedback.id,
-        feedback.sessionId,
-        feedback.messageId,
-        feedback.contextKind,
-        feedback.crewId ?? null,
-        feedback.rating,
-        feedback.turnSummary ?? null,
-        feedback.metadata ? JSON.stringify(feedback.metadata) : null,
-        feedback.createdAt,
-      ],
-    );
+    upsertTurnFeedbackImpl(this.sessionExtrasCtx(), feedback);
   }
 
   getTurnFeedbackBySession(sessionId: string): Array<Record<string, unknown>> {
-    return this.cache.turnFeedback.get(sessionId) ?? [];
+    return getTurnFeedbackBySessionImpl(this.sessionExtrasCtx(), sessionId);
   }
 
   setSessionResumeState(sessionId: string, state: {
@@ -1895,231 +925,90 @@ export class PostgresStorageAdapter implements StorageAdapter {
     payload: Record<string, unknown>;
     createdAt?: string;
   }): void {
-    const createdAt = state.createdAt ?? new Date().toISOString();
-    const entry = {
-      session_id: sessionId,
-      kind: state.kind,
-      message_id: state.messageId,
-      payload: JSON.stringify(state.payload),
-      created_at: createdAt,
-    };
-    this.cache.resumeState.set(sessionId, entry);
-    this.write(
-      `INSERT INTO session_resume_state (session_id, kind, message_id, payload, created_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (session_id) DO UPDATE SET
-         kind = EXCLUDED.kind,
-         message_id = EXCLUDED.message_id,
-         payload = EXCLUDED.payload,
-         created_at = EXCLUDED.created_at`,
-      [sessionId, state.kind, state.messageId, entry.payload, createdAt],
-    );
+    setSessionResumeStateImpl(this.resumeStateCtx(), sessionId, state);
   }
 
   getSessionResumeState(sessionId: string): Record<string, unknown> | null {
-    return this.cache.resumeState.get(sessionId) ?? null;
+    return getSessionResumeStateImpl(this.resumeStateCtx(), sessionId);
   }
 
   clearSessionResumeState(sessionId: string): void {
-    this.cache.resumeState.delete(sessionId);
-    this.write('DELETE FROM session_resume_state WHERE session_id = $1', [sessionId]);
+    clearSessionResumeStateImpl(this.resumeStateCtx(), sessionId);
+  }
+
+  private voiceRealtimeCtx(): VoiceRealtimeContext {
+    return {
+      pool: this.pool,
+      cache: this.cache,
+      write: (sql, params) => this.write(sql, params),
+    };
+  }
+
+  async getVoiceRealtimeState(sessionId: string): Promise<VoiceRealtimeState | null> {
+    return getVoiceRealtimeStateImpl(this.voiceRealtimeCtx(), sessionId);
+  }
+
+  async upsertVoiceRealtimeState(sessionId: string, patch: VoiceRealtimeStatePatch): Promise<VoiceRealtimeState> {
+    return upsertVoiceRealtimeStateImpl(this.voiceRealtimeCtx(), sessionId, patch);
+  }
+
+  async touchVoiceRealtimeActive(sessionId: string, at?: string): Promise<void> {
+    await touchVoiceRealtimeActiveImpl(this.voiceRealtimeCtx(), sessionId, at);
   }
 
   async getMessagesPage(
     sessionId: string,
     opts: { limit?: number; before?: string },
   ): Promise<{ messages: Array<Record<string, unknown>>; total: number; hasMore: boolean }> {
-    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-    const result = await this.pool.query(
-      `SELECT id, session_id as "sessionId", role, content, tool_calls as "toolCalls",
-              token_count as "tokenCount", parts, metadata, created_at as "createdAt"
-       FROM messages
-       WHERE session_id = $1
-         AND role IN ('user', 'assistant')
-         AND archived_at IS NULL
-         AND ($2::text IS NULL OR created_at < (SELECT created_at FROM messages WHERE id = $2 AND session_id = $1))
-       ORDER BY created_at DESC
-       LIMIT $3`,
-      [sessionId, opts.before ?? null, limit + 1],
-    );
-    const hasMore = result.rows.length > limit;
-    const rows = result.rows.slice(0, limit);
-    const totalResult = await this.pool.query(
-      `SELECT COUNT(*)::int as cnt FROM messages WHERE session_id = $1 AND role IN ('user', 'assistant') AND archived_at IS NULL`,
-      [sessionId],
-    );
-    const total = totalResult.rows[0].cnt as number;
-    const messages = rows.reverse().map((raw: Record<string, unknown>) => {
-      let parts = raw['parts'];
-      if (typeof parts === 'string') {
-        try { parts = JSON.parse(parts); } catch { parts = undefined; }
-      }
-      let metadata = raw['metadata'];
-      if (typeof metadata === 'string') {
-        try { metadata = JSON.parse(metadata); } catch { metadata = undefined; }
-      }
-      return { ...raw, parts, metadata } as unknown as Record<string, unknown>;
-    });
-    return { messages, total, hasMore };
+    return getMessagesPageImpl(this.messageCtx(), sessionId, opts);
   }
 
   // ─── Crew CRUD ─────────────────────────────────────────────────
 
   listCrews(): Crew[] {
-    return this.cache.crews;
+    return listCrewsImpl(this.crewCtx());
   }
 
   getCrew(id: string): Crew | undefined {
-    return this.cache.crews.find((c) => c.id === id);
+    return getCrewImpl(this.crewCtx(), id);
   }
 
   getDefaultCrew(): Crew | undefined {
-    return this.cache.crews.find((c) => c.isDefault);
+    return getDefaultCrewImpl(this.crewCtx());
   }
 
   createCrew(input: CrewCreateInput): Crew {
-    const now = new Date().toISOString();
-    const searchText = input.searchText ?? buildCrewSearchText({
-      name: input.name,
-      title: input.title,
-      callsign: input.callsign,
-      description: input.description,
-      tone: input.emotion,
-      expertise: input.expertise,
-      traits: input.traits,
-      tools: input.tools,
-      tags: input.tags,
-      systemPrompt: input.systemPrompt,
+    const crew = createCrewImpl(this.crewCtx(), input);
+    // Kick an immediate drain so user-created crews are not left only in the
+    // async write queue (lost on crash / clearEngine / restart).
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'createCrew', id: crew.id });
     });
-    const crew: Crew = {
-      id: input.id,
-      name: input.name,
-      title: input.title,
-      callsign: input.callsign || input.name.replace(/\s+/g, '').toLowerCase(),
-      systemPrompt: input.systemPrompt ?? '',
-      description: input.description,
-      emotion: input.emotion,
-      source: input.source ?? (input.catalogId ? 'hub' : 'custom'),
-      catalogId: input.catalogId,
-      searchText,
-      suggestable: input.suggestable ?? true,
-      isDefault: input.isDefault ?? false,
-      enabled: input.enabled ?? true,
-      expertise: input.expertise,
-      traits: input.traits,
-      toolPreferences: input.toolPreferences,
-      tools: input.tools,
-      tags: input.tags,
-      permissions: input.permissions,
-      model: input.model,
-      protocol: input.protocol,
-      quotas: input.quotas,
-      color: input.color,
-      icon: input.icon,
-      createdAt: now,
-      updatedAt: now,
-    };
-    this.cache.crews.push(crew);
-    this.write(
-      `INSERT INTO crews (id, name, title, description, system_prompt, expertise, traits, tool_preferences, enabled_tools, disabled_tools, is_default, metadata, source, catalog_id, search_text, suggestable, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-       ON CONFLICT (id) DO UPDATE SET
-         name = EXCLUDED.name,
-         title = EXCLUDED.title,
-         description = EXCLUDED.description,
-         system_prompt = EXCLUDED.system_prompt,
-         expertise = EXCLUDED.expertise,
-         traits = EXCLUDED.traits,
-         tool_preferences = EXCLUDED.tool_preferences,
-         enabled_tools = EXCLUDED.enabled_tools,
-         disabled_tools = EXCLUDED.disabled_tools,
-         is_default = EXCLUDED.is_default,
-         metadata = EXCLUDED.metadata,
-         source = EXCLUDED.source,
-         catalog_id = EXCLUDED.catalog_id,
-         search_text = EXCLUDED.search_text,
-         suggestable = EXCLUDED.suggestable,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        crew.id,
-        crew.name,
-        crew.title || null,
-        crew.description || '',
-        crew.systemPrompt,
-        crew.expertise?.join(',') ?? null,
-        crew.traits?.join(',') ?? null,
-        crew.toolPreferences?.enabled?.join(',') ?? null,
-        crew.toolPreferences?.enabled?.join(',') ?? null,
-        crew.toolPreferences?.disabled?.join(',') ?? null,
-        crew.isDefault ? 1 : 0,
-        JSON.stringify(crew),
-        crew.source ?? 'custom',
-        crew.catalogId ?? null,
-        searchText,
-        crew.suggestable !== false,
-        now,
-        now,
-      ]
-    );
     return crew;
   }
 
   updateCrew(id: string, updates: Partial<Crew>): Crew | null {
-    const idx = this.cache.crews.findIndex((c) => c.id === id);
-    if (idx < 0) return null;
-    const crew = { ...this.cache.crews[idx]!, ...updates, updatedAt: new Date().toISOString() };
-    crew.searchText = crew.searchText ?? buildCrewSearchText({
-      name: crew.name,
-      title: crew.title,
-      callsign: crew.callsign,
-      description: crew.description,
-      tone: crew.emotion,
-      expertise: crew.expertise,
-      traits: crew.traits,
-      tools: crew.tools,
-      tags: crew.tags,
-      systemPrompt: crew.systemPrompt,
+    const crew = updateCrewImpl(this.crewCtx(), id, updates);
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'updateCrew', id });
     });
-    this.cache.crews[idx] = crew;
-    this.write(
-      `UPDATE crews SET name=$1, title=$2, description=$3, system_prompt=$4, expertise=$5, traits=$6, tool_preferences=$7, enabled_tools=$8, disabled_tools=$9, is_default=$10, metadata=$11, source=$12, catalog_id=$13, search_text=$14, suggestable=$15, updated_at=$16
-       WHERE id=$17`,
-      [
-        crew.name,
-        crew.title || null,
-        crew.description || '',
-        crew.systemPrompt,
-        crew.expertise?.join(',') ?? null,
-        crew.traits?.join(',') ?? null,
-        crew.toolPreferences?.enabled?.join(',') ?? null,
-        crew.toolPreferences?.enabled?.join(',') ?? null,
-        crew.toolPreferences?.disabled?.join(',') ?? null,
-        crew.isDefault ? 1 : 0,
-        JSON.stringify(crew),
-        crew.source ?? 'custom',
-        crew.catalogId ?? null,
-        crew.searchText,
-        crew.suggestable !== false,
-        crew.updatedAt,
-        id,
-      ]
-    );
     return crew;
   }
 
   deleteCrew(id: string): void {
-    const idx = this.cache.crews.findIndex((c) => c.id === id);
-    if (idx >= 0) this.cache.crews.splice(idx, 1);
-    this.write('DELETE FROM crews WHERE id = $1', [id]);
+    deleteCrewImpl(this.crewCtx(), id);
+    void this.flushWriteQueue().catch((error) => {
+      logger.error('PG_CREW_FLUSH', error, { op: 'deleteCrew', id });
+    });
   }
 
   // ─── Agent Persona ────────────────────────────────────────────
 
-  getPersona(): { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] } | null {
+  getPersona(): AgentPersonaConfig | null {
     return this.cache.persona;
   }
 
-  setPersona(persona: { name: string; description: string; communicationStyle: string; decisionMaking: string; domainContext: string; traits: string[] }): void {
+  setPersona(persona: AgentPersonaConfig): void {
     this.cache.persona = { ...persona };
     this.write(
       `INSERT INTO agent_persona (id,name,description,communication_style,decision_making,domain_context,traits)
@@ -2158,15 +1047,21 @@ export class PostgresStorageAdapter implements StorageAdapter {
     this.cache.crewStates.clear();
     this.cache.sessionEvents.clear();
     this.cache.tokenLogs.clear();
-    this.cache.permissions.clear();
     this.cache.crewFeedback.clear();
     this.cache.turnFeedback.clear();
     this.cache.permissionRules.clear();
     this.cache.taskSnapshots.clear();
+    this.cache.voiceRealtime.clear();
     this.write('TRUNCATE sessions CASCADE');
+    this.write('TRUNCATE voice_realtime_state');
   }
 
   close(): void {
-    this.pool.end().catch(() => {});
+    // Best-effort flush so pending crew/session writes are not discarded with the pool.
+    void this.flushWriteQueue()
+      .catch((error) => logger.error('PG_CLOSE_FLUSH', error))
+      .finally(() => {
+        this.pool.end().catch(() => {});
+      });
   }
 }

@@ -1,5 +1,6 @@
 import { assignPartsToAssistantMessage, normalizeMessageForUi } from '@agentx/shared';
 import type { CrewManager } from '@agentx/engine';
+import type { StorableMessage } from '@agentx/shared';
 
 type MessageEnrichEngine = {
   crewManager: CrewManager;
@@ -20,19 +21,11 @@ export function selectRecentMessagesTail(
   };
 }
 
-/** @deprecated Use selectRecentMessagesTail — per-role slices leave gaps when paginating. */
-export function selectRecentMessagesPerRole(
-  messages: Array<Record<string, unknown>>,
-  perRole: number,
-): { messages: Array<Record<string, unknown>>; total: number; truncated: boolean } {
-  return selectRecentMessagesTail(messages, perRole * 2);
-}
-
 export function enrichSessionMessagesForUi(
   eng: MessageEnrichEngine,
-  messages: Array<Record<string, unknown>>,
+  messages: Array<Record<string, unknown> | StorableMessage>,
   parts: Array<Record<string, unknown>>,
-): Array<Record<string, unknown>> {
+): Array<Record<string, unknown> | StorableMessage> {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
     if (msg['role'] !== 'assistant') continue;
@@ -78,7 +71,7 @@ export function enrichSessionMessagesForUi(
 }
 
 /** Apply normalizeMessageForUi fields without dropping id, role, crew, or metadata. */
-export function mergeNormalizedMessageForApi(msg: Record<string, unknown>): Record<string, unknown> {
+export function mergeNormalizedMessageForApi(msg: Record<string, unknown> | StorableMessage): Record<string, unknown> {
   const normalized = normalizeMessageForUi(msg, []);
   return {
     ...msg,

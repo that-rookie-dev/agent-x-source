@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule } from '@agentx/shared';
+import type { Crew, EngineEvent, CollaborationProtocol, AgentXConfig, PermissionRule, QuestionnairePayload, StorageAdapter } from '@agentx/shared';
 import { generateMessageId, CREW_DOMAIN_KEYWORDS, appendStreamText, extractStreamTextDelta } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import type { AgentEventBus } from '../EventBus.js';
+import { resolveMaxOutputTokens } from '@agentx/shared';
 import { countInputTokens, estimateOutputTokens } from '../session/tokenCount.js';
 import type { TokenTracker } from '../session/TokenTracker.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
+import type { ToolService } from '../services/tool/ToolService.js';
+import type { MemoryService } from '../services/memory/MemoryService.js';
 import { streamText, stepCountIs, tool, jsonSchema } from 'ai';
 import { createAiSdkModel, createAiSdkTools } from './AiSdkBridge.js';
 import { FiberSet } from '../concurrency/FiberSet.js';
@@ -39,7 +42,8 @@ export function buildCrewPrivateIdentityPrompt(crew: Crew): string {
   if (voice) roleLines.push(voice);
   roleLines.push(
     `\n${buildCrewScopeBlock(crew)}`,
-    `\nThis is a private 1:1 chat. You are yourself — not Agent-X.`,
+    `\nThis is a private 1:1 channel (text chat or phone call). You are yourself — not Agent-X and not the dashboard voice agent.`,
+    `On voice/phone turns: talk like a real phone call in your own voice and manner — short natural speech, never a generic AI assistant.`,
     `[/CREW_IDENTITY]`,
   );
   return roleLines.join('\n');
@@ -90,9 +94,11 @@ export class CrewOrchestrator {
   private primaryMember: CrewMember | null = null;
   private activeModel: string = '';
   private toolRegistry?: ToolRegistry;
-  private toolExecutor?: ToolExecutor;
+  private toolExecutor?: ToolExecutor | ToolService;
+  private memoryService?: MemoryService;
   private config?: AgentXConfig;
   private sessionId: string = 'crew';
+  private waitForClarification?: (questionnaire: QuestionnairePayload) => Promise<string>;
   sessionManager?: SessionManager;
 
   constructor(provider: ProviderInterface, eventBus: AgentEventBus, tokenTracker?: TokenTracker) {
@@ -115,9 +121,17 @@ export class CrewOrchestrator {
     this.activeModel = model;
   }
 
-  setTools(registry: ToolRegistry, executor: ToolExecutor): void {
+  setTools(registry: ToolRegistry, executor: ToolExecutor | ToolService): void {
     this.toolRegistry = registry;
     this.toolExecutor = executor;
+  }
+
+  setMemoryService(memoryService: MemoryService | null | undefined): void {
+    this.memoryService = memoryService ?? undefined;
+  }
+
+  setClarificationHandler(handler: (questionnaire: QuestionnairePayload) => Promise<string>): void {
+    this.waitForClarification = handler;
   }
 
   setConfig(config: AgentXConfig): void {
@@ -163,7 +177,7 @@ export class CrewOrchestrator {
 
   getCrewHistory(_crewId: string): Array<Record<string, unknown>> {
     if (!this.sessionManager) return [];
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { getMessages?: (sessionId: string) => Array<Record<string, unknown>> };
     if (!store || typeof store.getMessages !== 'function') return [];
     return store.getMessages(this.sessionId);
   }
@@ -202,7 +216,7 @@ export class CrewOrchestrator {
 
   private persistCrewMessage(crewId: string, crewName: string, callsign: string, role: string, content: string): void {
     if (!this.sessionManager) return;
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { insertMessage?: (msg: { sessionId: string; role: string; content: string; metadata: Record<string, unknown> }) => void };
     if (!store || typeof store.insertMessage !== 'function') return;
     try {
       store.insertMessage({
@@ -230,6 +244,11 @@ export class CrewOrchestrator {
 
   private async extractCrewMemories(userMessage: string, crewResponse: string, crewId: string): Promise<void> {
     try {
+      // MemoryService seam is wired, but the legacy crew MemoryManager categories
+      // do not map to MemoryNodeCategory, so we keep the legacy fallback for now.
+      if (this.memoryService) {
+        // no-op
+      }
       const { MemoryExtractor } = await import('../secret-sauce/MemoryExtractor.js');
       const extractor = new MemoryExtractor(this.provider, this.activeModel);
       const memories = await extractor.extract(userMessage, crewResponse);
@@ -250,7 +269,6 @@ export class CrewOrchestrator {
     userMessage: string,
     _mainSystemPrompt: string,
     contextText?: string,
-    planMode = false,
     onChunk?: (delta: string) => void,
     shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
@@ -296,7 +314,7 @@ export class CrewOrchestrator {
 
     if (this.toolRegistry && this.toolExecutor && this.config) {
       try {
-        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, planMode, onChunk, shouldAbort);
+        return await this.callCrewWithAiSdk(member, userMessage, systemPrompt, startTime, emit, onChunk, shouldAbort);
       } catch (err) {
         // Fall through to legacy path on error
       }
@@ -350,13 +368,12 @@ export class CrewOrchestrator {
     systemPrompt: string,
     startTime: number,
     emit: (e: EngineEvent) => void,
-    planMode = false,
     onChunk?: (delta: string) => void,
     shouldAbort?: () => boolean,
   ): Promise<{ content: string; elapsed: number }> {
     const { ToolRegistry: TR } = await import('../tools/ToolRegistry.js');
     const filteredRegistry = new TR();
-    const allowedToolIds = resolveCrewToolIds(member.crew, planMode);
+    const allowedToolIds = resolveCrewToolIds(member.crew);
     const enabledPrefs = member.crew.toolPreferences?.enabled;
     const disabledPrefs = member.crew.toolPreferences?.disabled;
 
@@ -376,7 +393,7 @@ export class CrewOrchestrator {
     let prevSessionRules: PermissionRule[] = [];
     const crewExecutor = crewPermissions.length > 0 ? {
       execute: async (toolId: string, args: Record<string, unknown>, sid: string) => {
-        prevSessionRules = [...((baseExecutor as any).sessionRules || [])];
+        prevSessionRules = [...(baseExecutor.getSessionRules() || [])];
         baseExecutor.setSessionRules([...prevSessionRules, ...crewPermissions]);
         try {
           return await baseExecutor.execute(toolId, args, sid);
@@ -385,6 +402,7 @@ export class CrewOrchestrator {
         }
       },
       isTurnAborted: () => baseExecutor.isTurnAborted(),
+      setToolOutputHandler: (handler: (output: string) => void) => baseExecutor.setToolOutputHandler(handler),
     } : baseExecutor;
 
     const tools = createAiSdkTools(
@@ -392,9 +410,13 @@ export class CrewOrchestrator {
       crewExecutor,
       this.sessionId,
       emit,
-      () => Promise.resolve('Clarification not available in crew mode.'),
+      async (questionnaire: QuestionnairePayload) => {
+        if (!this.waitForClarification) {
+          return 'Proceed with your best judgment using available tools and context.';
+        }
+        return this.waitForClarification(questionnaire);
+      },
       () => Promise.resolve({ success: false as const, output: 'Sub-agents not supported in crew mode.', elapsed: 0 }),
-      planMode,
     );
 
     const interCrewTool = tool<Record<string, unknown>, string>({
@@ -478,6 +500,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       ],
       tools: allTools,
       temperature: 0,
+      maxOutputTokens: resolveMaxOutputTokens(this.config?.maxOutputTokens),
       stopWhen: stepCountIs(20),
       toolChoice: 'auto',
     });
@@ -494,7 +517,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
           break;
         }
         case 'error': {
-          const errMsg = String((chunk as any).error || 'AI SDK error');
+          const errMsg = String(chunk.error || 'AI SDK error');
           emit({ type: 'error', code: 'CREW_AI_SDK_ERROR', message: errMsg, recoverable: false } as unknown as EngineEvent);
           break;
         }
@@ -858,16 +881,23 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
       });
       this.persistCrewMessage(first.crew.id, first.crew.name, first.crew.callsign, 'assistant', firstOutput);
 
-      for (const handler of handlers) {
-        try {
+      const handlerResults = await Promise.allSettled(
+        handlers.map((handler) => {
           const refinePrompt = `Refine and improve this response from ${first.crew.name}. Add your perspective as ${handler.crew.title || handler.crew.name}. Original response:\n\n${firstOutput}`;
-          const { content: refined } = await this.callCrew(handler, refinePrompt, mainSystemPrompt);
+          return this.callCrew(handler, refinePrompt, mainSystemPrompt).then(({ content: refined }) => ({ handler, refined }));
+        }),
+      );
+      for (let hi = 0; hi < handlerResults.length; hi++) {
+        const result = handlerResults[hi]!;
+        if (result.status === 'fulfilled') {
+          const { handler, refined } = result.value;
           if (refined) {
             this.persistCrewMessage(handler.crew.id, handler.crew.name, handler.crew.callsign, 'assistant', refined);
             responses.push({ member: handler.crew.name, content: refined });
           }
-        } catch (err) {
-          responses.push({ member: handler.crew.name, content: `[Error: ${err instanceof Error ? err.message : 'failed'}]` });
+        } else {
+          const handler = handlers[hi]!;
+          responses.push({ member: handler.crew.name, content: `[Error: ${result.reason instanceof Error ? result.reason.message : 'failed'}]` });
         }
       }
     } catch (err) {
@@ -877,7 +907,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     return responses;
   }
 
-  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string, planMode = false): Promise<string> {
+  async interCrewMessage(fromId: string, toId: string, message: string, mainSystemPrompt: string): Promise<string> {
     const from = this.members.find(m => m.crew.id === fromId);
     const to = this.members.find(m => m.crew.id === toId);
     if (!from || !to) return '[Member not found]';
@@ -897,7 +927,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
     const systemPrompt = `${mainSystemPrompt}\n\n[CREW MEMBER: ${to.crew.name}]\n${to.crew.systemPrompt}\n\n[CONVERSATION CONTEXT]\n${context}\n\n[NOTE: ${from.crew.name} is asking you a question. Respond directly.]`;
 
     try {
-      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt, undefined, planMode);
+      const { content } = await this.callCrew(to, `[From ${from.crew.name}]: ${message}`, systemPrompt, undefined);
 
       this.conversation.push({
         id: generateMessageId(),
@@ -966,7 +996,7 @@ Do NOT proactively scan folders, list files, or read code unless instructed. If 
   ): Promise<{ content: string; elapsed: number; inputTokens: number; outputTokens: number; costUsd: number }> {
     const member = this.members.find((m) => m.crew.id === crewId) ?? this.members[0];
     if (!member) throw new Error('crew-not-loaded');
-    const result = await this.callCrew(member, userMessage, '', contextText, false, opts?.onChunk, opts?.shouldAbort);
+    const result = await this.callCrew(member, userMessage, '', contextText, opts?.onChunk, opts?.shouldAbort);
     if (opts?.shouldAbort?.()) throw new Error('crew-chat-cancelled');
     const inputTokens = countInputTokens((contextText ?? '') + userMessage);
     const outputTokens = estimateOutputTokens(result.content);
@@ -1052,7 +1082,7 @@ ${crewList}`;
 
   recordFeedback(crewId: string, thumbsUp: boolean): void {
     if (!this.sessionManager) return;
-    const store = (this.sessionManager as any).store;
+    const store = this.sessionManager.getStorageAdapter() as StorageAdapter & { addCrewFeedback?: (fb: { id: string; sessionId: string; crewId: string; positive: boolean; comment: string | null; createdAt: string }) => void };
     if (!store || typeof store.addCrewFeedback !== 'function') return;
     try {
       store.addCrewFeedback({

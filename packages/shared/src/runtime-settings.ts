@@ -34,11 +34,22 @@ export function resolveRuntimeSettings(
   const lazyStorageCache = settings?.lazyStorageCache !== false;
   const cores = Math.max(1, cpuCount);
 
-  // Map budget to ONNX threads: stay conservative on single-core budget (≤50% → 1 thread).
-  const onnxIntraOpThreads = cpuBudgetPercent <= 50
-    ? 1
-    : Math.min(2, Math.max(1, Math.round((cpuBudgetPercent / 100) * cores)));
-  const onnxInterOpThreads = 1;
+  // Map budget to ONNX threads: cap at 4 intra / 2 inter. Env overrides config.
+  const fromEnv = (name: string, max: number): number | undefined => {
+    const raw = process.env[name];
+    if (!raw) return undefined;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 1) return undefined;
+    return Math.min(max, parsed);
+  };
+
+  const computedIntra = Math.round((cpuBudgetPercent / 100) * cores);
+  const onnxIntraOpThreads = fromEnv('ONNX_THREADS', 4)
+    ?? (cpuBudgetPercent <= 50
+      ? 1
+      : Math.min(4, Math.max(1, computedIntra)));
+  const onnxInterOpThreads = fromEnv('ONNX_INTER_OP_THREADS', 2)
+    ?? (cpuBudgetPercent <= 50 ? 1 : Math.min(2, Math.max(1, computedIntra)));
 
   const derivedConcurrency = Math.max(
     1,

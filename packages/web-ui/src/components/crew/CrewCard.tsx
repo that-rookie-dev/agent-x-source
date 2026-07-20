@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Switch from '@mui/material/Switch';
@@ -8,6 +9,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ForumIcon from '@mui/icons-material/Forum';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import type { Crew } from '../../api';
 import { crewCardSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { SkillChips } from './SkillChips';
@@ -21,18 +23,22 @@ interface CrewCardProps {
   onOpen: (crew: Crew) => void;
   onPrivateChat?: (crew: Crew) => void;
   privateChatLoading?: boolean;
+  onCall?: (crew: Crew) => void;
+  callLoading?: boolean;
   onToggle: (id: string, enabled: boolean) => void;
   onEdit: (crew: Crew) => void;
   onDelete: (id: string) => void;
   onRegenerate: (e: React.MouseEvent, crew: Crew) => void;
 }
 
-export function CrewCard({
+function CrewCardComponent({
   crew,
   regenerating,
   onOpen,
   onPrivateChat,
   privateChatLoading,
+  onCall,
+  callLoading,
   onToggle,
   onEdit,
   onDelete,
@@ -145,6 +151,18 @@ export function CrewCard({
               </IconButton>
             </Tooltip>
           )}
+          {onCall && (
+            <Tooltip title="Secure call">
+              <IconButton
+                size="small"
+                disabled={callLoading}
+                onClick={(e) => { e.stopPropagation(); onCall(crew); }}
+                sx={{ p: 0.35, color: accent, '&:hover': { color: crewTheme.text.primary, bgcolor: alphaColor(accent, '15') } }}
+              >
+                {callLoading ? <CircularProgress size={12} /> : <PhoneInTalkIcon sx={{ fontSize: 14 }} />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Switch
             size="small"
             checked={enabled}
@@ -176,3 +194,5 @@ export function CrewCard({
     </Box>
   );
 }
+
+export const CrewCard = memo(CrewCardComponent);

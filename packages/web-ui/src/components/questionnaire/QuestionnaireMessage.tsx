@@ -16,15 +16,17 @@ import {
 export interface QuestionnaireMessageProps {
   record: QuestionnaireRecord;
   onRespond?: (response: string) => void;
+  /** Agent persona name — used as the fallback source label. */
+  agentName?: string;
 }
 
-function sourceLabel(record: QuestionnaireRecord): string {
+function sourceLabel(record: QuestionnaireRecord, agentName?: string): string {
   const payload = record.payload;
   if (payload.title) return payload.title;
   if (payload.source?.kind === 'crew') {
     return payload.source.callsign ?? payload.source.name ?? 'Crew';
   }
-  return 'Agent-X';
+  return agentName ?? 'Agent-X';
 }
 
 function ReadonlyAnswer({ prompt, answer }: { prompt: string; answer: string }) {
@@ -43,7 +45,7 @@ function ReadonlyAnswer({ prompt, answer }: { prompt: string; answer: string }) 
   );
 }
 
-export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessageProps) {
+export function QuestionnaireMessage({ record, onRespond, agentName }: QuestionnaireMessageProps) {
   const payload = useMemo(() => sanitizeQuestionnairePayload(record.payload), [record.payload]);
   const { status, answer } = record;
   const isPending = status === 'pending' && !!onRespond;
@@ -103,7 +105,7 @@ export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessage
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
           <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-            {sourceLabel(record)}
+            {sourceLabel(record, agentName)}
           </Typography>
           {!isPending && (
             <Typography sx={{
@@ -181,21 +183,5 @@ export function QuestionnaireMessage({ record, onRespond }: QuestionnaireMessage
         </Box>
       )}
     </Box>
-  );
-}
-
-/** @deprecated Use QuestionnaireMessage inside chat turns */
-export function QuestionnairePanel({
-  payload,
-  onRespond,
-}: {
-  payload: import('./types').QuestionnairePayload;
-  onRespond: (response: string) => void;
-}) {
-  return (
-    <QuestionnaireMessage
-      record={{ payload, status: 'pending' }}
-      onRespond={onRespond}
-    />
   );
 }

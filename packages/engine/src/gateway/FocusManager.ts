@@ -1,3 +1,5 @@
+import { getLogger } from '@agentx/shared';
+
 export type ChannelId = string;
 
 export type FocusState = 'focused' | 'background' | 'away';
@@ -139,7 +141,9 @@ export class FocusManager {
 
   private notifyListeners(event: FocusChangeEvent): void {
     for (const listener of this.listeners) {
-      try { listener(event); } catch {}
+      try { listener(event); } catch (err) {
+        getLogger().warn('FOCUS_MANAGER', `Focus listener threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 }

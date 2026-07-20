@@ -132,31 +132,31 @@ export interface ResolvedHostCrewDisplay {
 }
 
 export function resolveHostCrewDisplay(
-  session: Record<string, unknown>,
+  session: Session,
   rosterCrew?: CrewWithHubMeta,
 ): ResolvedHostCrewDisplay {
-  const hostCrewId = (session['hostCrewId'] as string | null | undefined) ?? null;
+  const hostCrewId = session.hostCrewId ?? null;
   const fallbackCallsign = callsignFromHostCrewId(hostCrewId);
 
   const rawName = rosterCrew?.name
-    ?? (session['hostCrewName'] as string | null | undefined)
-    ?? (session['title'] as string | null | undefined)
+    ?? session.hostCrewName
+    ?? session.title
     ?? null;
   const rawCallsign = rosterCrew?.callsign
-    ?? (session['hostCrewCallsign'] as string | null | undefined)
+    ?? session.hostCrewCallsign
     ?? fallbackCallsign
     ?? null;
   const hostCrewTitle = rosterCrew?.title
-    ?? (session['hostCrewTitle'] as string | null | undefined)
+    ?? session.hostCrewTitle
     ?? null;
   const hostCrewColor = rosterCrew?.color
-    ?? (session['hostCrewColor'] as string | null | undefined)
+    ?? session.hostCrewColor
     ?? null;
   const hostCrewCatalogId = rosterCrew?.catalogId
-    ?? (session['hostCrewCatalogId'] as string | null | undefined)
+    ?? session.hostCrewCatalogId
     ?? (hostCrewId?.startsWith('hub-') ? hostCrewId : null);
   const hostCrewCategoryId = rosterCrew?.categoryId
-    ?? (session['hostCrewCategoryId'] as string | null | undefined)
+    ?? session.hostCrewCategoryId
     ?? null;
 
   let hostCrewName = rawName;
@@ -371,6 +371,3 @@ export async function resolveCrewPrivateHostForSession(
 
   return crewFromSessionSnapshot(session);
 }
-
-/** @deprecated Use resolveCrewPrivateHostForSession — private chat no longer recruits to roster. */
-export const ensureCrewPrivateHostOnRoster = resolveCrewPrivateHostForSession;

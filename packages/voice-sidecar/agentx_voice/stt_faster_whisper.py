@@ -7,12 +7,12 @@ from typing import Any
 
 import numpy as np
 
-# Minimum buffered audio before attempting a live partial decode (~300ms @ 16kHz mono s16).
-_MIN_PARTIAL_BYTES = int(16_000 * 0.3) * 2
-# Only re-run partial decode when the stream buffer grew by ~350ms since last pass.
-_MIN_PARTIAL_GROWTH_BYTES = int(16_000 * 0.35) * 2
+# Minimum buffered audio before attempting a live partial decode (~200ms @ 16kHz mono s16).
+_MIN_PARTIAL_BYTES = int(16_000 * 0.2) * 2
+# Only re-run partial decode when the stream buffer grew by ~200ms since last pass.
+_MIN_PARTIAL_GROWTH_BYTES = int(16_000 * 0.2) * 2
 # Preview requests decode only the trailing window for lower latency captions.
-_PREVIEW_TAIL_SECONDS = 5.0
+_PREVIEW_TAIL_SECONDS = 3.0
 
 
 class FasterWhisperStt:
@@ -29,7 +29,7 @@ class FasterWhisperStt:
         self._last_partial_decode_at = 0.0
 
     def warm(self, request: dict[str, Any]) -> None:
-        model_id = str(request.get("sttModelId") or request.get("modelId") or "faster-whisper-base.en")
+        model_id = str(request.get("sttModelId") or request.get("modelId") or "faster-distil-whisper-small.en")
         device = str(request.get("sttDevice") or request.get("device") or "auto")
         compute_type = str(request.get("sttComputeType") or request.get("computeType") or "int8")
         self._load(model_id, device, compute_type)
@@ -39,7 +39,7 @@ class FasterWhisperStt:
         if not isinstance(audio_path, str) or not audio_path:
             raise ValueError("audioPath is required")
 
-        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-whisper-base.en")
+        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-distil-whisper-small.en")
         device = str(request.get("device") or request.get("sttDevice") or "auto")
         compute_type = str(request.get("computeType") or request.get("sttComputeType") or "int8")
         model = self._load(model_id, device, compute_type)
@@ -68,6 +68,8 @@ class FasterWhisperStt:
     def stream_transcribe(self, request: dict[str, Any], vad: Any | None = None) -> dict[str, Any]:
         if request.get("reset"):
             self._reset_stream_state()
+            if vad is not None and hasattr(vad, "reset_states"):
+                vad.reset_states()
 
         sample_rate = int(request.get("sampleRate", self._stream_sample_rate or 16_000))
         self._stream_sample_rate = sample_rate
@@ -78,10 +80,14 @@ class FasterWhisperStt:
         vad_result: dict[str, Any] | None = None
         if isinstance(pcm_b64, str) and pcm_b64:
             pcm = base64.b64decode(pcm_b64)
-            if vad is not None and pcm and not preview:
-                vad_result = vad.detect({"pcm": pcm, "sampleRate": sample_rate})
             if preview:
-                return self._preview_transcribe(pcm, sample_rate, request, vad_result)
+                # Never feed overlapping preview windows into stateful Silero —
+                # that keeps isSpeech stuck true after the user stops talking.
+                # Duplex endpointing calls /vad/detect on incremental chunks.
+                return self._preview_transcribe(pcm, sample_rate, request, None)
+            # Incremental stream chunks: VAD for speechEnd / isSpeech.
+            if vad is not None and pcm:
+                vad_result = vad.detect({"pcm": pcm, "sampleRate": sample_rate})
             self._append_stream_pcm(pcm)
 
         speech_end = bool(vad_result and vad_result.get("speechEndMs") is not None and not vad_result.get("isSpeech"))
@@ -166,7 +172,7 @@ class FasterWhisperStt:
             return True
         if buffer_len - self._last_partial_decode_bytes >= _MIN_PARTIAL_GROWTH_BYTES:
             return True
-        return (time.monotonic() - self._last_partial_decode_at) >= 0.9
+        return (time.monotonic() - self._last_partial_decode_at) >= 0.5
 
     def _transcribe_stream_buffer(
         self,
@@ -198,7 +204,7 @@ class FasterWhisperStt:
         if not pcm:
             return {"text": "", "segments": [], "language": None, "confidence": None}
 
-        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-whisper-base.en")
+        model_id = str(request.get("modelId") or request.get("sttModelId") or "faster-distil-whisper-small.en")
         device = str(request.get("device") or request.get("sttDevice") or "auto")
         compute_type = str(request.get("computeType") or request.get("sttComputeType") or "int8")
         model = self._load(model_id, device, compute_type)

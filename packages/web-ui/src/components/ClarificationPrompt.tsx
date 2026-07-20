@@ -11,4 +11,4 @@ export {
   canSubmitQuestionnaire,
 } from './questionnaire/types';
 
-export { QuestionnaireMessage, QuestionnairePanel } from './questionnaire/QuestionnaireMessage';
+export { QuestionnaireMessage } from './questionnaire/QuestionnaireMessage';

@@ -7,7 +7,6 @@ export interface Session {
   providerId: string;
   modelId: string;
   scopePath: string;
-  mode: 'agent' | 'plan';
   /** agent_x (default) or crew_private for 1:1 user↔crew chat */
   contextKind?: SessionContextKind;
   /** Set when contextKind is crew_private */
@@ -18,7 +17,8 @@ export interface Session {
   hostCrewColor?: string | null;
   hostCrewCatalogId?: string | null;
   hostCrewCategoryId?: string | null;
-  hyperdrive?: boolean;
+  /** Runtime-only flag loaded from the session-local permission file. */
+  bypassPermissions?: boolean;
   tokenUsed: number;
   tokenAvailable: number;
   status: SessionStatus;

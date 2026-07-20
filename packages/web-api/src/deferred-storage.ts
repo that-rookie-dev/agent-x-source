@@ -3,7 +3,6 @@ import type {
   StorableSession,
   StorableMessage,
   StorableTokenLog,
-  StorablePermission,
   Crew,
   CrewCreateInput,
 } from '@agentx/shared';
@@ -55,11 +54,6 @@ export class DeferredStorageAdapter implements StorageAdapter {
     return [];
   }
 
-  addPermission(): void {}
-  getPermissions(): StorablePermission[] {
-    return [];
-  }
-
   listCrews(): Crew[] {
     return [];
   }
@@ -76,6 +70,7 @@ export class DeferredStorageAdapter implements StorageAdapter {
     return null;
   }
   deleteCrew(): void {}
+  async flushWrites(): Promise<void> {}
   getPersona() {
     return null;
   }

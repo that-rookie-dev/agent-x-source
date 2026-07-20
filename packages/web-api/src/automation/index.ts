@@ -6,15 +6,52 @@ import {
   notifyToolsForChannels,
   resolveAutomationNotifyChannels,
 } from '@agentx/engine';
-import { getLogger, isChannelSessionId } from '@agentx/shared';
-import { getEngine, getOrCreateAgent } from '../engine.js';
+import { getLogger, parseChannelBindingFromSessionId, type ChannelBindingId } from '@agentx/shared';
+import { getEngine, getOrCreateAgent, ensureChannelAgent } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { startPgBoss, stopPgBoss } from './boss.js';
 import { AutomationService, type AutomationDbPool } from './service.js';
 import { startAutomationWorker, triggerAutomationRun } from './worker.js';
+import { startBackgroundTaskNotifier, stopBackgroundTaskNotifier } from './background-notify.js';
 
 let service: AutomationService | null = null;
 let stopWorker: (() => void) | null = null;
+
+function resolveMessagingChannelForSession(
+  eng: ReturnType<typeof getEngine>,
+  sessionId: string,
+): ChannelBindingId | null {
+  const fromSession = parseChannelBindingFromSessionId(sessionId);
+  if (fromSession) return fromSession;
+  const bindings = eng.channelSessionBindings ?? {};
+  for (const channel of Object.keys(bindings) as ChannelBindingId[]) {
+    if (bindings[channel]?.sessionId === sessionId) return channel;
+  }
+  return null;
+}
+
+function resolveAgentForAutomationSession(sessionId: string) {
+  const eng = getEngine();
+  const channel = parseChannelBindingFromSessionId(sessionId);
+  if (channel) {
+    // Voice sessions use the live engine agent so questionnaires and permissions
+    // are surfaced through the active voice websocket, not a separate channel agent.
+    if (channel === 'voice') {
+      const active = eng.agent;
+      if (active?.currentSessionId === sessionId) return active;
+      return null;
+    }
+    return ensureChannelAgent(channel);
+  }
+  const session = eng.sessionManager.getSessionById(sessionId);
+  if (!session) return null;
+
+  let agent = eng.agent;
+  if (!agent || agent.currentSessionId !== sessionId) {
+    agent = getOrCreateAgent(eng.configManager.load(), session);
+  }
+  return agent;
+}
 
 export function getAutomationService(): AutomationService | null {
   return service;
@@ -30,10 +67,8 @@ export async function initAutomation(connectionString: string, pool: AutomationD
       const eng = getEngine();
       const session = eng.sessionManager.getSessionById(sessionId);
       if (!session) return { ok: false, error: 'Session not found' };
-      let agent = eng.agent;
-      if (!agent || agent.currentSessionId !== sessionId) {
-        agent = getOrCreateAgent(eng.configManager.load(), session);
-      }
+      const agent = resolveAgentForAutomationSession(sessionId);
+      if (!agent) return { ok: false, error: 'Session not found' };
       return agent.ensureAutomationToolsApproved(toolIds);
     },
     promptNotifyChannels: async (sessionId) => {
@@ -41,24 +76,15 @@ export async function initAutomation(connectionString: string, pool: AutomationD
       const session = eng.sessionManager.getSessionById(sessionId);
       if (!session) return ['in_app'];
       const status = getNotificationChannelStatus(eng.configManager.load(), getTelegramRuntimeHints());
+      const messagingChannel = resolveMessagingChannelForSession(eng, sessionId);
+      const agent = resolveAgentForAutomationSession(sessionId);
+      if (!agent) return ['in_app'];
 
-      // Messaging channels have no questionnaire UI — always notify back on the same surface.
-      if (isChannelSessionId(sessionId)) {
-        return resolveAutomationNotifyChannels({
-          sourceChannel: 'telegram',
-          sourceSessionId: sessionId,
-          status,
-        });
-      }
-
-      let agent = eng.agent;
-      if (!agent || agent.currentSessionId !== sessionId) {
-        agent = getOrCreateAgent(eng.configManager.load(), session);
-      }
+      // Same delivery-channel questionnaire on web and messaging surfaces.
       const questionnaire = buildAutomationNotifyQuestionnaire(status);
       const answer = await agent.promptAutomationNotifyChannels(questionnaire);
       return resolveAutomationNotifyChannels({
-        sourceChannel: sessionId === '__channel__' ? 'telegram' : undefined,
+        sourceChannel: messagingChannel ?? undefined,
         sourceSessionId: sessionId,
         status,
         questionnaireAnswer: answer,
@@ -68,10 +94,8 @@ export async function initAutomation(connectionString: string, pool: AutomationD
       const eng = getEngine();
       const session = eng.sessionManager.getSessionById(sessionId);
       if (!session) return;
-      let agent = eng.agent;
-      if (!agent || agent.currentSessionId !== sessionId) {
-        agent = getOrCreateAgent(eng.configManager.load(), session);
-      }
+      const agent = resolveAgentForAutomationSession(sessionId);
+      if (!agent) return;
       agent.grantAutomationNotifyTools(notifyToolsForChannels(channels));
     },
     registerTask: async (input) => {
@@ -82,11 +106,13 @@ export async function initAutomation(connectionString: string, pool: AutomationD
     cancelTask: (idOrKey, sessionId) => service!.cancelTask(idOrKey, sessionId),
   });
   stopWorker = await startAutomationWorker(service);
+  startBackgroundTaskNotifier();
   getLogger().info('AUTOMATION', 'Automation subsystem initialized');
 }
 
 export async function shutdownAutomation(): Promise<void> {
   setAutomationBridge(null);
+  stopBackgroundTaskNotifier();
   stopWorker?.();
   stopWorker = null;
   service = null;

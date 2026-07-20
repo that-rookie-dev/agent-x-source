@@ -103,6 +103,7 @@ const {
     spawn: vi.fn(),
     setParentAgent: vi.fn(),
     setMaxConcurrent: vi.fn(),
+    ingestBackgroundResultsForSession: vi.fn(),
   });
 
   const createTaskMgr = () => ({
@@ -612,6 +613,11 @@ describe('Agent', () => {
 
       expect(result).toBe(true);
       expect(agent.isModelGrounded('gpt-4o')).toBe(false);
+      expect(mockProvider.complete).toHaveBeenCalledWith(
+        expect.objectContaining({ maxTokens: expect.any(Number) }),
+      );
+      const trialRequest = mockProvider.complete.mock.calls[0]?.[0] as { maxTokens?: number };
+      expect(trialRequest.maxTokens).toBeGreaterThanOrEqual(16);
     });
 
     it('returns false and grounds model on error', async () => {
@@ -847,37 +853,48 @@ describe('Agent', () => {
     });
   });
 
-  // ─── Hyperdrive mode ────────────────────────────────────────────────
-  describe('hyperdrive mode', () => {
-    it('emits hyperdrive_entered and exits plan mode when engaged from plan', () => {
+  // ─── Bypass permissions ─────────────────────────────────────────────
+  describe('bypass permissions', () => {
+    it('starts with permissions enforced', () => {
       const agent = createTestAgent();
-      agent.setPlanMode(true);
-      expect(agent.planModeEnabled).toBe(true);
+      expect(agent.bypassPermissions).toBe(false);
+    });
 
-      expect(agent.toggleHyperdriveMode()).toBe(true);
-      expect(agent.hyperdriveMode).toBe(true);
-      expect(agent.planModeEnabled).toBe(false);
-      expect(agent.autoApproveTools).toBe(true);
+    it('setBypassPermissions enables and disables bypass and emits event', () => {
+      const agent = createTestAgent();
+      agent.setBypassPermissions(true);
+      expect(agent.bypassPermissions).toBe(true);
       expect(mockEventBus.emit).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'hyperdrive_entered', mode: 'agent', wasPlan: true }),
+        expect.objectContaining({ type: 'bypass_permissions_changed', enabled: true }),
+      );
+
+      mockEventBus.emit.mockClear();
+      agent.setBypassPermissions(false);
+      expect(agent.bypassPermissions).toBe(false);
+      expect(mockEventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'bypass_permissions_changed', enabled: false }),
       );
     });
 
-    it('restores plan mode on exit when hyperdrive started from plan', () => {
+    it('toggleBypassPermissions flips the current state', () => {
       const agent = createTestAgent();
-      agent.setPlanMode(true);
-      agent.toggleHyperdriveMode();
-      agent.toggleHyperdriveMode();
-      expect(agent.hyperdriveMode).toBe(false);
-      expect(agent.planModeEnabled).toBe(true);
+      expect(agent.toggleBypassPermissions()).toBe(true);
+      expect(agent.bypassPermissions).toBe(true);
+      expect(agent.toggleBypassPermissions()).toBe(false);
+      expect(agent.bypassPermissions).toBe(false);
     });
 
-    it('ignores setPlanMode(true) while hyperdrive is active', () => {
+    it('revokeSessionPermissions clears bypass and emits event', () => {
       const agent = createTestAgent();
-      agent.setPlanMode(false);
-      agent.toggleHyperdriveMode();
-      agent.setPlanMode(true);
-      expect(agent.planModeEnabled).toBe(false);
+      agent.setBypassPermissions(true);
+      expect(agent.bypassPermissions).toBe(true);
+
+      mockEventBus.emit.mockClear();
+      agent.revokeSessionPermissions();
+      expect(agent.bypassPermissions).toBe(false);
+      expect(mockEventBus.emit).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'bypass_permissions_changed', enabled: false }),
+      );
     });
   });
 });

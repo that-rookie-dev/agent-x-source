@@ -67,6 +67,15 @@ jobs:
 
       - run: pnpm run build
 
+      - name: Build engine package
+        run: pnpm -C packages/engine build
+
+      - name: Build web-api package
+        run: pnpm -C packages/web-api build
+
+      - name: Type check (all packages)
+        run: pnpm run typecheck
+
       - name: Pre-install MCP E2E stdio packages
         run: npx -y @pulsemcp/pulse-fetch --version
         timeout-minutes: 5

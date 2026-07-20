@@ -1,6 +1,7 @@
 import { resolve, normalize, sep } from 'node:path';
 import { realpathSync, existsSync } from 'node:fs';
 import { platform } from 'node:os';
+import { isAgentInternalPath } from '@agentx/shared';
 import { GitManager } from '../../session/GitManager.js';
 import { execSync } from 'node:child_process';
 
@@ -63,7 +64,12 @@ export class ScopeGuard {
       return { valid: false, resolved: targetPath, error: 'Path contains null bytes' };
     }
 
+    // Agent-internal paths (data/tmp) are always allowed — these are app-scoped scratch
+    // and deliverable directories, not user workspace, so they never require scope checks.
     let resolved = normalize(resolve(this.scopePath, targetPath));
+    if (isAgentInternalPath(targetPath) || isAgentInternalPath(resolved)) {
+      return { valid: true, resolved };
+    }
 
     // Strip trailing separator to prevent comparison bypass
     while (resolved.endsWith(sep) && resolved.length > 1) {

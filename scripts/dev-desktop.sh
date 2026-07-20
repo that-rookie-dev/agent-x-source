@@ -18,7 +18,6 @@ sleep 1
 echo ">>> Building shared, engine, web-api, web-ui, web-neuron..."
 cd "$ROOT_DIR"
 pnpm --filter @agentx/shared run build
-pnpm --filter @agentx/canvas run build
 pnpm --filter @agentx/engine run build
 pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
@@ -27,6 +26,9 @@ pnpm --filter @agentx/web-neuron run build
 echo ">>> Building desktop main/preload..."
 cd "$DESKTOP_DIR"
 pnpm run build
+
+echo ">>> Setting up embedded Redis..."
+pnpm --filter @agentx/runtime run setup:redis
 
 echo ">>> Packing unpacked desktop app (electron-builder --dir)..."
 pnpm exec electron-builder --mac --dir

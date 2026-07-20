@@ -8,12 +8,13 @@ import DialogContent from '@mui/material/DialogContent';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import ChatIcon from '@mui/icons-material/Chat';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import CloseIcon from '@mui/icons-material/Close';
 import AssignmentIndIcon from '@mui/icons-material/AssignmentInd';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import type { PrebuiltCrew } from './CrewHubDialog';
+import type { PrebuiltCrew } from './hub-types';
 import { crewDialogPaperSx, crewHubScanlineSx, crewOverlineSx, crewTheme, getCrewAccent } from '../../styles/crew-theme';
 import { MedicalDisclaimerSectorCard, MedicalProfileIdentityFrame, isMedicalCrewDisplay } from './MedicalDisclaimerBanner';
 import { crewDisplayFields } from '../../utils/crew-display';
@@ -39,6 +40,9 @@ interface CrewProfileDialogProps {
   /** Open private 1:1 crew chat (recruits from hub if needed) */
   onPrivateChat?: () => void;
   privateChatLoading?: boolean;
+  /** Start secure voice call with this crew persona */
+  onCall?: () => void;
+  callLoading?: boolean;
   /** When set, dialog runs in roster mode with edit/delete/toggle actions */
   rosterActions?: RosterProfileActions;
   accentColor?: string;
@@ -204,6 +208,8 @@ export function CrewProfileDialog({
   onRemove,
   onPrivateChat,
   privateChatLoading,
+  onCall,
+  callLoading,
   rosterActions,
   accentColor,
 }: CrewProfileDialogProps) {
@@ -449,6 +455,26 @@ export function CrewProfileDialog({
                   PRIVATE CHAT
                 </Button>
               )}
+              {onCall && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={callLoading ? <CircularProgress size={12} color="inherit" /> : <PhoneInTalkIcon sx={{ fontSize: 14 }} />}
+                  disabled={callLoading}
+                  onClick={onCall}
+                  sx={{
+                    fontSize: '0.62rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.5px',
+                    py: 0.6,
+                    borderColor: alphaColor(accent, 0.55),
+                    color: accent,
+                    '&:hover': { borderColor: accent, bgcolor: alphaColor(accent, 0.1) },
+                  }}
+                >
+                  CALL
+                </Button>
+              )}
               <Box sx={{
                 display: 'flex',
                 alignItems: 'center',
@@ -551,8 +577,28 @@ export function CrewProfileDialog({
                   PRIVATE CHAT
                 </Button>
               )}
+              {onCall && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={callLoading ? <CircularProgress size={12} color="inherit" /> : <PhoneInTalkIcon sx={{ fontSize: 14 }} />}
+                  disabled={callLoading}
+                  onClick={onCall}
+                  sx={{
+                    fontSize: '0.62rem',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    letterSpacing: '0.5px',
+                    py: 0.6,
+                    borderColor: alphaColor(accent, 0.55),
+                    color: accent,
+                    '&:hover': { borderColor: accent, bgcolor: alphaColor(accent, 0.1) },
+                  }}
+                >
+                  CALL
+                </Button>
+              )}
               <Button
-                fullWidth={!onPrivateChat}
+                fullWidth={!onPrivateChat && !onCall}
                 size="small"
                 variant="outlined"
                 onClick={onRemove}
@@ -610,6 +656,27 @@ export function CrewProfileDialog({
                     }}
                   >
                     CHAT
+                  </Button>
+                )}
+                {onCall && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    fullWidth
+                    startIcon={callLoading ? <CircularProgress size={12} color="inherit" /> : <PhoneInTalkIcon sx={{ fontSize: 14 }} />}
+                    disabled={callLoading}
+                    onClick={onCall}
+                    sx={{
+                      fontSize: '0.62rem',
+                      fontFamily: "'JetBrains Mono', monospace",
+                      letterSpacing: '0.5px',
+                      py: 0.6,
+                      borderColor: alphaColor(accent, 0.55),
+                      color: accent,
+                      '&:hover': { borderColor: accent, bgcolor: alphaColor(accent, 0.1) },
+                    }}
+                  >
+                    CALL
                   </Button>
                 )}
               </Box>

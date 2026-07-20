@@ -3,7 +3,7 @@ import { VOICE_HANDS_FREE_ENABLED } from '../src/voice/voice-config';
 import { phaseActiveChannel, resolveCommsPhase } from '../src/components/voice/voice-comms-phase';
 
 describe('voice config', () => {
-  it('hides hands-free until push-to-talk is polished', () => {
+  it('keeps local hands-free disabled (Local engine is PTT-only)', () => {
     expect(VOICE_HANDS_FREE_ENABLED).toBe(false);
   });
 });

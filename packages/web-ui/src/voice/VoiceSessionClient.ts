@@ -1,5 +1,6 @@
 import { syncAuthTokenFromSession } from '../api';
 import { collectClientSituation } from '../client-situation.js';
+import { XAI_BARGE_IN_MIC_LEVEL } from './constants.js';
 import { VOICE_SAMPLE_RATE, mergeInt16Chunks } from './pcm.js';
 import { StreamingPlayback } from './playback.js';
 import { VOICE_CAPTURE_PROCESSOR_NAME, VOICE_CAPTURE_PROCESSOR_URL } from './audioWorkletProcessor.js';
@@ -62,6 +63,8 @@ export interface VoiceSessionClientOptions extends VoiceSessionClientEvents {
   mode?: 'push-to-talk' | 'duplex';
   authToken?: string | null;
   chatSessionId?: string;
+  /** When true, use a segregated voice-only session (__channel__:voice) instead of a chat session. */
+  voiceOnly?: boolean;
 }
 
 function wsUrl(authToken?: string | null): string {
@@ -76,6 +79,7 @@ export class VoiceSessionClient {
   private readonly events: VoiceSessionClientEvents;
   private readonly mode: 'push-to-talk' | 'duplex';
   private readonly chatSessionId?: string;
+  private readonly voiceOnly: boolean;
   private mediaStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
@@ -85,19 +89,34 @@ export class VoiceSessionClient {
   private duplexFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private skipPlayback = false;
   private pendingChunkMeta: { sampleRate: number } | null = null;
+  /** Duplex: true after `audio_end` until playback drains — signals server to resume mic. */
+  private duplexAwaitingPlaybackEnd = false;
   private connectPromise: Promise<void> | null = null;
   private listenStartedAt = 0;
   /** PTT: mic graph is open but not streaming until armed. */
   private micPrepared = false;
   private captureArmed = false;
+  /** Engine type from `session_ready` — drives duplex barge-in behavior. */
+  private engineType: 'stt_llm_tts' | 'realtime_xai' | undefined;
 
   constructor(options: VoiceSessionClientOptions = {}) {
     this.events = options;
     this.mode = options.mode ?? 'push-to-talk';
     this.chatSessionId = options.chatSessionId;
+    this.voiceOnly = Boolean(options.voiceOnly);
     this.playback.setOnIdle(() => {
       this.events.onPlaybackLevel?.(0);
       this.events.onPlaybackIdle?.();
+      // Duplex: notify the server that TTS playback has finished so it can
+      // safely re-enable the microphone without picking up the agent's voice.
+      if (this.mode === 'duplex' && this.duplexAwaitingPlaybackEnd) {
+        this.duplexAwaitingPlaybackEnd = false;
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'playback_finished' }));
+        }
+        // Now transition to listening — the server will resume the mic.
+        this.setState('listening');
+      }
     });
   }
 
@@ -178,7 +197,8 @@ export class VoiceSessionClient {
             type: 'session_start',
             mode: this.mode,
             sessionId: crypto.randomUUID(),
-            ...(this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
+            ...(this.voiceOnly ? { voiceOnly: true } : {}),
+            ...(!this.voiceOnly && this.chatSessionId ? { chatSessionId: this.chatSessionId } : {}),
             clientSituation,
           }));
         });
@@ -196,8 +216,11 @@ export class VoiceSessionClient {
           return;
         }
         if (msg.type === 'session_ready') {
+          this.engineType = (msg.engine as 'stt_llm_tts' | 'realtime_xai' | undefined) ?? 'stt_llm_tts';
           this.handleControl(msg);
-          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+          // Stay on ready until startListening opens the mic — avoids green
+          // “listening” UI while permission is still pending.
+          this.setState('ready');
           finish(() => {
             this.connectPromise = null;
             resolve();
@@ -228,7 +251,10 @@ export class VoiceSessionClient {
         }
         this.ws = null;
         this.connectPromise = null;
-        this.setState('idle');
+        // Don't reset error state to idle; idle only if the session ended cleanly.
+        if (this.state !== 'error') {
+          this.setState('idle');
+        }
       };
     });
 
@@ -269,13 +295,22 @@ export class VoiceSessionClient {
     }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (this.mode === 'duplex') {
-      if (this.state !== 'speaking') {
-        this.queueDuplexAudio(pcm);
+      // Local engine: mute mic while speaking (echo/response loops).
+      // xAI: keep streaming for barge-in, but drop soft frames so speaker bleed /
+      // ambient noise does not trip server VAD mid-playback.
+      if (this.state === 'speaking') {
+        if (this.engineType !== 'realtime_xai') return;
+        let sum = 0;
+        for (let i = 0; i < pcm.length; i += 1) sum += Math.abs(pcm[i]!);
+        const level = Math.min(1, sum / Math.max(1, pcm.length) / 8000);
+        if (level < XAI_BARGE_IN_MIC_LEVEL) return;
       }
+      this.queueDuplexAudio(pcm);
       return;
     }
     if (!this.captureArmed) return;
-    this.ws.send(pcm.buffer);
+    // Send only the Int16 view bytes — pcm.buffer may be a larger underlying allocation.
+    this.ws.send(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength));
   }
 
   /** PTT: open mic hardware without starting a server recording. */
@@ -328,6 +363,7 @@ export class VoiceSessionClient {
   /** PTT: begin streaming mic audio to the server (mic must be prepared). */
   armCapture(): void {
     if (this.mode !== 'push-to-talk' || !this.isMicPrepared()) return;
+    this.stopPlayback();
     this.playback.clearHistory();
     this.captureArmed = true;
     this.listenStartedAt = Date.now();
@@ -339,6 +375,7 @@ export class VoiceSessionClient {
     if (this.workletNode) {
       await this.stopCaptureOnly();
     }
+    this.stopPlayback();
     this.skipPlayback = false;
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -428,7 +465,7 @@ export class VoiceSessionClient {
   }
 
   disconnect(): void {
-    this.interruptPlayback();
+    this.stopPlayback();
     void this.playback.close();
     this.micPrepared = false;
     this.captureArmed = false;
@@ -442,14 +479,23 @@ export class VoiceSessionClient {
     this.setState('idle');
   }
 
-  interruptPlayback(): void {
+  /** Stop local playback and return to a ready-to-listen state. Does not notify the server. */
+  stopPlayback(): void {
     this.playback.stop();
-    this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
+    this.pendingChunkMeta = null;
+    this.duplexAwaitingPlaybackEnd = false;
     if (this.mode === 'duplex') {
-      this.setState('listening');
-    } else {
+      if (this.ws?.readyState === WebSocket.OPEN && this.state !== 'listening') {
+        this.setState('listening');
+      }
+    } else if (this.state === 'speaking' || this.state === 'processing') {
       this.setState('ready');
     }
+  }
+
+  interruptPlayback(): void {
+    this.stopPlayback();
+    this.ws?.send(JSON.stringify({ type: 'playback_interrupted' }));
   }
 
   respondToPermission(choice: VoicePermissionChoice): void {
@@ -464,6 +510,22 @@ export class VoiceSessionClient {
     if (enabled) {
       this.ws?.send(JSON.stringify({ type: 'playback_text_only' }));
     }
+  }
+
+  /** Update voice-only session toggles (web search, bypass chip). */
+  setToggles(toggles: { searchWeb?: boolean; bypassChip?: boolean }): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'voice_toggle', ...toggles }));
+    }
+  }
+
+  /** Ask the crew persona to speak first (call connect / resume after hold). */
+  requestCallKickoff(reason: 'open' | 'resume' = 'open'): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'call_kickoff', reason }));
+      return true;
+    }
+    return false;
   }
 
   async replayPlayback(): Promise<void> {
@@ -500,6 +562,8 @@ export class VoiceSessionClient {
         if (empty || !text.trim()) {
           this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         } else if (!empty && text.trim()) {
+          // Agent phase — keep state as processing for bars that still key off it,
+          // but hooks must not map this back to "Transcribing…".
           this.setState('processing');
         }
         break;
@@ -511,7 +575,20 @@ export class VoiceSessionClient {
         }
         this.events.onAgentStatus?.(status);
         if (status === 'speaking') this.setState('speaking');
-        if (status === 'complete') this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+        if (status === 'complete') {
+          // In duplex mode, stay in 'speaking' until playback drains — the
+          // onIdle callback will send `playback_finished` to the server which
+          // resumes the mic. Transitioning to 'listening' here would cause the
+          // client to stream mic audio while TTS is still playing.
+          if (this.mode === 'duplex') {
+            if (!this.playback.playing && !this.duplexAwaitingPlaybackEnd) {
+              this.setState('listening');
+            }
+            // else: state transitions when onPlaybackIdle fires
+          } else {
+            this.setState('ready');
+          }
+        }
         if (status === 'running') this.setState('processing');
         // Server signalled duplex recovery — resync out of any stale error state.
         if (status === 'listening' && this.mode === 'duplex') this.setState('listening');
@@ -520,13 +597,25 @@ export class VoiceSessionClient {
       case 'audio_chunk_meta':
         this.pendingChunkMeta = { sampleRate: Number(msg.sampleRate ?? 24_000) };
         break;
+      case 'playback_stop':
+        this.stopPlayback();
+        break;
       case 'audio_end':
         this.pendingChunkMeta = null;
+        if (this.mode === 'duplex') {
+          // If no TTS audio was queued (text-only turn), playback is already
+          // idle — notify the server immediately so it can resume the mic.
+          if (this.playback.playing) {
+            this.duplexAwaitingPlaybackEnd = true;
+          } else if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'playback_finished' }));
+          }
+        }
         break;
       case 'duplex_silence':
         this.events.onDuplexSilence?.(
           Number(msg.elapsedMs ?? 0),
-          Number(msg.thresholdMs ?? 5000),
+          Number(msg.thresholdMs ?? 2000),
         );
         break;
       case 'voice_timing': {
@@ -562,24 +651,38 @@ export class VoiceSessionClient {
         this.events.onRecordingDiscarded?.(reason);
         break;
       }
-      case 'voice_warning':
+      case 'voice_warning': {
         // Recoverable hiccup (duplex STT/turn) — the server is still listening.
         // Surface a transient hint but keep the session alive.
-        this.events.onWarning?.(String(msg.message ?? 'Voice hiccup'));
-        if (this.mode === 'duplex' && this.state === 'error') {
-          this.setState('listening');
+        const warn = String(msg.message ?? 'Voice hiccup');
+        this.events.onWarning?.(warn);
+        // Clear orange "thinking" if a soft conflict (kickoff/overlap) aborted the turn.
+        if (this.state === 'processing' || this.state === 'error') {
+          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
         }
         break;
-      case 'error':
+      }
+      case 'error': {
+        const errMsg = String(msg.message ?? 'Voice error');
+        // Overlapping voice/agent runs are recoverable — don't strand the mic UI.
+        if (/already has an active run|already processing/i.test(errMsg)) {
+          this.events.onWarning?.(errMsg);
+          this.setState(this.mode === 'duplex' ? 'listening' : 'ready');
+          break;
+        }
         this.setState('error');
-        this.events.onError?.(String(msg.message ?? 'Voice error'));
+        this.events.onError?.(errMsg);
         break;
+      }
       default:
         break;
     }
   }
 
   private async handleBinary(data: ArrayBuffer): Promise<void> {
+    // After barge-in, state is 'listening' — drop late-arriving assistant
+    // audio frames so they don't undo the interruption.
+    if (this.mode === 'duplex' && this.state === 'listening') return;
     const pcm = new Int16Array(data);
     if (this.events.onPlaybackLevel) {
       let sum = 0;
@@ -590,6 +693,6 @@ export class VoiceSessionClient {
     markVoiceOutputUnlocked();
     const sampleRate = this.pendingChunkMeta?.sampleRate ?? 24_000;
     await this.playback.enqueuePcm(pcm, sampleRate);
-    this.setState('speaking');
+    if (this.state !== 'listening') this.setState('speaking');
   }
 }

@@ -1,25 +1,34 @@
 import { randomUUID } from 'node:crypto';
+import { generateText } from 'ai';
 import type {
+  AgentXConfig,
   ConnectIntegrationRequest,
   IntegrationAnalytics,
   IntegrationConnection,
   IntegrationConnectionSecrets,
   IntegrationHealth,
   IntegrationHubSettings,
+  IntegrationNotification,
   IntegrationOAuthConfig,
   IntegrationProvider,
   OAuthFlowResult,
   OAuthStartResponse,
   SetupPreflightCheckId,
   SetupPreflightResult,
+  ToolDefinition,
   ToolResult,
 } from '@agentx/shared';
 import { getLogger, assertHubOAuthReady, resolveProviderOAuthConfig } from '@agentx/shared';
+import { ConfigManager } from '../config/ConfigManager.js';
+import { createAiSdkModel } from '../agent/AiSdkBridge.js';
 import type { ToolExecutionContext } from '@agentx/shared';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import { IntegrationAuditLog } from './audit-log.js';
+import { cleanMcpErrorMessage } from './clean-mcp-error.js';
 import { IntegrationConnectionStore } from './connection-store.js';
+import { IntegrationNotificationStore } from './notification-store.js';
+import { benchmarkReadTools, summarizeBenchmarks } from './tool-benchmark.js';
 import {
   getIntegrationProvider,
   getIntegrationHubSettings,
@@ -32,6 +41,7 @@ import {
 } from './catalog/index.js';
 import {
   integrationToolId,
+  integrationToolRiskLevel,
   integrationToolUnregisterPrefixes,
   parseIntegrationToolId,
   isReadOnlyIntegrationTool,
@@ -80,6 +90,12 @@ import {
 } from './mcp-stdio-oauth-flow.js';
 import { runPreflightChecks, type PreflightContext } from './preflight.js';
 
+interface McpToolShape {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+}
+
 interface ActiveSession {
   connectionId: string;
   providerId: string;
@@ -104,6 +120,7 @@ interface StoredOAuthResult {
 export class IntegrationHub {
   private readonly store: IntegrationConnectionStore;
   private readonly audit: IntegrationAuditLog;
+  private readonly notifications: IntegrationNotificationStore;
   private readonly oauth = new OAuthPkceStore();
   private readonly mcpStdioOAuth = new McpStdioOAuthStore();
   private readonly oauthResults = new Map<string, StoredOAuthResult>();
@@ -122,6 +139,7 @@ export class IntegrationHub {
   constructor(options?: { baseDir?: string; getDek?: () => Buffer | null; redirectBaseUrl?: string }) {
     this.store = new IntegrationConnectionStore(options?.baseDir);
     this.audit = new IntegrationAuditLog(options?.baseDir);
+    this.notifications = new IntegrationNotificationStore(options?.baseDir);
     this.getDek = options?.getDek;
     // Use "localhost" (not 127.0.0.1) — OAuth providers like Google enforce EXACT
     // redirect_uri string matching, and users register http://localhost:PORT/... per our docs.
@@ -169,19 +187,42 @@ export class IntegrationHub {
     registry: ToolRegistry,
     executor: ToolExecutor,
     userText = '',
+    options?: { skipConnectionSync?: boolean },
   ): Promise<{ snapshot: IntegrationTurnSnapshot; promptHint?: string; accessPolicy?: ThirdPartyTurnPolicy }> {
     this.setToolkitBridge(registry, executor);
 
-    for (const connection of this.store.listConnections()) {
-      if (!connection.enabled) continue;
-      if (this.sessions.has(connection.id) && connection.status === 'connected') continue;
-      try {
-        await this.syncConnection(connection.id);
-      } catch (error) {
-        getLogger().warn(
-          'INTEGRATION_PRETURN_SYNC',
-          `${connection.providerId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+    // Voice turns must not await MCP/OAuth sync — that left STT done + UI stuck on
+    // "Thinking…" with no LLM reply. Chat still refreshes connections (budgeted).
+    if (!options?.skipConnectionSync) {
+      const PRETURN_SYNC_BUDGET_MS = 3_000;
+      const syncDeadline = Date.now() + PRETURN_SYNC_BUDGET_MS;
+      for (const connection of this.store.listConnections()) {
+        if (!connection.enabled) continue;
+        if (this.sessions.has(connection.id) && connection.status === 'connected') continue;
+        const remaining = syncDeadline - Date.now();
+        if (remaining <= 0) {
+          getLogger().warn(
+            'INTEGRATION_PRETURN_SYNC',
+            `Skipping remaining syncs after ${PRETURN_SYNC_BUDGET_MS}ms budget (${connection.providerId}+)`,
+          );
+          break;
+        }
+        try {
+          await Promise.race([
+            this.syncConnection(connection.id),
+            new Promise<never>((_, reject) => {
+              setTimeout(
+                () => reject(new Error(`sync timed out after ${remaining}ms`)),
+                remaining,
+              );
+            }),
+          ]);
+        } catch (error) {
+          getLogger().warn(
+            'INTEGRATION_PRETURN_SYNC',
+            `${connection.providerId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
 
@@ -271,6 +312,117 @@ export class IntegrationHub {
 
   private currentDek(): Buffer | null {
     return resolveIntegrationDek(this.getDek?.() ?? this.dek ?? null);
+  }
+
+  /** The DEK used to encrypt the user's AgentXConfig — must not be confused with the AGENTX_VAULT_KEY used for integration secrets. */
+  private authDek(): Buffer | null {
+    return this.getDek?.() ?? this.dek ?? null;
+  }
+
+  private loadAgentConfig(): AgentXConfig {
+    return new ConfigManager(undefined, this.authDek() ?? undefined).load();
+  }
+
+  private saveAgentConfig(config: AgentXConfig): void {
+    new ConfigManager(undefined, this.authDek() ?? undefined).save(config);
+  }
+
+  private async deriveMcpToolDefaults(
+    provider: IntegrationProvider,
+    tools: McpToolShape[],
+  ): Promise<Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>> {
+    let cfg: AgentXConfig;
+    try {
+      cfg = this.loadAgentConfig();
+    } catch {
+      // CI / MCP-only flows (no wizard config) — catalog defaults apply without LLM classification.
+      return {};
+    }
+    const model = createAiSdkModel(cfg);
+    const toolList = tools.map((t) => ({ name: t.name, description: t.description?.slice(0, 500) ?? '', hasInputSchema: !!t.inputSchema }));
+    const prompt = `For provider "${provider.name}", classify each MCP tool by risk and default permission.
+
+Tools:
+${JSON.stringify(toolList, null, 2)}
+
+Return ONLY a JSON object mapping tool name to { "riskLevel": "low"|"medium"|"high"|"critical", "defaultDecision": "allow"|"ask"|"deny" }.
+Rules:
+- read/search/list/info/status/ping = low risk, defaultDecision allow
+- create/update/write/set/add/put = medium risk, defaultDecision ask
+- pay/book/purchase/charge/transfer/delete/remove/cancel = critical risk, defaultDecision deny
+- unknown or potentially destructive = high risk, defaultDecision ask`;
+    try {
+      const { text } = await generateText({ model, prompt, maxOutputTokens: 2048, temperature: 0.1 });
+      const jsonStart = text.indexOf('{');
+      const jsonEnd = text.lastIndexOf('}');
+      if (jsonStart === -1 || jsonEnd === -1) throw new Error('No JSON object in LLM response');
+      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as Record<string, { riskLevel?: string; defaultDecision?: string }>;
+      const out: Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }> = {};
+      for (const [name, value] of Object.entries(parsed)) {
+        const risk = ['low', 'medium', 'high', 'critical'].includes(value?.riskLevel ?? '') ? (value.riskLevel as 'low' | 'medium' | 'high' | 'critical') : 'high';
+        const decision = ['allow', 'deny', 'ask'].includes(value?.defaultDecision ?? '') ? (value.defaultDecision as 'allow' | 'deny' | 'ask') : 'ask';
+        out[name] = { riskLevel: risk, defaultDecision: decision };
+      }
+      return out;
+    } catch (error) {
+      getLogger().warn('MCP_DEFAULT_CLASSIFICATION_FAILED', error instanceof Error ? error.message : String(error));
+      return {};
+    }
+  }
+
+  private applyMcpDefaults(
+    provider: IntegrationProvider,
+    tools: McpToolShape[],
+    classifications: Record<string, { riskLevel: 'low' | 'medium' | 'high' | 'critical'; defaultDecision: 'allow' | 'deny' | 'ask' }>,
+    adapted: ToolDefinition[],
+  ): void {
+    for (const tool of tools) {
+      const toolId = integrationToolId(provider.id, tool.name);
+      const classification = classifications[tool.name];
+      const effectiveRisk = classification?.riskLevel ?? integrationToolRiskLevel(tool.name, provider);
+      const def = adapted.find((d) => d.id === toolId);
+      if (def) {
+        def.riskLevel = effectiveRisk;
+      }
+    }
+
+    let cfg: AgentXConfig;
+    try {
+      cfg = this.loadAgentConfig();
+    } catch {
+      // Unconfigured CI / fresh installs — skip persisting permission defaults.
+      return;
+    }
+    const permissions = cfg.permissions ?? {};
+    let changed = false;
+    const defaults: Record<string, 'allow' | 'deny' | 'ask'> = {};
+    for (const tool of tools) {
+      const toolId = integrationToolId(provider.id, tool.name);
+      const classification = classifications[tool.name];
+      const effectiveRisk = classification?.riskLevel ?? integrationToolRiskLevel(tool.name, provider);
+      const defaultDecision = classification?.defaultDecision ?? (effectiveRisk === 'low' ? 'allow' : effectiveRisk === 'critical' ? 'deny' : 'ask');
+      if (!(toolId in permissions)) {
+        permissions[toolId] = defaultDecision;
+        defaults[toolId] = defaultDecision;
+        changed = true;
+      }
+    }
+    if (changed) {
+      cfg.permissions = permissions;
+      this.saveAgentConfig(cfg);
+    }
+  }
+
+  getConnectionToolDefinitions(connectionId: string): { mcpName: string; toolId: string; definition: ToolDefinition }[] {
+    return this.sessions.get(connectionId)?.tools ?? [];
+  }
+
+  getAllConnectedToolDefinitions(): { connectionId: string; providerId: string; tools: { mcpName: string; toolId: string; definition: ToolDefinition }[] }[] {
+    return [...this.sessions.entries()].map(([connectionId, active]) => ({
+      connectionId,
+      providerId: active.providerId,
+      tools: active.tools,
+    }));
   }
 
   private assertProviderAllowed(providerId: string): void {
@@ -685,6 +837,7 @@ export class IntegrationHub {
 
   async disconnect(connectionId: string): Promise<void> {
     await this.closeSession(connectionId);
+    this.notifications.clearForConnection(connectionId);
     await this.store.removeConnection(connectionId);
   }
 
@@ -708,7 +861,9 @@ export class IntegrationHub {
       await this.ensureFreshOAuthToken(connectionId);
       const session = await this.openSession(connection, provider);
       const listed = await session.listTools();
+      const classifications = await this.deriveMcpToolDefaults(provider, listed);
       const adapted = adaptMcpTools(provider, listed);
+      this.applyMcpDefaults(provider, listed, classifications, adapted);
       const tools = listed.map((tool, index) => ({
         mcpName: tool.name,
         toolId: adapted[index]!.id,
@@ -728,23 +883,115 @@ export class IntegrationHub {
         tools,
       });
 
-      const updated = this.store.updateConnection(connectionId, {
+      this.store.updateConnection(connectionId, {
         status: 'connected',
         lastSyncAt: new Date().toISOString(),
         toolCount: tools.length,
         error: undefined,
       });
-      return updated ?? connection;
+
+      // Probe read tools immediately so auth/config failures surface in the store.
+      return this.benchmarkConnection(connectionId);
     } catch (error) {
       const stdioCommand = connection.stdio?.command ?? provider.server.command;
-      const message = formatStdioSpawnError(error, stdioCommand);
+      const message = cleanMcpErrorMessage(formatStdioSpawnError(error, stdioCommand));
       getLogger().error('INTEGRATION_SYNC_FAILED', { connectionId, error: message });
+      this.notifications.add({
+        connectionId,
+        providerId: connection.providerId,
+        displayName: connection.displayName,
+        kind: 'sync_error',
+        message,
+        source: 'sync',
+      });
       const updated = this.store.updateConnection(connectionId, {
         status: 'error',
         error: message,
       });
       return updated ?? connection;
     }
+  }
+
+  /** Re-run read-tool probes for an already-synced connection. */
+  async benchmarkConnection(connectionId: string): Promise<IntegrationConnection> {
+    const connection = this.store.getConnection(connectionId);
+    if (!connection) throw new Error(`Connection "${connectionId}" not found`);
+    const provider = this.resolveProvider(connection.providerId);
+    if (!provider) throw new Error(`Provider "${connection.providerId}" not found`);
+
+    const active = this.sessions.get(connectionId);
+    if (!active) {
+      await this.syncConnection(connectionId);
+      return this.store.getConnection(connectionId) ?? connection;
+    }
+
+    const bridgeNames = new Set(getProviderBridgeTools(provider).map((b) => b.mcpName));
+    try {
+      const toolBenchmarks = await benchmarkReadTools({
+        session: active.session,
+        provider,
+        toolNames: active.tools.map((t) => t.mcpName),
+        bridgeNames,
+      });
+      const benchmarkSummary = summarizeBenchmarks(toolBenchmarks);
+      const lastBenchmarkAt = new Date().toISOString();
+
+      for (const row of toolBenchmarks) {
+        if (row.status !== 'error' || !row.error) continue;
+        this.notifications.add({
+          connectionId,
+          providerId: connection.providerId,
+          displayName: connection.displayName,
+          toolName: row.mcpName,
+          kind: 'benchmark_error',
+          message: row.error,
+          source: 'benchmark',
+        });
+      }
+
+      const connectionError = benchmarkSummary.error > 0
+        ? `${benchmarkSummary.error} read tool${benchmarkSummary.error === 1 ? '' : 's'} failed probe — open Connected tools or Alerts`
+        : undefined;
+
+      return this.store.updateConnection(connectionId, {
+        status: 'connected',
+        toolBenchmarks,
+        lastBenchmarkAt,
+        benchmarkSummary,
+        // Keep session connected; surface probe failures without tearing down the MCP link.
+        error: connectionError,
+      }) ?? connection;
+    } catch (error) {
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
+      this.notifications.add({
+        connectionId,
+        providerId: connection.providerId,
+        displayName: connection.displayName,
+        kind: 'benchmark_error',
+        message,
+        source: 'benchmark',
+      });
+      return this.store.updateConnection(connectionId, {
+        status: 'connected',
+        error: message,
+      }) ?? connection;
+    }
+  }
+
+  listNotifications(limit = 100): IntegrationNotification[] {
+    return this.notifications.list({ limit });
+  }
+
+  notificationCount(): number {
+    return this.notifications.activeCount();
+  }
+
+  dismissNotification(id: string): boolean {
+    return this.notifications.dismiss(id);
+  }
+
+  dismissAllNotifications(): number {
+    return this.notifications.dismissAll();
   }
 
   async restoreAll(): Promise<void> {
@@ -785,13 +1032,20 @@ export class IntegrationHub {
           await this.syncConnection(connection.id);
           continue;
         }
+        if (active.session.isBusy()) {
+          continue;
+        }
         await active.session.listTools();
         this.store.updateConnection(connection.id, { lastSyncAt: new Date().toISOString(), status: 'connected', error: undefined });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         getLogger().warn('INTEGRATION_HEALTH_CHECK_FAILED', message);
-        this.store.updateConnection(connection.id, { status: 'error', error: message });
         await this.closeSession(connection.id);
+        try {
+          await this.syncConnection(connection.id);
+        } catch {
+          this.store.updateConnection(connection.id, { status: 'error', error: message });
+        }
       }
     }
     this.syncToolkitIfBridged();
@@ -879,7 +1133,7 @@ export class IntegrationHub {
         },
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
       this.audit.append({
         connectionId,
         providerId: connection.providerId,
@@ -890,6 +1144,7 @@ export class IntegrationHub {
         argsSummary: summarizeArgs(args),
         error: message,
       });
+      this.recordRuntimeToolError(connection, bridge.mcpName, message, readonly);
       return { success: false, output: message, error: 'INTEGRATION_TOOL_FAILED' };
     }
   }
@@ -920,6 +1175,7 @@ export class IntegrationHub {
         output = enhanceGoogleMapsToolOutput(toolName, output);
       }
       const failed = isMcpToolResultError(result, output);
+      const cleanedError = failed ? cleanMcpErrorMessage(output) : undefined;
       const toolId = integrationToolId(connection.providerId, toolName);
       const structured = parseIntegrationStructuredResult(toolId, output);
       this.audit.append({
@@ -930,11 +1186,14 @@ export class IntegrationHub {
         readonly,
         success: !failed,
         argsSummary: summarizeArgs(args),
-        error: failed ? output.slice(0, 500) : undefined,
+        error: cleanedError,
       });
+      if (failed && cleanedError) {
+        this.recordRuntimeToolError(connection, toolName, cleanedError, readonly);
+      }
       return {
         success: !failed,
-        output,
+        output: failed ? cleanedError ?? output : output,
         error: failed ? 'INTEGRATION_TOOL_FAILED' : undefined,
         metadata: {
           providerId: connection.providerId,
@@ -944,7 +1203,7 @@ export class IntegrationHub {
         },
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = cleanMcpErrorMessage(error instanceof Error ? error.message : String(error));
       this.audit.append({
         connectionId,
         providerId: connection.providerId,
@@ -955,8 +1214,65 @@ export class IntegrationHub {
         argsSummary: summarizeArgs(args),
         error: message,
       });
+      this.recordRuntimeToolError(connection, toolName, message, readonly);
+      const lower = message.toLowerCase();
+      if (lower.includes('not connected') || lower.includes('connection') || lower.includes('econnrefused') || lower.includes('closed')) {
+        getLogger().warn('INTEGRATION_TOOL_CONNECTION_LOST', `${connectionId}: ${message}`);
+        await this.closeSession(connectionId).catch(() => { /* ignore */ });
+      }
       const clarified = provider ? this.clarifyPackageSignInOutput(provider, toolName, message) : message;
-      return { success: false, output: clarified, error: 'INTEGRATION_TOOL_FAILED' };
+      return { success: false, output: cleanMcpErrorMessage(clarified), error: 'INTEGRATION_TOOL_FAILED' };
+    }
+  }
+
+  private recordRuntimeToolError(
+    connection: IntegrationConnection,
+    toolName: string,
+    cleanedError: string,
+    readonly: boolean,
+  ): void {
+    // Read failures at connect are already captured by benchmarks; still record write/runtime.
+    this.notifications.add({
+      connectionId: connection.id,
+      providerId: connection.providerId,
+      displayName: connection.displayName,
+      toolName,
+      kind: 'runtime_error',
+      message: cleanedError,
+      source: 'runtime',
+    });
+
+    // Attach latest write/runtime error onto the matching tool row when present.
+    if (!readonly && connection.toolBenchmarks?.length) {
+      const next = connection.toolBenchmarks.map((row) => (
+        row.mcpName === toolName
+          ? {
+              ...row,
+              status: 'error' as const,
+              error: cleanedError,
+              testedAt: new Date().toISOString(),
+              skipReason: undefined,
+            }
+          : row
+      ));
+      const hasRow = next.some((row) => row.mcpName === toolName);
+      const toolBenchmarks = hasRow
+        ? next
+        : [
+            ...next,
+            {
+              mcpName: toolName,
+              readonly: false,
+              status: 'error' as const,
+              error: cleanedError,
+              testedAt: new Date().toISOString(),
+            },
+          ];
+      this.store.updateConnection(connection.id, {
+        toolBenchmarks,
+        benchmarkSummary: summarizeBenchmarks(toolBenchmarks),
+        lastBenchmarkAt: new Date().toISOString(),
+      });
     }
   }
 
@@ -1101,7 +1417,6 @@ export class IntegrationHub {
       sessionId: 'mcp-store',
       scopePath: '*',
       timeout: 600_000,
-      mode: 'agent',
     });
   }
 
@@ -1192,6 +1507,19 @@ export class IntegrationHub {
         ok: false,
         result: { success: false, output: 'Integration is not connected', error: 'NOT_CONNECTED' },
       };
+    }
+
+    if (this.sessions.has(connectionId)) {
+      const active = this.sessions.get(connectionId)!;
+      if (!active.session.isBusy()) {
+        try {
+          await active.session.listTools();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          getLogger().warn('INTEGRATION_SESSION_STALE', `${connectionId}: ${message}`);
+          await this.closeSession(connectionId);
+        }
+      }
     }
 
     if (!this.sessions.has(connectionId)) {

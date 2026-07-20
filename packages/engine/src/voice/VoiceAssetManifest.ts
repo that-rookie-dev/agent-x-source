@@ -2,18 +2,29 @@ import { cpSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { VoiceConfig, VoiceDownloadedAsset } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import { computeDirectorySha256 } from './VoiceAssetManager.js';
 import { isVoiceAssetInstalled } from './VoiceAssetCatalog.js';
 
 export type VoiceAssetTier = 'bundled' | 'download' | 'optional';
 
 export interface VoiceModelSource {
-  type: 'hf' | 'github' | 'mirror';
+  type: 'hf' | 'github' | 'mirror' | 'github-release';
   repo?: string;
   revision?: string;
   ref?: string;
   url?: string;
   archive?: 'zip' | 'tar.gz';
+  /** HuggingFace snapshot_download allow_patterns — only download specific files from a large repo */
+  allowPatterns?: string[];
+  /** Flatten subdirectory structure after download (move all files to root) */
+  flatten?: boolean;
+  /** github-release: release tag (e.g. "model-files-v1.0") */
+  tag?: string;
+  /** github-release: single asset filename */
+  asset?: string;
+  /** github-release: multiple asset filenames */
+  assets?: string[];
 }
 
 export interface VoiceModelManifestEntry {
@@ -76,7 +87,12 @@ export function loadVoiceModelsManifest(): VoiceModelsManifest {
   if (!manifestPath) {
     throw new Error('voice-models.manifest.json not found');
   }
-  return JSON.parse(readFileSync(manifestPath, 'utf8')) as VoiceModelsManifest;
+  try {
+    return JSON.parse(readFileSync(manifestPath, 'utf8')) as VoiceModelsManifest;
+  } catch (error) {
+    getLogger().warn('VOICE_ASSET_MANIFEST', `Failed to parse voice models manifest: ${error instanceof Error ? error.message : String(error)}`);
+    return { version: 0, assets: [] };
+  }
 }
 
 export function resolveVoiceBundleDir(): string | null {

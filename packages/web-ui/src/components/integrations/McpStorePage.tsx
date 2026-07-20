@@ -1,20 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import InputAdornment from '@mui/material/InputAdornment';
 import SearchIcon from '@mui/icons-material/Search';
-import { settingsTheme, settingsGridBgSx, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
+import { settingsTheme, settingsMonoSx, settingsTextFieldSx } from '../../styles/settings-theme';
 import { StoreProviderCard } from './StoreProviderCard';
 import { ProviderDetailModal } from './ProviderDetailModal';
 import { IntegrationAuditPanel } from './IntegrationAuditPanel';
+import { IntegrationNotificationsPanel } from './IntegrationNotificationsPanel';
 import { StoreCardGrid, StoreSectionTitle } from './StoreLayout';
 import { useIntegrationsHub } from './useIntegrationsHub';
 import { CATEGORY_LABELS, CATEGORY_ORDER, isInstalledConnection, matchesProviderSearch } from './integration-ui';
 import type { IntegrationProvider } from '../../api';
+import { integrations } from '../../api';
 
-type StoreTab = 'browse' | 'installed' | 'activity';
+type StoreTab = 'browse' | 'installed' | 'activity' | 'alerts';
 type CategoryFilter = 'all' | 'connected' | (typeof CATEGORY_ORDER)[number];
 
 function renderProviderGrid(
@@ -23,6 +25,7 @@ function renderProviderGrid(
   onOpen: (p: IntegrationProvider) => void,
   onConnect: (p: IntegrationProvider) => void,
   onSignIn: (p: IntegrationProvider) => void,
+  onSync: (c: import('../../api').IntegrationConnection) => void,
 ) {
   return (
     <StoreCardGrid>
@@ -34,6 +37,7 @@ function renderProviderGrid(
           onOpen={onOpen}
           onConnect={onConnect}
           onSignIn={onSignIn}
+          onSync={onSync}
         />
       ))}
     </StoreCardGrid>
@@ -45,6 +49,13 @@ export function McpStorePage() {
   const [tab, setTab] = useState<StoreTab>('browse');
   const [category, setCategory] = useState<CategoryFilter>('all');
   const [search, setSearch] = useState('');
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    void integrations.notifications(1)
+      .then((res) => setAlertCount(res.count))
+      .catch(() => setAlertCount(0));
+  }, [hub.connections, hub.message, tab]);
 
   const filteredProviders = useMemo(() => {
     let list = hub.providers;
@@ -108,7 +119,6 @@ export function McpStorePage() {
       flexDirection: 'column',
       overflow: 'hidden',
       bgcolor: settingsTheme.bg.void,
-      ...settingsGridBgSx,
     }}>
       <Box sx={{ px: 3, pt: 3, pb: 1, flexShrink: 0 }}>
         <Typography sx={{
@@ -137,6 +147,7 @@ export function McpStorePage() {
         {([
           { id: 'browse' as const, label: 'Browse' },
           { id: 'installed' as const, label: `Installed (${connectedCount})` },
+          { id: 'alerts' as const, label: alertCount > 0 ? `Alerts (${alertCount})` : 'Alerts' },
           { id: 'activity' as const, label: 'Activity' },
         ]).map((item) => (
           <Button
@@ -165,8 +176,22 @@ export function McpStorePage() {
           </Typography>
         )}
 
-        {tab === 'activity' && (
+        {tab === 'alerts' && (
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
+            <IntegrationNotificationsPanel
+              onOpenProvider={(providerId) => {
+                const provider = hub.providers.find((p) => p.id === providerId);
+                if (provider) {
+                  hub.openDetail(provider);
+                  setTab('installed');
+                }
+              }}
+            />
+          </Box>
+        )}
+
+        {tab === 'activity' && (
+          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', px: 3, py: 2 }}>
             <IntegrationAuditPanel />
           </Box>
         )}
@@ -275,7 +300,7 @@ export function McpStorePage() {
                       title={CATEGORY_LABELS[cat] ?? cat}
                       count={providers.length}
                     />
-                    {renderProviderGrid(providers, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn)}
+                    {renderProviderGrid(providers, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn, hub.handleSync)}
                   </Box>
                 ))
               ) : (
@@ -290,7 +315,7 @@ export function McpStorePage() {
                     }
                     count={filteredProviders.length}
                   />
-                  {renderProviderGrid(filteredProviders, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn)}
+                  {renderProviderGrid(filteredProviders, hub.connectionByProvider, hub.openDetail, hub.startConnect, hub.openDetailForSignIn, hub.handleSync)}
                 </>
               )}
             </Box>
@@ -303,14 +328,24 @@ export function McpStorePage() {
           provider={hub.detailProvider}
           connection={hub.connectionByProvider.get(hub.detailProvider.id)}
           connecting={hub.connectingProvider?.id === hub.detailProvider.id}
-          busy={hub.busyId === hub.detailProvider.id || hub.busyId === hub.connectionByProvider.get(hub.detailProvider.id)?.id}
+          busy={
+            hub.busyId === hub.detailProvider.id
+            || hub.busyId === hub.connectionByProvider.get(hub.detailProvider.id)?.id
+            || hub.syncingId === hub.connectionByProvider.get(hub.detailProvider.id)?.id
+          }
           onClose={hub.closeDetail}
           onConnect={hub.startConnect}
           onDisconnect={hub.handleDisconnect}
           onSync={hub.handleSync}
           onConnectSubmit={hub.handleConnect}
           onOAuthStart={hub.handleOAuthStart}
-          onOAuthComplete={() => { void hub.refresh(); }}
+          onOAuthComplete={() => {
+            const conn = hub.connectionByProvider.get(hub.detailProvider!.id);
+            return hub.handleAuthSuccess({
+              connectionId: conn?.id,
+              providerId: hub.detailProvider!.id,
+            });
+          }}
           onCancelConnect={hub.cancelConnect}
           showConnectWizard={hub.connectingProvider?.id === hub.detailProvider.id}
           autoStartSignIn={hub.signInOnOpen}

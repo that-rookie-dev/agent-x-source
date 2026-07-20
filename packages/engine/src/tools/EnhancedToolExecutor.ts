@@ -51,6 +51,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
     toolId: string;
     args: Record<string, unknown>;
     sessionId: string;
+    options?: { signal?: AbortSignal };
     resolve: (r: ToolResult) => void;
     reject: (e: unknown) => void;
   }> = [];
@@ -144,12 +145,13 @@ export class EnhancedToolExecutor extends ToolExecutor {
     toolId: string,
     args: Record<string, unknown>,
     sessionId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<ToolResult> {
     if (this.batchDepth > 0) {
-      return this.executeDirect(toolId, args, sessionId);
+      return this.executeDirect(toolId, args, sessionId, options);
     }
     return new Promise<ToolResult>((resolve, reject) => {
-      this.batchPending.push({ toolId, args, sessionId, resolve, reject });
+      this.batchPending.push({ toolId, args, sessionId, options, resolve, reject });
       if (!this.batchScheduled) {
         this.batchScheduled = true;
         queueMicrotask(() => {
@@ -164,8 +166,9 @@ export class EnhancedToolExecutor extends ToolExecutor {
     toolId: string,
     args: Record<string, unknown>,
     sessionId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<ToolResult> {
-    return this.toolConcurrency.run(() => super.execute(toolId, args, sessionId));
+    return this.toolConcurrency.run(() => super.execute(toolId, args, sessionId, options), options?.signal);
   }
 
   private async flushToolBatch(): Promise<void> {
@@ -178,7 +181,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
       if (batch.length === 1) {
         const b = batch[0]!;
         try {
-          b.resolve(await this.executeDirect(b.toolId, b.args, b.sessionId));
+          b.resolve(await this.executeDirect(b.toolId, b.args, b.sessionId, b.options));
         } catch (e) {
           b.reject(e);
         }

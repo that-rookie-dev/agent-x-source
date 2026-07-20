@@ -1,4 +1,4 @@
-import { parseExpression } from 'cron-parser';
+import cronParser from 'cron-parser';
 import type {
   AutomationNotifyChannel,
   AutomationRegisterInput,
@@ -6,9 +6,10 @@ import type {
   AutomationTaskRecord,
   NotificationKind,
   NotificationRecord,
+  TelemetryEvent,
 } from '@agentx/shared';
 import { generateAxId, generateId, getLogger } from '@agentx/shared';
-import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin } from '@agentx/engine';
+import { effectiveAutomationNotifyChannels, getNotificationChannelStatus, inferAutomationSourceChannel, normalizeAutomationTaskOrigin, SessionPermissionStore } from '@agentx/engine';
 import { broadcast } from '../ws.js';
 import { getEngine } from '../engine.js';
 import { getTelegramRuntimeHints } from '../channels-sync.js';
@@ -88,7 +89,7 @@ function computeNextRunAt(task: AutomationTaskRecord): string | null {
   }
   if (task.cronExpression) {
     try {
-      return parseExpression(task.cronExpression, { tz: task.timezone || 'UTC' }).next().toDate().toISOString();
+      return cronParser.parseExpression(task.cronExpression, { tz: task.timezone || 'UTC' }).next().toDate().toISOString();
     } catch { /* fall through */ }
   }
   return task.nextRunAt;
@@ -236,7 +237,7 @@ export class AutomationService {
     if (!boss || task.status !== 'active' || task.scheduleType !== 'recurring' || !task.cronExpression) return;
 
     const timezone = task.timezone || 'UTC';
-    const nextRunAt = parseExpression(task.cronExpression, { tz: timezone }).next().toDate();
+    const nextRunAt = cronParser.parseExpression(task.cronExpression, { tz: timezone }).next().toDate();
     const triggerAt = new Date(Math.max(Date.now() + 500, nextRunAt.getTime() - AUTOMATION_RUN_LEAD_MS));
     const singletonKey = `automation-run:${task.id}`;
 
@@ -365,15 +366,14 @@ export class AutomationService {
     let permissionSnapshot = input.permissionSnapshot;
     if (!permissionSnapshot) {
       try {
-        const { rows } = await this.pool.query<{ tool_name: string; decision: string; target_path: string | null }>(
-          `SELECT tool_name, decision, target_path FROM permissions WHERE session_id = $1 AND decision = 'allow_always'`,
-          [input.sourceSessionId],
-        );
-        permissionSnapshot = rows.map((r) => ({
-          toolName: r.tool_name,
-          decision: r.decision,
-          targetPath: r.target_path,
-        }));
+        const store = new SessionPermissionStore(input.sourceSessionId);
+        permissionSnapshot = store.getDecisions()
+          .filter((d) => d.decision === 'allow_always')
+          .map((d) => ({
+            toolName: d.toolName,
+            decision: d.decision,
+            targetPath: d.targetPath,
+          }));
       } catch { /* best-effort */ }
     }
 
@@ -413,7 +413,7 @@ export class AutomationService {
         if (cron.split(/\s+/).length !== 5) {
           return { ok: false, error: 'cron must be a 5-field expression' };
         }
-        nextRunAt = parseExpression(cron, { tz: timezone }).next().toDate();
+        nextRunAt = cronParser.parseExpression(cron, { tz: timezone }).next().toDate();
         pgbossScheduleName = null;
       }
     } catch (e) {
@@ -627,7 +627,7 @@ export class AutomationService {
       getEngine().telemetry.emit({
         type: 'notification_created',
         notification,
-      } as never);
+      } as unknown as TelemetryEvent);
     } catch { /* best-effort */ }
     return notification;
   }

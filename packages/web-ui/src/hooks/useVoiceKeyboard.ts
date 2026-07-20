@@ -41,12 +41,28 @@ export function useVoiceKeyboard(options: {
         if (opts.pushToTalk) opts.onEndPushToTalk();
         return;
       }
-      if (event.key === ' ') {
-        if (event.repeat) return;
+      if (event.key === ' ' || event.code === 'Space') {
+        if (event.repeat) {
+          // Keep holding Space from scrolling / activating focused controls.
+          if (opts.globalSpace) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
+
+        // When globalSpace is active (dashboard voice card / inline voice / call),
+        // always prevent default to avoid page scrolling — even if push-to-talk
+        // is blocked or the engine is still warming up.
+        if (opts.globalSpace) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
 
         const now = Date.now();
         if (opts.onDoubleTapSpace && now - lastSpaceDownRef.current < DOUBLE_TAP_SPACE_MS) {
           event.preventDefault();
+          event.stopPropagation();
           lastSpaceDownRef.current = 0;
           opts.onDoubleTapSpace();
           return;
@@ -63,16 +79,9 @@ export function useVoiceKeyboard(options: {
             repeat: false,
           })
         ) {
-          event.preventDefault();
-          event.stopPropagation();
           spacePttHeldRef.current = true;
           opts.onBeginPushToTalk();
           return;
-        }
-
-        if (opts.onDoubleTapSpace && opts.globalSpace) {
-          event.preventDefault();
-          event.stopPropagation();
         }
         return;
       }
@@ -80,9 +89,9 @@ export function useVoiceKeyboard(options: {
 
     const onKeyUp = (event: KeyboardEvent) => {
       const opts = optionsRef.current;
+      if (event.key !== ' ' && event.code !== 'Space') return;
       if (
         opts.pushToTalk &&
-        event.key === ' ' &&
         spacePttHeldRef.current &&
         shouldEndPushToTalkOnSpace({
           globalSpace: opts.globalSpace,
@@ -93,6 +102,10 @@ export function useVoiceKeyboard(options: {
         event.stopPropagation();
         spacePttHeldRef.current = false;
         opts.onEndPushToTalk();
+      } else if (opts.globalSpace) {
+        // Prevent page scroll / button activation on keyup too.
+        event.preventDefault();
+        event.stopPropagation();
       }
     };
 

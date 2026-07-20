@@ -11,9 +11,6 @@ from typing import Any
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
-
-
 class KokoroTts:
     def __init__(self, data_dir: str) -> None:
         self.data_dir = Path(data_dir)
@@ -37,7 +34,7 @@ class KokoroTts:
             output_path = str(tmp_dir / f"kokoro-{int(time.time() * 1000)}.wav")
 
         started = time.perf_counter()
-        pipeline = self._load()
+        kokoro = self._load()
         voice_id = str(request.get("voiceId") or "kokoro-af")
         kokoro_voice = _map_voice_id(voice_id)
 
@@ -47,20 +44,15 @@ class KokoroTts:
         except ImportError as exc:
             raise RuntimeError("numpy and soundfile are required for Kokoro synthesis.") from exc
 
-        chunks = []
-        for _, _, audio in pipeline(text, voice=kokoro_voice):
-            chunks.append(audio)
-        if not chunks:
-            raise RuntimeError("Kokoro produced no audio")
-
-        audio = np.concatenate(chunks)
-        sample_rate = 24_000
-        sf.write(output_path, audio, sample_rate)
+        samples, sample_rate = kokoro.create(
+            text, voice=kokoro_voice, speed=1.0, lang="en-us"
+        )
+        sf.write(output_path, samples, sample_rate)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         return {
             "audioPath": output_path,
             "sampleRate": sample_rate,
-            "durationMs": int(len(audio) / sample_rate * 1000),
+            "durationMs": int(len(samples) / sample_rate * 1000),
             "timings": {"synthesizeMs": elapsed_ms},
         }
 
@@ -69,26 +61,17 @@ class KokoroTts:
         if not text:
             raise ValueError("text is required")
 
-        pipeline = self._load()
+        kokoro = self._load()
         voice_id = str(request.get("voiceId") or "kokoro-af")
         kokoro_voice = _map_voice_id(voice_id)
-        sample_rate = 24_000
-
-        try:
-            import numpy as np
-        except ImportError as exc:
-            raise RuntimeError("numpy is required for Kokoro synthesis.") from exc
 
         for sentence in _split_sentences(text):
             if cancel_check and cancel_check():
                 break
-            chunks = []
-            for _, _, audio in pipeline(sentence, voice=kokoro_voice):
-                chunks.append(audio)
-            if not chunks:
-                continue
-            audio = np.concatenate(chunks)
-            pcm = _float_audio_to_pcm16(audio)
+            samples, sample_rate = kokoro.create(
+                sentence, voice=kokoro_voice, speed=1.0, lang="en-us"
+            )
+            pcm = _float_audio_to_pcm16(samples)
             yield {
                 "pcmBase64": base64.b64encode(pcm).decode("ascii"),
                 "sampleRate": sample_rate,
@@ -98,52 +81,32 @@ class KokoroTts:
         if self.pipeline is not None:
             return self.pipeline
 
-        model_dir = self.data_dir / "models" / "tts" / "kokoro" / "kokoro-82m"
-        if not model_dir.exists():
-            raise FileNotFoundError("Kokoro model is not installed")
+        model_dir = self.data_dir / "models" / "tts" / "kokoro" / "kokoro-onnx"
+        model_path = model_dir / "kokoro-v1.0.onnx"
+        voices_path = model_dir / "voices-v1.0.bin"
 
-        config_path = model_dir / "config.json"
-        if not config_path.exists():
-            raise FileNotFoundError(f"Kokoro config not found at {config_path}")
-
-        weight_path = model_dir / "kokoro-v1_0.pth"
-        if not weight_path.exists():
-            pth_files = sorted(model_dir.glob("*.pth"))
-            if not pth_files:
-                raise FileNotFoundError(f"Kokoro weights not found in {model_dir}")
-            weight_path = pth_files[0]
+        if not model_path.exists():
+            raise FileNotFoundError("Kokoro ONNX model is not installed")
+        if not voices_path.exists():
+            raise FileNotFoundError(f"Kokoro voices file not found at {voices_path}")
 
         try:
-            import torch
-            from kokoro import KModel, KPipeline
+            from kokoro_onnx import Kokoro
         except ImportError as exc:
-            raise RuntimeError("Kokoro is not installed. Install sidecar dependencies first.") from exc
+            raise RuntimeError("kokoro-onnx is not installed. Install sidecar dependencies first.") from exc
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        km = KModel(
-            repo_id=KOKORO_REPO_ID,
-            config=str(config_path),
-            model=str(weight_path),
-        ).to(device).eval()
-
-        # repo_id=None prevents HuggingFace lookups — weights and voices are local.
-        pipeline = KPipeline(lang_code="a", repo_id=None, model=km)
-
-        voices_dir = model_dir / "voices"
-        if voices_dir.is_dir():
-            for voice_file in voices_dir.glob("*.pt"):
-                pipeline.voices[voice_file.stem] = torch.load(
-                    str(voice_file), weights_only=True
-                )
-
-        self.pipeline = pipeline
+        self.pipeline = Kokoro(str(model_path), str(voices_path))
         return self.pipeline
 
 
+_KOKORO_VOICE_MAP = {
+    # Legacy alias — keep for backward compatibility with existing configs
+    "kokoro-af": "af_heart",
+}
+
+
 def _map_voice_id(voice_id: str) -> str:
-    if voice_id == "kokoro-af":
-        return "af_heart"
-    return voice_id
+    return _KOKORO_VOICE_MAP.get(voice_id, voice_id)
 
 
 def _split_sentences(text: str) -> list[str]:

@@ -36,7 +36,6 @@ export interface GatewayConfig {
   port: number;
   host: string;
   maxConcurrentSessions: number;
-  rateLimitPerMinute: number;
   authRequired: boolean;
 }
 

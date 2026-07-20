@@ -3,8 +3,7 @@ import { collectAnsweredQuestionnaireTexts, getLogger } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent } from './engine.js';
 import {
   runAgentTurnAsync,
-  applySessionModeToAgent,
-  buildInstructionForMode,
+  buildTurnInstruction,
   isCrewPrivateSessionRecord,
 } from './chat-helpers.js';
 import { turnRegistry } from './turn-registry.js';
@@ -173,11 +172,10 @@ export async function handleClarificationRespond(
   agent.clearClarificationResumeState?.();
 
   if (resume?.crewIntakeFromPicker && resume.delegateCrewIds?.length && resume.userText) {
-    const mode = applySessionModeToAgent(agent);
     const activeSess = getEngine().sessionManager.getActiveSession?.()
       ?? getEngine().sessionManager.getSessionById(sessionId);
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
-    const instruction = buildInstructionForMode(mode, { crewPrivate: crewPrivateChat });
+    const instruction = buildTurnInstruction({ crewPrivate: crewPrivateChat });
     const turn = turnRegistry.create(sessionId);
     runAgentTurnAsync(
       agent,
@@ -209,13 +207,12 @@ export async function handleClarificationRespond(
     : null;
 
   if (priorUserText) {
-    const mode = applySessionModeToAgent(agent);
     const activeSess = getEngine().sessionManager.getActiveSession?.()
       ?? getEngine().sessionManager.getSessionById(sessionId);
     const crewPrivateChat = isCrewPrivateSessionRecord(activeSess);
     const allAnswers = collectSessionQuestionnaireAnswers(sessionId, trimmed);
     const instruction = buildQuestionnaireResumeInstruction(
-      buildInstructionForMode(mode, { crewPrivate: crewPrivateChat }) ?? '',
+      buildTurnInstruction({ crewPrivate: crewPrivateChat }) ?? '',
       allAnswers.length > 0 ? allAnswers : trimmed,
     );
     const turn = turnRegistry.create(sessionId);

@@ -1,9 +1,9 @@
 // ChatEnhancements — "jaw-drop" chat UX upgrades layered onto ChatPanel.
 // Components: ConnectionHealthDot, ScrollToBottomPill, SlashCommandMenu,
-// CommandPalette, SessionSearchModal, DoomLoopWarning, ReasoningBlock,
+// SessionSearchModal, DoomLoopWarning, ReasoningBlock,
 // CheckpointDrawer, TurnTokenBadge, StreamingCursor.
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -98,7 +98,7 @@ function formatAgo(ms: number): string {
 // 2. ScrollToBottomPill — grey circle, bottom-right; shows when scrolled up
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function ScrollToBottomPill({
+export const ScrollToBottomPill = memo(function ScrollToBottomPill({
   visible,
   onClick,
 }: {
@@ -132,7 +132,7 @@ export function ScrollToBottomPill({
       <KeyboardArrowDownIcon sx={{ fontSize: 18, color: colors.text.secondary }} />
     </Box>
   );
-}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. SlashCommandMenu — autocomplete dropdown for `/` commands
@@ -396,114 +396,7 @@ export function CrewMentionMenu({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. CommandPalette — Cmd+K global command launcher
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface PaletteAction {
-  id: string;
-  label: string;
-  hint?: string;
-  icon?: React.ReactNode;
-  run: () => void;
-}
-
-export function CommandPalette({
-  open,
-  onClose,
-  actions,
-}: {
-  open: boolean;
-  onClose: () => void;
-  actions: PaletteAction[];
-}) {
-  const [q, setQ] = useState('');
-  const [active, setActive] = useState(0);
-  const filtered = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return actions;
-    return actions.filter(a => a.label.toLowerCase().includes(t) || a.hint?.toLowerCase().includes(t));
-  }, [q, actions]);
-
-  useEffect(() => { if (open) { setQ(''); setActive(0); } }, [open]);
-  useEffect(() => { setActive(0); }, [q]);
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(i => Math.min(filtered.length - 1, i + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(i => Math.max(0, i - 1)); }
-    else if (e.key === 'Enter') {
-      e.preventDefault();
-      const a = filtered[active];
-      if (a) { a.run(); onClose(); }
-    }
-  };
-
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
-      PaperProps={{
-        sx: {
-          bgcolor: colors.bg.secondary,
-          border: `1px solid ${alphaColor(colors.accent.purple, '40')}`,
-          borderRadius: '14px',
-          boxShadow: `0 20px 60px ${colors.shadow.heavy}`,
-        },
-      }}
-    >
-      <DialogContent sx={{ p: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1.5, borderBottom: `1px solid ${colors.border.default}` }}>
-          <SearchIcon sx={{ fontSize: 16, color: colors.accent.purple }} />
-          <input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Type a command or search..."
-            style={{
-              flex: 1, border: 'none', outline: 'none', background: 'transparent',
-              color: colors.text.primary, fontSize: '0.85rem',
-              fontFamily: "'Inter', sans-serif",
-            }}
-          />
-          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>esc</Typography>
-        </Box>
-        <Box sx={{ maxHeight: 400, overflowY: 'auto', py: 0.5 }}>
-          {filtered.length === 0 && (
-            <Box sx={{ p: 3, textAlign: 'center' }}>
-              <Typography sx={{ fontSize: '0.7rem', color: colors.text.dim }}>No matching actions</Typography>
-            </Box>
-          )}
-          {filtered.map((a, i) => (
-            <Box
-              key={a.id}
-              onClick={() => { a.run(); onClose(); }}
-              onMouseEnter={() => setActive(i)}
-              sx={{
-                px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer',
-                bgcolor: i === active ? alphaColor(colors.accent.purple, '15') : 'transparent',
-                borderLeft: i === active ? `3px solid ${colors.accent.purple}` : '3px solid transparent',
-              }}
-            >
-              {a.icon && <Box sx={{ color: colors.accent.purple, display: 'flex' }}>{a.icon}</Box>}
-              <Typography sx={{ fontSize: '0.75rem', color: colors.text.primary, flex: 1 }}>{a.label}</Typography>
-              {a.hint && (
-                <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-                  {a.hint}
-                </Typography>
-              )}
-            </Box>
-          ))}
-        </Box>
-        <Box sx={{ px: 2, py: 0.75, borderTop: `1px solid ${colors.border.default}`, display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace" }}>
-            ↑↓ navigate · ⏎ run · esc close · ⌘K toggle
-          </Typography>
-        </Box>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 5. SessionSearchModal — cross-session full-text search
+// 4. SessionSearchModal — cross-session full-text search
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function SessionSearchModal({

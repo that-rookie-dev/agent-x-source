@@ -17,7 +17,6 @@ export interface CrewWorkerOptions {
   missionContext: CrewMissionContext;
   eventBus: AgentEventBus;
   timeout?: number;
-  planMode?: boolean;
   missionId?: string;
 }
 
@@ -44,7 +43,6 @@ export class CrewWorker {
   async execute(): Promise<CrewWorkerResult> {
     const { parentAgent, crew, task, missionContext, eventBus } = this.opts;
     const start = Date.now();
-    const planMode = this.opts.planMode ?? (parentAgent as unknown as { planModeEnabled?: boolean }).planModeEnabled ?? false;
 
     registerWorker(this.workerId, this.opts.missionId ?? missionContext.missionId);
 
@@ -55,7 +53,7 @@ export class CrewWorker {
       crewName: crew.name,
       callsign: crew.callsign,
       task: task.slice(0, 200),
-    } as any);
+    });
 
     eventBus.emit({
       type: 'crew_worker_progress',
@@ -63,15 +61,15 @@ export class CrewWorker {
       crewId: crew.id,
       status: 'running',
       message: `${crew.name} started work`,
-    } as any);
+    });
 
     const sharedContext = missionContext.getSharedContextBlock();
-    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext, planMode);
-    const toolIds = resolveCrewToolIds(crew, planMode);
+    const systemPrompt = buildCrewWorkerSystemPrompt(crew, sharedContext);
+    const toolIds = resolveCrewToolIds(crew);
 
     let configOverride: Partial<AgentXConfig> | undefined;
     if (crew.model) {
-      const parentConfig = (parentAgent as unknown as { config: AgentXConfig }).config;
+      const parentConfig = parentAgent.config;
       configOverride = {
         provider: {
           ...parentConfig.provider,
@@ -93,12 +91,11 @@ export class CrewWorker {
       systemPromptOverride: systemPrompt,
       displayName: crew.name,
       childSessionKind: 'crew_worker',
-      planMode,
       crewPermissions: crew.permissions ?? [],
       missionContext,
     });
 
-    const parentEvents = (parentAgent as unknown as { events: AgentEventBus }).events;
+    const parentEvents = parentAgent.events;
     const unsubProgress = parentEvents.on((event: EngineEvent) => {
       if (event.type !== 'subagent_event') return;
       const subEv = event as { subagentId?: string; parentEvent?: { type?: string; tool?: string; description?: string } };
@@ -158,7 +155,7 @@ export class CrewWorker {
       crewId: crew.id,
       status: success ? 'done' : (needsClarification ? 'blocked' : 'error'),
       message: success ? 'Task completed' : output.slice(0, 120),
-    } as any);
+    });
 
     eventBus.emit({
       type: 'crew_worker_complete',
@@ -169,7 +166,7 @@ export class CrewWorker {
       success,
       output: output.slice(0, 8000),
       elapsed,
-    } as any);
+    });
 
     return {
       workerId: this.workerId,

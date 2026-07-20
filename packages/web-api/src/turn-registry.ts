@@ -35,6 +35,19 @@ class TurnRegistry {
     return this.turns.get(turnId);
   }
 
+  /** Return the most recent turn record for a session (running turns preferred). */
+  getBySessionId(sessionId: string): TurnRecord | undefined {
+    let best: TurnRecord | undefined;
+    for (const record of this.turns.values()) {
+      if (record.sessionId !== sessionId) continue;
+      if (!best) { best = record; continue; }
+      // Prefer a running turn; otherwise the most recently started.
+      if (record.status === 'running' && best.status !== 'running') best = record;
+      else if (record.status === best.status && record.startedAt > best.startedAt) best = record;
+    }
+    return best;
+  }
+
   subscribe(turnId: string, listener: (record: TurnRecord) => void): () => void {
     let set = this.listeners.get(turnId);
     if (!set) {

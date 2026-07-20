@@ -6,6 +6,7 @@ import {
 } from '@agentx/engine';
 import {
   isUserFacingSession,
+  isChannelSessionId,
   type AgentXConfig,
 } from '@agentx/shared';
 import { getEngine, syncChannelSuperSessionContext } from './engine.js';
@@ -16,18 +17,17 @@ function formatSessionLine(s: Record<string, unknown>): string {
   const id = String(s['id'] ?? '');
   const title = String(s['title'] ?? s['name'] ?? id.slice(0, 8));
   const kind = String(s['contextKind'] ?? 'agent_x');
-  const mode = String(s['mode'] ?? 'agent');
   const updated = s['updatedAt'] ? new Date(String(s['updatedAt'])).toLocaleString() : '—';
   const msgCount = s['messageCount'] ?? s['message_count'];
   const countSuffix = msgCount != null ? ` | ${msgCount} msgs` : '';
-  return `- [${kind}] ${title} (${id.slice(0, 12)}…) | ${mode}${countSuffix} | updated ${updated}`;
+  return `- [${kind}] ${title} (${id.slice(0, 12)}…)${countSuffix} | updated ${updated}`;
 }
 
 function resolveActiveSessionId(eng: ReturnType<typeof getEngine>): string | null {
   const active = eng.sessionManager.getActiveSession();
   if (active?.id) return active.id;
   const main = eng.agent;
-  if (main?.currentSessionId && main.currentSessionId !== '__channel__') {
+  if (main?.currentSessionId && !isChannelSessionId(main.currentSessionId)) {
     return main.currentSessionId;
   }
   return null;
@@ -179,7 +179,6 @@ async function buildSessionDetail(eng: ReturnType<typeof getEngine>, sessionId: 
     `Session: ${session.title ?? session.id}`,
     `ID: ${session.id}`,
     `Kind: ${session.contextKind ?? 'agent_x'}`,
-    `Mode: ${session.mode ?? 'agent'}`,
     `Workspace: ${session.scopePath ?? '—'}`,
     `Updated: ${session.updatedAt ?? '—'}`,
   ];

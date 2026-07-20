@@ -41,10 +41,23 @@ export function redactConfigForClient(config: AgentXConfig): AgentXConfig {
       }
     : config.tools;
 
+  const voice = config.voice
+    ? {
+        ...config.voice,
+        xai: config.voice.xai
+          ? {
+              ...config.voice.xai,
+              apiKey: config.voice.xai.apiKey ? REDACTED_SECRET : config.voice.xai.apiKey,
+            }
+          : config.voice.xai,
+      }
+    : config.voice;
+
   return {
     ...config,
     provider: { ...config.provider, providers: providers as AgentXConfig['provider']['providers'] },
     tools: tools as AgentXConfig['tools'],
+    voice,
   };
 }
 
@@ -85,6 +98,18 @@ export function mergeConfigPreservingSecrets(existing: AgentXConfig, incoming: A
       }
     }
     merged.tools = { ...existing.tools, webSearch: ws };
+  }
+
+  if (incoming.voice?.xai?.apiKey === REDACTED_SECRET && existing.voice?.xai?.apiKey) {
+    merged.voice = {
+      ...existing.voice,
+      ...incoming.voice,
+      xai: {
+        ...existing.voice.xai,
+        ...incoming.voice.xai,
+        apiKey: existing.voice.xai.apiKey,
+      },
+    };
   }
 
   return merged;

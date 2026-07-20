@@ -158,13 +158,13 @@ export class ForceGraph3DRenderer implements GraphRenderer {
     const fg = this.fgRef.current;
     if (!fg) return;
     // Wider charge repulsion — nodes drift apart like stars in space
-    const charge = (fg as any).d3Force('charge');
+    const charge = fg.d3Force('charge');
     if (charge) charge.strength(-30);
     // Shorter link distance — tighter constellation clusters
-    const link = (fg as any).d3Force('link');
+    const link = fg.d3Force('link');
     if (link) link.distance(30);
     // Reheat so the new forces take effect
-    (fg as any).d3ReheatSimulation();
+    fg.d3ReheatSimulation();
   }
 
   emitParticle(_edgeId: string): void {
@@ -221,7 +221,7 @@ export class ForceGraph3DRenderer implements GraphRenderer {
     if (!fg) return;
     const node = this.nodes.find((n) => n.id === id);
     if (!node) return;
-    (fg as any).cameraPosition(
+    fg.cameraPosition(
       { x: node.x ?? 0, y: node.y ?? 0, z: (node.z ?? 0) + 200 },
       { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 },
       800,
@@ -231,7 +231,7 @@ export class ForceGraph3DRenderer implements GraphRenderer {
   fitToAll(): void {
     const fg = this.fgRef.current;
     if (!fg) return;
-    (fg as any).zoomToFit(800, 60);
+    fg.zoomToFit(800, 60);
   }
 
   onNodeClick(cb: (id: string) => void): void {

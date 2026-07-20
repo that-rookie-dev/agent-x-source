@@ -3,6 +3,10 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 import SettingsIcon from '@mui/icons-material/Settings';
 import { PanelHeader } from './PanelHeader';
 import PersonIcon from '@mui/icons-material/Person';
@@ -11,17 +15,19 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BuildIcon from '@mui/icons-material/Build';
 import ModelIcon from '@mui/icons-material/Psychology';
 import BrainIcon from '@mui/icons-material/Memory';
+import HubIcon from '@mui/icons-material/Hub';
 import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import KeyboardVoiceIcon from '@mui/icons-material/KeyboardVoice';
+import SecurityIcon from '@mui/icons-material/Security';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import { CheckCircle } from './CheckCircle';
-import { config, personaApi, type AgentXConfig, type AgentPersonaConfig } from '../api';
+import { config, personaApi, settingsPermissions, type AgentXConfig, type AgentPersonaConfig } from '../api';
 import { useApp } from '../store/AppContext';
 import { colors } from '../theme';
 import {
   settingsTheme,
   settingsTabSx,
-  settingsGridBgSx,
   settingsHelperSx,
   settingsTextFieldSx,
   settingsMonoSx,
@@ -40,8 +46,11 @@ import { VoiceTab, mergeVoiceConfig } from './settings/VoiceTab';
 import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
+import { NeuralTab } from './settings/NeuralTab';
+import { KnowledgeTab } from './settings/KnowledgeTab';
+import { PermissionsTab } from './settings/PermissionsTab';
 
-type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'channels' | 'runtime' | 'voice';
+type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'knowledge' | 'channels' | 'runtime' | 'voice' | 'permissions';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -49,10 +58,13 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
   { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
   { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
+  { id: 'neural', label: 'Neural', icon: <HubIcon sx={{ fontSize: 14 }} /> },
+  { id: 'knowledge', label: 'Knowledge', icon: <LibraryBooksIcon sx={{ fontSize: 14 }} /> },
   { id: 'voice', label: 'Voice', icon: <KeyboardVoiceIcon sx={{ fontSize: 14 }} /> },
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
   { id: 'tools', label: 'Search', icon: <BuildIcon sx={{ fontSize: 14 }} /> },
   { id: 'persistence', label: 'Storage', icon: <StorageIcon sx={{ fontSize: 14 }} /> },
+  { id: 'permissions', label: 'Permissions', icon: <SecurityIcon sx={{ fontSize: 14 }} /> },
   { id: 'appearance', label: 'Theme', icon: <PaletteOutlinedIcon sx={{ fontSize: 14 }} /> },
 ];
 
@@ -66,6 +78,7 @@ export function SettingsPanel() {
   const [personaLoading, setPersonaLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [confirmSave, setConfirmSave] = useState(false);
 
   useEffect(() => { config.get().then(setCfg).catch(() => {}); }, []);
 
@@ -85,25 +98,33 @@ export function SettingsPanel() {
     }
   }, [activeTab, persona]);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!cfg) return;
     if (persona && !persona.description?.trim()) {
       setMessage('description_required');
       return;
     }
+    setConfirmSave(true);
+  };
+
+  const executeSave = async () => {
+    if (!cfg) return;
+    setConfirmSave(false);
     setSaving(true); setMessage('');
     try {
-      const payload: AgentXConfig = {
-        ...cfg,
+      const { permissions, ...rest } = cfg;
+      const payload: Partial<AgentXConfig> = {
+        ...rest,
         channels: mergeChannelsConfig(cfg.channels),
         tools: cfg.tools?.webSearch
           ? { ...cfg.tools, webSearch: mergeWebSearchConfig(cfg.tools.webSearch) }
           : cfg.tools,
         voice: mergeVoiceConfig(cfg.voice),
       };
+      await settingsPermissions.update(permissions ?? {});
       await config.update(payload);
-      setCfg(payload);
-      setConfig(payload);
+      setCfg({ ...cfg, ...payload });
+      setConfig({ ...cfg, ...payload });
       notifyVoiceConfigUpdated(payload.voice);
       if (persona) await personaApi.save(persona);
       window.dispatchEvent(new CustomEvent('agentx:persona-updated'));
@@ -130,7 +151,7 @@ export function SettingsPanel() {
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: settingsTheme.bg.void, ...settingsGridBgSx }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: settingsTheme.bg.void }}>
       <PanelHeader
         title="Settings"
         subtitle="Mission control · neural links · ops config"
@@ -185,6 +206,8 @@ export function SettingsPanel() {
         )}
         {activeTab === 'models' && <ProvidersPanel />}
         {activeTab === 'local-model' && <LocalModelTab />}
+        {activeTab === 'neural' && <NeuralTab />}
+        {activeTab === 'knowledge' && <KnowledgeTab />}
         {activeTab === 'voice' && (
           <VoiceTab
             value={cfg.voice}
@@ -209,6 +232,12 @@ export function SettingsPanel() {
         {activeTab === 'persistence' && <PersistenceTab />}
         {activeTab === 'runtime' && (
           <RuntimeTab cfg={cfg} onChange={setCfg} />
+        )}
+        {activeTab === 'permissions' && (
+          <PermissionsTab
+            value={cfg.permissions}
+            onChange={(permissions) => setCfg({ ...cfg, permissions })}
+          />
         )}
       </Box>
 
@@ -237,6 +266,33 @@ export function SettingsPanel() {
           {saving ? 'Saving…' : 'Commit'}
         </Button>
       </Box>
+
+      <Dialog open={confirmSave} onClose={() => setConfirmSave(false)}
+        PaperProps={{ sx: { bgcolor: settingsTheme.bg.void, border: `1px solid ${settingsTheme.border.default}`, maxWidth: 420 } }}>
+        <DialogTitle sx={{ fontSize: '0.8rem', fontFamily: "'JetBrains Mono', monospace", color: settingsTheme.accent.hud, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
+          Save Configuration?
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.text.primary, ...settingsMonoSx, lineHeight: 1.6 }}>
+            This will apply all settings changes to the running agent, including tool permissions, model selection, channels, and persona.
+            Changes take effect immediately for new sessions.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+          <Button size="small" onClick={() => setConfirmSave(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim, '&:hover': { color: settingsTheme.text.primary } }}>
+            Cancel
+          </Button>
+          <Button size="small" variant="contained" onClick={executeSave}
+            sx={{
+              bgcolor: settingsTheme.accent.hud, color: settingsTheme.bg.void,
+              fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase',
+              fontFamily: "'JetBrains Mono', monospace", letterSpacing: '1px',
+              '&:hover': { bgcolor: settingsTheme.accent.signal },
+            }}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

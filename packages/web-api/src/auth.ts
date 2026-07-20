@@ -1,10 +1,9 @@
 /**
  * Web-API Authentication Middleware & Routes
- * 
+ *
  * Provides:
  * - Express middleware for session validation
  * - Auth endpoints (setup, login, logout, status)
- * - Rate limiting on login attempts
  * - Secure cookie configuration
  */
 
@@ -15,75 +14,6 @@ import { authManager } from '@agentx/shared';
 import type { AuthSession } from '@agentx/shared';
 import { setEngineDEK, getEngine } from './engine.js';
 import { refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
-import { getLogger } from '@agentx/shared';
-
-/**
- * Rolling-window rate limiter for login attempts.
- * Tracks timestamps per IP to enable precise sliding-window counting.
- * Periodic cleanup prevents memory leaks from abandoned IPs.
- * Configurable via environment variables.
- */
-interface RateLimitEntry {
-  /** Timestamps of recent attempts (within window) */
-  timestamps: number[];
-  /** When the IP is blocked until (0 = not blocked) */
-  blockedUntil: number;
-}
-
-const loginAttempts = new Map<string, RateLimitEntry>();
-const MAX_ATTEMPTS = parseInt(process.env['AGENTX_RATE_LIMIT_MAX'] || '5', 10);
-const BLOCK_DURATION_MS = parseInt(process.env['AGENTX_RATE_LIMIT_BLOCK_MS'] || '900000', 10); // 15 min
-const ATTEMPT_WINDOW_MS = parseInt(process.env['AGENTX_RATE_LIMIT_WINDOW_MS'] || '60000', 10); // 1 min
-const CLEANUP_INTERVAL_MS = parseInt(process.env['AGENTX_RATE_LIMIT_CLEANUP_MS'] || '300000', 10); // 5 min
-
-let cleanupTimer: ReturnType<typeof setInterval> | null = null;
-
-/**
- * Start periodic cleanup of stale rate limit entries.
- * Call once at server startup.
- */
-export function startRateLimitCleanup(): void {
-  if (cleanupTimer) return;
-  cleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of loginAttempts.entries()) {
-      // Remove entries that are no longer blocked and have no recent timestamps
-      if (entry.blockedUntil <= now) {
-        const recent = entry.timestamps.filter(ts => now - ts < ATTEMPT_WINDOW_MS);
-        if (recent.length === 0) {
-          loginAttempts.delete(ip);
-        } else {
-          entry.timestamps = recent;
-        }
-      }
-    }
-  }, CLEANUP_INTERVAL_MS);
-  // Allow process to exit even if timer is still active
-  if (cleanupTimer && typeof cleanupTimer === 'object' && 'unref' in cleanupTimer) {
-    cleanupTimer.unref();
-  }
-}
-
-/**
- * Stop the periodic cleanup timer (for testing / graceful shutdown).
- */
-export function stopRateLimitCleanup(): void {
-  if (cleanupTimer) {
-    clearInterval(cleanupTimer);
-    cleanupTimer = null;
-  }
-}
-
-function getClientIp(req: Request): string {
-  if (process.env['AGENTX_TRUST_PROXY'] === 'true') {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      const ips = forwarded.split(',');
-      return (ips[0] ?? '').trim() || req.socket.remoteAddress || 'unknown';
-    }
-  }
-  return req.socket.remoteAddress || 'unknown';
-}
 
 function useSecureCookies(req?: Request): boolean {
   if (process.env['AGENTX_SECURE_COOKIES'] === 'true') return true;
@@ -95,63 +25,6 @@ const SSE_TOKEN_PATHS = new Set([
   '/api/chat/stream',
   '/api/logs/stream',
 ]);
-
-function isRateLimited(ip: string): boolean {
-  const entry = loginAttempts.get(ip);
-  if (!entry) return false;
-
-  const now = Date.now();
-
-  // Check permanent block
-  if (entry.blockedUntil > now) return true;
-
-  // Slide window: keep only timestamps within the current window
-  entry.timestamps = entry.timestamps.filter(ts => now - ts < ATTEMPT_WINDOW_MS);
-
-  if (entry.timestamps.length === 0) {
-    loginAttempts.delete(ip);
-    return false;
-  }
-
-  return entry.timestamps.length >= MAX_ATTEMPTS;
-}
-
-function recordAttempt(ip: string, success: boolean): void {
-  const now = Date.now();
-
-  if (success) {
-    // Clear on success — allows immediate retry after successful auth
-    loginAttempts.delete(ip);
-    return;
-  }
-
-  let entry = loginAttempts.get(ip);
-  if (!entry) {
-    entry = { timestamps: [], blockedUntil: 0 };
-    loginAttempts.set(ip, entry);
-  }
-
-  // Slide window
-  entry.timestamps = entry.timestamps.filter(ts => now - ts < ATTEMPT_WINDOW_MS);
-  entry.timestamps.push(now);
-
-  // Block if exceeding threshold
-  if (entry.timestamps.length >= MAX_ATTEMPTS) {
-    entry.blockedUntil = now + BLOCK_DURATION_MS;
-    getLogger().warn('RATE_LIMIT', `IP ${ip} blocked for ${BLOCK_DURATION_MS / 60000} minutes after ${entry.timestamps.length} failed attempts`);
-  }
-}
-
-/**
- * Get remaining attempts before rate limit blocks (for response headers).
- */
-export function getRemainingAttempts(ip: string): number {
-  const entry = loginAttempts.get(ip);
-  if (!entry) return MAX_ATTEMPTS;
-  if (entry.blockedUntil > Date.now()) return 0;
-  const recent = entry.timestamps.filter(ts => Date.now() - ts < ATTEMPT_WINDOW_MS);
-  return Math.max(0, MAX_ATTEMPTS - recent.length);
-}
 
 /**
  * Extract session token from cookie or Authorization header.
@@ -194,7 +67,7 @@ export function syncDEKMiddleware(req: Request, _res: Response, next: NextFuncti
       // (getEngine() is lazily created by route handlers — middleware runs first)
       getEngine();
       setEngineDEK(session.dek);
-      (req as any).agentxSession = session as AuthSession;
+      req.agentxSession = session;
     }
   }
   next();
@@ -247,9 +120,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
  */
 export function createAuthRouter(): Router {
   const router = express.Router();
-  
-  // Start periodic cleanup of stale rate limit entries
-  startRateLimitCleanup();
 
   /**
    * GET /api/auth/check
@@ -345,32 +215,15 @@ export function createAuthRouter(): Router {
    * Authenticate and create a session.
    */
   router.post('/auth/login', async (req, res) => {
-    const ip = getClientIp(req);
-
-    if (isRateLimited(ip)) {
-      res.setHeader('X-RateLimit-Limit', String(MAX_ATTEMPTS));
-      res.setHeader('X-RateLimit-Remaining', '0');
-      res.setHeader('X-RateLimit-Reset', String(Math.ceil((loginAttempts.get(ip)?.blockedUntil ?? Date.now()) / 1000)));
-      res.status(429).json({
-        error: 'rate-limited',
-        message: 'Too many failed attempts. Please try again later.',
-      });
-      return;
-    }
-
     try {
       const { username, password } = req.body as { username?: string; password?: string };
 
       if (!username || !password) {
-        recordAttempt(ip, false);
-        res.setHeader('X-RateLimit-Limit', String(MAX_ATTEMPTS));
-        res.setHeader('X-RateLimit-Remaining', String(getRemainingAttempts(ip)));
         res.status(400).json({ error: 'missing-credentials', message: 'Username and password required' });
         return;
       }
 
       const token = await authManager.login(username, password);
-      recordAttempt(ip, true);
 
       // Set engine DEK for encrypted config access
       const session = authManager.validateSession(token);
@@ -391,7 +244,6 @@ export function createAuthRouter(): Router {
 
       res.json({ ok: true, username, token });
     } catch (e: unknown) {
-      recordAttempt(ip, false);
       const message = e instanceof Error ? e.message : 'Authentication failed';
       res.status(401).json({ error: 'invalid-credentials', message });
     }

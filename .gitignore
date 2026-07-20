@@ -20,12 +20,14 @@ packages/desktop/build/Tray.png
 packages/desktop/build/TrayWin.png
 packages/desktop/python/
 packages/desktop/ffmpeg/
+packages/desktop/redis/
 packages/desktop/.pgvector-build/
 packages/desktop/web-api/
 packages/desktop/web-ui/
 packages/runtime/python/
 packages/runtime/ffmpeg/
-packages/runtime/.ffmpeg-download/
+packages/runtime/redis/
+packages/runtime/.redis-download/
 packages/runtime/pg-ext-artifact-staging/
 packages/runtime/pg-ext-download/
 .pgvector-build/

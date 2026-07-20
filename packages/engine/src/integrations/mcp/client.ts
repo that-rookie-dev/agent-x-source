@@ -24,6 +24,7 @@ export interface McpConnectRemoteOptions {
 export class McpSession {
   private client: Client;
   readonly label: string;
+  private pendingRequests = 0;
 
   private constructor(
     client: Client,
@@ -59,37 +60,56 @@ export class McpSession {
     return new McpSession(client, transport, options.url);
   }
 
+  isBusy(): boolean {
+    return this.pendingRequests > 0;
+  }
+
+  private async track<T>(fn: () => Promise<T>): Promise<T> {
+    this.pendingRequests += 1;
+    try {
+      return await fn();
+    } finally {
+      this.pendingRequests -= 1;
+    }
+  }
+
   async listTools(): Promise<Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>> {
-    const result = await this.client.listTools();
-    return result.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-    }));
+    return this.track(async () => {
+      const result = await this.client.listTools();
+      return result.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
+      }));
+    });
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const result = await this.client.callTool({ name, arguments: args });
-    return result;
+    return this.track(async () => {
+      const result = await this.client.callTool({ name, arguments: args });
+      return result;
+    });
   }
 
   async listResources(cursor?: string): Promise<{
     resources: Array<{ uri: string; name?: string; mimeType?: string }>;
     nextCursor?: string;
   }> {
-    const result = await this.client.listResources(cursor ? { cursor } : undefined);
-    return {
-      resources: result.resources.map((resource) => ({
-        uri: resource.uri,
-        name: resource.name,
-        mimeType: resource.mimeType,
-      })),
-      nextCursor: result.nextCursor,
-    };
+    return this.track(async () => {
+      const result = await this.client.listResources(cursor ? { cursor } : undefined);
+      return {
+        resources: result.resources.map((resource) => ({
+          uri: resource.uri,
+          name: resource.name,
+          mimeType: resource.mimeType,
+        })),
+        nextCursor: result.nextCursor,
+      };
+    });
   }
 
   async readResource(uri: string): Promise<unknown> {
-    return this.client.readResource({ uri });
+    return this.track(async () => this.client.readResource({ uri }));
   }
 
   async close(): Promise<void> {

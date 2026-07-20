@@ -9,6 +9,7 @@
     "bundle-models": "node scripts/bundle-embedding-model.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "start:server": "node scripts/start.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
@@ -16,6 +17,7 @@
     "@agentx/engine": "workspace:*",
     "@agentx/shared": "workspace:*",
     "@huggingface/transformers": "^3.8.1",
+    "ai": "^6.0.205",
     "cron-parser": "^4.9.0",
     "express": "^4.21.0",
     "helmet": "^8.2.0",
@@ -32,6 +34,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^2.1.0",
     "@types/node": "^25.9.1",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.5.12",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",

@@ -11,10 +11,9 @@ from agentx_voice import __version__
 from agentx_voice.protocol import SidecarConfig, health_payload
 from agentx_voice.stt_faster_whisper import FasterWhisperStt
 from agentx_voice.tts_kokoro import KokoroTts
-from agentx_voice.tts_styletts2 import StyleTts2
 from agentx_voice.vad_silero import SileroVad
 
-TtsEngine = Literal["kokoro", "styletts2"]
+TtsEngine = Literal["kokoro"]
 
 
 class VoiceRuntime:
@@ -22,7 +21,6 @@ class VoiceRuntime:
         self.config = config
         self.stt = FasterWhisperStt(config.data_dir)
         self.kokoro = KokoroTts(config.data_dir)
-        self.styletts2 = StyleTts2(config.data_dir)
         self.vad = SileroVad(config.data_dir)
         self.active_tts_engine: TtsEngine = "kokoro"
         self.cancelled_request_ids: deque[str] = deque(maxlen=500)
@@ -30,7 +28,7 @@ class VoiceRuntime:
     def cancel(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("requestId")
         if request_id:
-            self.cancelled_request_ids.add(str(request_id))
+            self.cancelled_request_ids.append(str(request_id))
         return {"ok": True}
 
     def is_cancelled(self, request_id: str | None) -> bool:
@@ -39,11 +37,7 @@ class VoiceRuntime:
         return str(request_id) in self.cancelled_request_ids
 
     def health(self) -> dict[str, Any]:
-        tts_loaded = (
-            self.kokoro.pipeline is not None
-            if self.active_tts_engine == "kokoro"
-            else self.styletts2.model is not None
-        )
+        tts_loaded = self.kokoro.pipeline is not None
         return health_payload(
             "ready",
             version=__version__,
@@ -57,15 +51,8 @@ class VoiceRuntime:
 
     def warm(self, request: dict[str, Any]) -> dict[str, Any]:
         self.stt.warm(request)
-        engine = request.get("ttsEngine")
-        if engine == "styletts2":
-            self.active_tts_engine = "styletts2"
-            self.kokoro.unload()
-            self.styletts2.warm(request)
-        else:
-            self.active_tts_engine = "kokoro"
-            self.styletts2.unload()
-            self.kokoro.warm(request)
+        self.active_tts_engine = "kokoro"
+        self.kokoro.warm(request)
         self.vad.warm(request)
         return self.health()
 
@@ -117,21 +104,10 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/stt/stream":
             return self.runtime.stt.stream_transcribe(request, vad=self.runtime.vad)
         if self.path == "/tts/synthesize":
-            engine = request.get("engine")
-            if engine == "styletts2":
-                return self.runtime.styletts2.synthesize(request)
-            if engine == "kokoro":
-                return self.runtime.kokoro.synthesize(request)
-            raise ValueError("Unsupported TTS engine")
+            return self.runtime.kokoro.synthesize(request)
         if self.path == "/tts/stream":
-            engine = request.get("engine")
             cancel_check = lambda: self.runtime.is_cancelled(str(request.get("requestId") or ""))
-            if engine == "styletts2":
-                chunks = list(self.runtime.styletts2.synthesize_stream(request, cancel_check=cancel_check))
-            elif engine == "kokoro":
-                chunks = list(self.runtime.kokoro.synthesize_stream(request, cancel_check=cancel_check))
-            else:
-                raise ValueError("Unsupported TTS engine")
+            chunks = list(self.runtime.kokoro.synthesize_stream(request, cancel_check=cancel_check))
             return {"chunks": chunks}
         if self.path == "/cancel":
             return self.runtime.cancel(request)

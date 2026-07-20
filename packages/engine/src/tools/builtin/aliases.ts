@@ -8,6 +8,7 @@ import * as shell from './shell.js';
 import { getRAGEngineInstance } from '../../commands/builtin/rag_index.js';
 import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
 import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
+import { getKnowledgeBaseManager } from '../../knowledge/global-manager.js';
 import { USER_PROFILE_TAG } from '../../neural/UserChatMemoryIngester.js';
 import { CHAT_MEMORY_TAG } from '../../neural/ChatTurnMemoryIngester.js';
 
@@ -245,9 +246,52 @@ export async function ragSearch(args: Record<string, unknown>, _context: ToolExe
 }
 
 /**
- * Semantic search over ingested documents in the Memory Fabric (RAG Studio).
- * Uses vector ANN + graph walk to find relevant chunks and entities from
- * uploaded PDFs, text files, and web distillations.
+ * Semantic search over Knowledge Base uploads (PDFs, docs, etc.).
+ * Prefer this over grepping the raw PDF when the user asks about uploaded documents.
+ */
+export async function knowledgeSearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
+  const query = (args['query'] as string) ?? '';
+  if (!query.trim()) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
+
+  const kb = getKnowledgeBaseManager();
+  if (!kb) {
+    return {
+      success: false,
+      output: 'Knowledge base unavailable. Upload documents via Knowledge Base first.',
+      error: 'KB_UNAVAILABLE',
+    };
+  }
+
+  const topK = typeof args['limit'] === 'number' ? Math.min(Math.max(1, args['limit']), 20) : 8;
+  const sourceId = typeof args['sourceId'] === 'string' ? args['sourceId'] : undefined;
+  try {
+    const results = await kb.search(query, topK, sourceId);
+    if (results.length === 0) {
+      return { success: true, output: 'No knowledge-base matches. Confirm the document finished indexing (READY).' };
+    }
+    const lines = results.map((r, i) => {
+      const page = r.metadata?.pageNumber != null ? ` p.${r.metadata.pageNumber}` : '';
+      const title = r.sourceName || r.sourceId || 'source';
+      const snippet = r.content.slice(0, 900).replace(/\n+/g, '\n');
+      return `[${i + 1}] ${r.kind.toUpperCase()} · ${title}${page} · ${(r.score * 100).toFixed(1)}%\n${snippet}${r.content.length > 900 ? '…' : ''}`;
+    });
+    return {
+      success: true,
+      output: `Knowledge base matches (${results.length}):\n\n${lines.join('\n\n')}`,
+      metadata: { count: results.length },
+    };
+  } catch (e) {
+    return {
+      success: false,
+      output: `Knowledge search failed: ${e instanceof Error ? e.message : String(e)}`,
+      error: 'KB_ERROR',
+    };
+  }
+}
+
+/**
+ * Semantic search over Memory Fabric chat/profile memory.
+ * Falls back to Knowledge Base when fabric is unavailable (uploaded PDFs live there).
  */
 export async function memoryFabricSearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const query = (args['query'] as string) ?? '';
@@ -256,7 +300,8 @@ export async function memoryFabricSearch(args: Record<string, unknown>, context:
   const fabric = getMemoryFabricInstance();
   const embedder = getEmbedderInstance();
   if (!fabric || !embedder) {
-    return { success: false, output: 'Memory fabric not available. Upload documents via RAG Studio first.', error: 'FABRIC_UNAVAILABLE' };
+    // Uploaded PDFs are in Knowledge Base, not the old RAG Studio fabric.
+    return knowledgeSearch(args, context);
   }
 
   const topK = (args['limit'] as number) ?? 8;
@@ -305,7 +350,7 @@ export async function memoryFabricSearch(args: Record<string, unknown>, context:
             ? ''
             : ` AND session_id = $2`;
           const params: unknown[] = isSuper ? [newIds] : [newIds, sessionFilter];
-          const { rows } = await (fabric as any)['pool'].query(
+          const { rows } = await fabric.getPool().query(
             `SELECT id, label, category, content, source_id AS "sourceId"
              FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'${sessionClause}`,
             params,

@@ -21,7 +21,7 @@ export function detectLocation(scopePath: string): Location {
         const head = readFileSync(join(current, '.git', 'HEAD'), 'utf-8').trim();
         const branchMatch = head.match(/ref: refs\/heads\/(.+)/);
         if (branchMatch) loc.gitBranch = branchMatch[1];
-      } catch {}
+      } catch { /* ignore */ }
       break;
     }
     current = join(current, '..');

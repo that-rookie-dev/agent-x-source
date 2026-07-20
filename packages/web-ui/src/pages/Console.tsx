@@ -2,32 +2,42 @@ import { Component, type ReactNode, lazy, Suspense, useState, useCallback, useRe
 import { useParams, useNavigate } from 'react-router-dom';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
+import CircularProgress from '@mui/material/CircularProgress';
 import { Sidebar } from '../components/Sidebar';
 import { Footer } from '../components/Footer';
 import { LogsPanel } from '../components/LogsPanel';
-import { ChatPanel } from '../components/ChatPanel';
 import { AgentXCoreChat } from './AgentXCoreChat';
 import { NotificationToast } from '../components/NotificationToast';
+import { colors, alphaColor } from '../theme';
+import { useAppLive } from '../store/AppContext';
+
+const ChatPanel = lazy(() => import('../components/ChatPanel').then((m) => ({ default: m.ChatPanel })));
+const BentoDashboardPanel = lazy(() => import('../components/BentoDashboard').then((m) => ({ default: m.BentoDashboard })));
+
+function ChatPanelFallback() {
+  return (
+    <Box sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <CircularProgress size={24} sx={{ color: colors.text.dim }} />
+    </Box>
+  );
+}
 
 // Secondary panels are code-split so the initial chunk only carries the chat
 // surface — they load on first navigation and stay cached afterwards.
 const ToolsPanel = lazy(() => import('../components/ToolsPanel').then(m => ({ default: m.ToolsPanel })));
 const PluginsPanel = lazy(() => import('../components/PluginsPanel').then(m => ({ default: m.PluginsPanel })));
-const ChannelsPanel = lazy(() => import('../components/ChannelsPanel').then(m => ({ default: m.ChannelsPanel })));
 const SettingsPanel = lazy(() => import('../components/SettingsPanel').then(m => ({ default: m.SettingsPanel })));
 const AutomationPanel = lazy(() => import('../components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
-const RagStudioPanel = lazy(() => import('../components/RagStudioPanel').then(m => ({ default: m.RagStudioPanel })));
 const OrchestratorPanel = lazy(() => import('../components/OrchestratorPanel').then(m => ({ default: m.OrchestratorPanel })));
 const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ default: m.CrewsPanel })));
 const SoulPanel = lazy(() => import('../components/SoulPanel').then(m => ({ default: m.SoulPanel })));
 const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
-const CanvasPanel = lazy(() => import('../components/CanvasPanel').then(m => ({ default: m.CanvasPanel })));
-import { colors, alphaColor } from '../theme';
-import { useApp } from '../store/AppContext';
-import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
+const MarkdownPanel = lazy(() => import('../components/MarkdownPanel').then(m => ({ default: m.MarkdownPanel })));
+const KnowledgeBasePanel = lazy(() => import('../components/KnowledgeBasePanel').then(m => ({ default: m.KnowledgeBasePanel })));
+const CallsPanel = lazy(() => import('../components/calls').then(m => ({ default: m.CallsPanel })));
 
-export type PanelId = 'chat' | 'agent-x' | 'tools' | 'plugins' | 'channels' | 'settings' | 'automation' | 'rag-studio' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'canvases';
+export type PanelId = 'dashboard' | 'chat' | 'calls' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'orchestrator' | 'crews' | 'soul' | 'mcp-store' | 'notifications' | 'markdown' | 'knowledge-base';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -85,13 +95,13 @@ const RIGHT_PANEL_DEFAULT_WIDTH = 350;
 export function Console() {
   const { panel, sessionId } = useParams<{ panel?: string; sessionId?: string }>();
   const navigate = useNavigate();
-  const { unreadNotificationCount } = useApp();
-  const neuralBrainSupported = useNeuralBrainSupported();
-  const activePanel = (sessionId ? 'chat' : (panel || 'agent-x')) as PanelId;
+  const { unreadNotificationCount } = useAppLive();
+  const activePanel = (sessionId ? 'chat' : (panel || 'dashboard')) as PanelId;
   useEffect(() => {
     if (panel === 'health') navigate('/console/agent-x', { replace: true });
-    if (panel === 'rag-studio' && !neuralBrainSupported) navigate('/console/agent-x', { replace: true });
-  }, [panel, navigate, neuralBrainSupported]);
+    // Legacy RAG Studio route — product was decommissioned in favor of Knowledge Base.
+    if (panel === 'rag-studio') navigate('/console/knowledge-base', { replace: true });
+  }, [panel, navigate]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');
   const [panelSize, setPanelSize] = useState(BOTTOM_PANEL_DEFAULT_HEIGHT);
@@ -185,21 +195,22 @@ export function Console() {
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
             <PanelErrorBoundary key={activePanel}>
-              <Suspense fallback={null}>
+              <Suspense fallback={<ChatPanelFallback />}>
+                {activePanel === 'dashboard' && <BentoDashboardPanel />}
                 {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
+                {activePanel === 'calls' && <CallsPanel />}
                 {activePanel === 'agent-x' && <AgentXCoreChat />}
                 {activePanel === 'tools' && <ToolsPanel />}
                 {activePanel === 'plugins' && <PluginsPanel />}
-                {activePanel === 'channels' && <ChannelsPanel />}
                 {activePanel === 'settings' && <SettingsPanel />}
                 {activePanel === 'automation' && <AutomationPanel />}
-                {activePanel === 'rag-studio' && <RagStudioPanel />}
                 {activePanel === 'orchestrator' && <OrchestratorPanel />}
                 {activePanel === 'crews' && <CrewsPanel />}
                 {activePanel === 'soul' && <SoulPanel />}
                 {activePanel === 'mcp-store' && <McpStorePage />}
                 {activePanel === 'notifications' && <NotificationsPanel />}
-                {activePanel === 'canvases' && <CanvasPanel />}
+                {activePanel === 'markdown' && <MarkdownPanel />}
+                {activePanel === 'knowledge-base' && <KnowledgeBasePanel />}
               </Suspense>
             </PanelErrorBoundary>
           </Box>

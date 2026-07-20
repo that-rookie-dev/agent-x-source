@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useMicrophonePermission } from './useMicrophonePermission';
 import { useVoiceKeyboard } from './useVoiceKeyboard';
 import { useVoiceSession } from './useVoiceSession';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { voiceDisabledReason, markVoiceOutputUnlocked } from '../voice/support';
-import { loadVoiceInputMode, saveVoiceInputMode, type VoiceInputMode } from '../voice/input-mode-preference';
-import { VOICE_HANDS_FREE_ENABLED } from '../voice/voice-config';
+import { type VoiceInputMode } from '../voice/input-mode-preference';
 import {
   computePushToTalkBlocked,
   resolvePttCommsPhase,
@@ -13,6 +12,17 @@ import {
 } from '../voice/voice-ptt-orchestration';
 import { pipelineStatusLabel } from '../voice/voice-turn-pipeline';
 import type { VoiceTurnTimings } from '../voice/VoiceSessionClient';
+import type { VoiceConfig } from '../api';
+import type { VoiceWarmupPhase } from './useVoiceWarmup';
+
+/** Subset of voice context that useVoiceCommsSession needs to function.
+ *  Defined here (not in VoiceProvider) to avoid circular type dependencies. */
+export interface VoiceCommsContextInput {
+  voiceConfig: VoiceConfig | null;
+  warmupPhase: VoiceWarmupPhase;
+  voiceReady: boolean;
+  warmupError: string | null;
+}
 
 export interface UseVoiceCommsSessionOptions {
   active: boolean;
@@ -24,6 +34,18 @@ export interface UseVoiceCommsSessionOptions {
   onVoiceTiming?: (timings: VoiceTurnTimings) => void;
   /** Request OS mic permission when panel becomes active. */
   requestMicOnActivate?: boolean;
+  /** Use a segregated voice-only session (__channel__:voice) instead of a chat session. */
+  voiceOnly?: boolean;
+  /** Direct voice context injection (used when called from VoiceProvider itself). */
+  voiceContext?: VoiceCommsContextInput | null;
+  /** When false, PTT keyboard (Space) is disabled even if mode is push-to-talk.
+   *  Used to restrict PTT to the dashboard page only. */
+  pttKeyboardEnabled?: boolean;
+  /**
+   * Keep Space captured (no scroll / button activation) even when the voice
+   * session is inactive — e.g. crew call modal open while on hold or connecting.
+   */
+  spaceGuard?: boolean;
 }
 
 export function useVoiceCommsSession({
@@ -35,32 +57,39 @@ export function useVoiceCommsSession({
   onTranscriptFinal,
   onVoiceTiming,
   requestMicOnActivate = false,
+  voiceOnly = false,
+  voiceContext,
+  pttKeyboardEnabled = true,
+  spaceGuard = false,
 }: UseVoiceCommsSessionOptions) {
   const mic = useMicrophonePermission();
-  const voiceCtx = useVoiceOptional();
+  const fallbackCtx = useVoiceOptional();
+  const voiceCtx = voiceContext !== undefined ? voiceContext : fallbackCtx;
   const envBlocked = voiceDisabledReason();
-  const [inputMode, setInputModeState] = useState<VoiceInputMode>(() => loadVoiceInputMode());
 
-  const setInputMode = useCallback((mode: VoiceInputMode) => {
-    if (!VOICE_HANDS_FREE_ENABLED && mode === 'duplex') return;
-    setInputModeState(mode);
-    saveVoiceInputMode(mode);
-  }, []);
+  // xAI is always duplex (server-side VAD). Local is always push-to-talk —
+  // never inherit a stale duplex mode left in config from a prior xAI session.
+  const engine = (voiceCtx?.voiceConfig?.engine ?? 'stt_llm_tts') as 'stt_llm_tts' | 'realtime_xai';
+  const isDuplex = engine === 'realtime_xai';
+  const effectiveInputMode: VoiceInputMode = isDuplex ? 'duplex' : 'push-to-talk';
 
   const bootPhase = voiceCtx?.warmupPhase ?? 'idle';
   const commsReady = bootPhase === 'ready';
   const voiceReady = Boolean(voiceCtx?.voiceReady);
   const prerequisitesOk = active && voiceReady && !envBlocked;
   const micReady = mic.state === 'granted';
-  const pttEnabled = prerequisitesOk && commsReady && micReady;
-  const effectiveInputMode = VOICE_HANDS_FREE_ENABLED ? inputMode : 'push-to-talk';
-  const isDuplex = effectiveInputMode === 'duplex';
+  // Open the voice WebSocket as soon as the engine is warm — do not wait for
+  // mic permission. Capture still requires mic (PTT / duplex listen).
+  const linkEnabled = prerequisitesOk && commsReady;
+  const pttEnabled = linkEnabled && micReady;
 
   const session = useVoiceSession(
-    pttEnabled,
+    linkEnabled,
     effectiveInputMode,
     chatSessionId ?? undefined,
     { onVoiceUserPending, onVoiceUserDiscarded, onAgentRunning, onTranscriptFinal, onVoiceTiming },
+    voiceOnly,
+    engine,
   );
 
   useEffect(() => {
@@ -76,14 +105,17 @@ export function useVoiceCommsSession({
 
   useEffect(() => {
     if (!pttEnabled || isDuplex) return;
+    // `engine` is intentional: after a voice-engine swap the socket is torn down
+    // and must be re-warmed when the panel/call was already linked.
     void session.ensurePttReady();
-  }, [pttEnabled, isDuplex, session.ensurePttReady]);
+  }, [pttEnabled, isDuplex, engine, session.ensurePttReady]);
 
   useEffect(() => {
-    if (!pttEnabled) return;
-    if (!isDuplex) return;
-    void session.startSession();
-  }, [pttEnabled, isDuplex, session.startSession]);
+    if (!linkEnabled || !isDuplex) return;
+    // Link the socket immediately; open the mic when permission is granted.
+    // Re-run on `engine` so a Local ↔ xAI swap reconnects when still active.
+    void session.startSession(micReady);
+  }, [linkEnabled, isDuplex, micReady, engine, session.startSession]);
 
   useEffect(() => {
     if (active) return;
@@ -102,12 +134,6 @@ export function useVoiceCommsSession({
     await session.endPushToTalk();
   }, [pttEnabled, session]);
 
-  const toggleInputMode = useCallback(() => {
-    if (!VOICE_HANDS_FREE_ENABLED) return;
-    session.cancel();
-    setInputMode(isDuplex ? 'push-to-talk' : 'duplex');
-  }, [isDuplex, session, setInputMode]);
-
   const pushToTalkBlocked = computePushToTalkBlocked({
     state: session.state,
     holding: session.holding,
@@ -124,18 +150,21 @@ export function useVoiceCommsSession({
     void beginVoice();
   }, [session, beginVoice]);
 
+  const keyboardLive = active || spaceGuard;
   useVoiceKeyboard({
-    enabled: pttEnabled && active,
-    globalSpace: active,
+    enabled: keyboardLive,
+    // Capture Space whenever the session is live or a UI space-guard is on
+    // (call modal) so scroll / focused controls never steal the key.
+    globalSpace: keyboardLive && (spaceGuard || isDuplex || pttKeyboardEnabled),
     composerFocused: false,
     composerEmpty: true,
-    pushToTalk: !isDuplex,
+    pushToTalk: !isDuplex && pttEnabled && pttKeyboardEnabled,
     pushToTalkBlocked,
     onBeginPushToTalk: handleBeginPushToTalk,
     onEndPushToTalk: () => { void endVoice(); },
     onToggleSession: () => {},
     onInterruptPlayback: () => session.interruptPlayback(),
-    onDoubleTapSpace: VOICE_HANDS_FREE_ENABLED ? toggleInputMode : undefined,
+    onDoubleTapSpace: undefined,
   });
 
   const operatorText = (session.finalTranscript || session.partialTranscript || session.transcript).trim();
@@ -169,8 +198,11 @@ export function useVoiceCommsSession({
     if (bootPhase === 'idle') return 'Starting voice engine…';
     if (bootPhase === 'failed') return voiceCtx?.warmupError ?? 'Voice offline';
     if (!commsReady) return 'Linking comms…';
+    if (session.state === 'connecting' || session.state === 'error') {
+      return session.error || (session.state === 'connecting' ? 'Connecting…' : 'Voice offline');
+    }
     if (mic.state !== 'granted') return mic.blocked ? 'Mic blocked' : 'Allow microphone';
-    if (session.pttReady && !session.pttTurnLocked && !session.holding) return 'Hold Space to speak';
+    if (session.pttReady && !session.pttTurnLocked && !session.holding) return isDuplex ? 'Listening…' : 'Hold Space to speak';
     if (pipelineLabel) return pipelineLabel;
     if (session.pttTurnLocked) {
       if (commsPhase === 'operator_stt') return 'Preparing voice…';
@@ -178,11 +210,12 @@ export function useVoiceCommsSession({
       if (commsPhase === 'agent_prep') return 'Preparing response…';
       if (commsPhase === 'agent_tx') return 'Agent speaking';
     }
-    if (commsReady) return 'Hold Space to speak';
+    if (commsReady) return isDuplex ? 'Listening…' : 'Hold Space to speak';
     return 'Standby';
   }, [
     envBlocked, voiceReady, bootPhase, voiceCtx?.warmupError, commsReady, mic.state, mic.blocked,
-    session.agentStatus, session.pttTurnLocked, session.turnPipeline, session.partialTranscript, session.pttReady, commsPhase, pipelineLabel,
+    session.agentStatus, session.pttTurnLocked, session.turnPipeline, session.partialTranscript, session.pttReady,
+    session.state, session.error, commsPhase, pipelineLabel, isDuplex,
   ]);
 
   return {
@@ -190,9 +223,9 @@ export function useVoiceCommsSession({
     voiceCtx,
     envBlocked,
     inputMode: effectiveInputMode,
-    setInputMode,
+    setInputMode: () => { /* mode driven by engine */ },
     isDuplex,
-    handsFreeEnabled: VOICE_HANDS_FREE_ENABLED,
+    handsFreeEnabled: false,
     bootPhase,
     commsReady,
     voiceReady,
@@ -208,5 +241,6 @@ export function useVoiceCommsSession({
     statusLabel,
     beginVoice,
     endVoice,
+    requestCallKickoff: session.requestCallKickoff,
   };
 }

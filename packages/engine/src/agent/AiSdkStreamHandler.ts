@@ -29,6 +29,27 @@ interface StreamState {
   toolExecutions: Array<{ tool: string; success: boolean; output: string; elapsed: number }>;
 }
 
+interface StreamEventUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+}
+
+interface StreamEvent {
+  type: string;
+  text?: string;
+  args?: Record<string, unknown>;
+  toolName?: string;
+  toolCallId?: string;
+  result?: unknown;
+  usage?: StreamEventUsage;
+  error?: unknown;
+  tool?: string;
+  elapsed?: number;
+  [key: string]: unknown;
+}
+
 export type PartPersistFn = (sessionId: string, part: PartRecord) => void;
 
 export interface GitDiffProvider {
@@ -40,79 +61,97 @@ export interface GitDiffProvider {
 function emitDetailedOperationEvent(emit: (event: EngineEvent) => void, toolName: string, output: string): void {
   try {
     // Try to parse output as JSON for structured operations
-    let result: Record<string, any> = {};
+    let result: Record<string, unknown> = {};
     try {
-      result = JSON.parse(output);
+      result = JSON.parse(output) as Record<string, unknown>;
     } catch {
       // If not JSON, treat as string result
       result = { raw: output };
     }
 
+    // Helpers to safely extract typed values from the parsed record
+    const getStr = (...keys: string[]): string => {
+      for (const k of keys) {
+        const v = result[k];
+        if (typeof v === 'string') return v;
+      }
+      return '';
+    };
+    const getArr = <T,>(...keys: string[]): T[] => {
+      for (const k of keys) {
+        const v = result[k];
+        if (Array.isArray(v)) return v as T[];
+      }
+      return [];
+    };
+
     // File Create/Write Operations
     if (toolName === 'file_write' || toolName === 'write_file' || toolName === 'WriteFile') {
-      const filePath = result.path || result.filePath || '';
-      const content = result.content || output;
+      const filePath = getStr('path', 'filePath');
+      const rawContent = result['content'];
+      const content = typeof rawContent === 'string' ? rawContent : output;
       emit({
         type: 'operation_file_created',
         filePath,
         content: content.slice(0, 10000), // Limit size for streaming
         language: detectLanguage(filePath),
-      } as unknown as EngineEvent);
+      });
     }
 
     // File Read Operations
     if (toolName === 'file_read' || toolName === 'read_file' || toolName === 'ReadFile' || toolName === 'read' || toolName === 'cat') {
-      const filePath = result.path || result.filePath || '';
-      const content = result.content || output;
+      const filePath = getStr('path', 'filePath');
+      const rawContent = result['content'];
+      const content = typeof rawContent === 'string' ? rawContent : output;
       emit({
         type: 'operation_file_read',
         filePath,
         content: content.slice(0, 5000),
         language: detectLanguage(filePath),
-      } as unknown as EngineEvent);
+      });
     }
 
     // File Edit Operations  
     if (toolName === 'file_patch' || toolName === 'code_replace' || toolName === 'code_insert' ||
         toolName === 'file_edit' || toolName === 'apply_patch' ||
         toolName === 'edit_file' || toolName === 'EditFile' || toolName === 'replace_file_section') {
-      const filePath = result.path || result.filePath || '';
-      const oldContent = result.oldContent || '';
-      const newContent = result.newContent || '';
-      const diff = result.diff || '';
+      const filePath = getStr('path', 'filePath');
+      const oldContent = getStr('oldContent');
+      const newContent = getStr('newContent');
+      const diff = getStr('diff');
       emit({
         type: 'operation_file_edited',
         filePath,
         oldContent: oldContent.slice(0, 3000),
         newContent: newContent.slice(0, 3000),
         diff: diff.slice(0, 5000),
-        changes: result.changes,
-      } as unknown as EngineEvent);
+        changes: result['changes'],
+      });
     }
 
     // Glob/Search Operations
     if (toolName === 'glob' || toolName === 'Glob' || toolName === 'search_files' || toolName === 'code_search') {
-      const pattern = result.pattern || result.glob || '';
-      const directory = result.directory || result.dir || result.cwd || '';
-      const matches = Array.isArray(result.matches) ? result.matches : 
-                     Array.isArray(result.files) ? result.files :
-                     output.split('\n').filter(line => line.trim());
+      const pattern = getStr('pattern', 'glob');
+      const directory = getStr('directory', 'dir', 'cwd');
+      const matches = getArr<string>('matches', 'files');
+      const finalMatches = matches.length > 0
+        ? matches
+        : output.split('\n').filter(line => line.trim());
       
       emit({
         type: 'operation_search_glob',
         pattern,
         directory,
-        matchCount: matches.length,
-        matches: matches.slice(0, 50), // First 50 matches
-      } as unknown as EngineEvent);
+        matchCount: finalMatches.length,
+        matches: finalMatches.slice(0, 50), // First 50 matches
+      });
     }
 
     // Grep/Search in Files
     if (toolName === 'grep' || toolName === 'Grep' || toolName === 'search_in_files' || toolName === 'code_references') {
-      const pattern = result.pattern || result.keyword || result.query || '';
-      const directory = result.directory || result.dir || '';
-      const matches = Array.isArray(result.matches) ? result.matches :
-                     Array.isArray(result.results) ? result.results : [];
+      const pattern = getStr('pattern', 'keyword', 'query');
+      const directory = getStr('directory', 'dir');
+      const matches = getArr<unknown>('matches', 'results');
       
       emit({
         type: 'operation_search_grep',
@@ -120,38 +159,40 @@ function emitDetailedOperationEvent(emit: (event: EngineEvent) => void, toolName
         directory,
         matchCount: matches.length,
         matches: matches.slice(0, 30),
-      } as unknown as EngineEvent);
+      });
     }
 
     // Directory/File Listing
     if (toolName === 'folder_list' || toolName === 'list_dir' || toolName === 'ls' || toolName === 'list_files' || toolName === 'ListFiles') {
-      const directory = result.directory || result.path || '';
-      const files = Array.isArray(result.files) ? result.files :
-                   Array.isArray(result.entries) ? result.entries : 
-                   output.split('\n').filter(line => line.trim());
+      const directory = getStr('directory', 'path');
+      const files = getArr<string>('files', 'entries');
+      const finalFiles = files.length > 0
+        ? files
+        : output.split('\n').filter(line => line.trim());
       
       emit({
         type: 'operation_list_files',
         directory,
-        fileCount: files.length,
-        files: files.slice(0, 50),
-      } as unknown as EngineEvent);
+        fileCount: finalFiles.length,
+        files: finalFiles.slice(0, 50),
+      });
     }
 
     // Command Execution
     if (toolName === 'shell_exec' || toolName === 'shell_exec_streaming' || toolName === 'shell_background' ||
         toolName === 'execute' || toolName === 'run_command' || toolName === 'bash') {
-      const command = result.command || result.cmd || '';
-      const stdout = result.stdout || result.output || output;
-      const stderr = result.stderr || '';
+      const command = getStr('command', 'cmd');
+      const rawStdout = result['stdout'];
+      const stdout = typeof rawStdout === 'string' ? rawStdout : (typeof result['output'] === 'string' ? result['output'] as string : output);
+      const stderr = getStr('stderr');
       
       emit({
         type: 'operation_command_executed',
         command,
-        success: result.success !== false && !stderr,
+        success: result['success'] !== false && !stderr,
         stdout: stdout.slice(0, 2000),
         stderr: stderr.slice(0, 1000),
-      } as unknown as EngineEvent);
+      });
     }
   } catch (e) {
     // Silently ignore parsing errors - don't block main flow
@@ -224,7 +265,7 @@ export function createAiSdkStreamHandler(
       reservedTokens,
       streamingTokens: 0,
       estimated: false,
-    } as unknown as EngineEvent);
+    });
     onTokenUsage(deltaIn, deltaOut);
     checkContextWarning(inputTokens + outputTokens);
   };
@@ -255,7 +296,7 @@ export function createAiSdkStreamHandler(
       reservedTokens,
       streamingTokens: streamingOut,
       estimated: true,
-    } as unknown as EngineEvent);
+    });
     checkContextWarning(inputTokens + outputTokens + streamingOut);
   };
 
@@ -266,13 +307,13 @@ export function createAiSdkStreamHandler(
     const percentage = (totalTokens / ctxWindow) * 100;
     if (percentage >= 95 && !warnings95.emitted) {
       warnings95.emitted = true;
-      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 95, percentage: Math.round(percentage) } as unknown as EngineEvent);
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 95, percentage: Math.round(percentage) });
     } else if (percentage >= 85 && !warnings85.emitted) {
       warnings85.emitted = true;
-      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 85, percentage: Math.round(percentage) } as unknown as EngineEvent);
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 85, percentage: Math.round(percentage) });
     } else if (percentage >= 70 && !warnings70.emitted) {
       warnings70.emitted = true;
-      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 70, percentage: Math.round(percentage) } as unknown as EngineEvent);
+      emit({ type: 'context_warning', currentTokens: totalTokens, threshold: 70, percentage: Math.round(percentage) });
     }
   }
 
@@ -280,7 +321,7 @@ export function createAiSdkStreamHandler(
     onPart?.(sessionId, { ...part, messageId: part.messageId || messageId });
   }
 
-   function handleEvent(event: any) {
+   function handleEvent(event: StreamEvent) {
      try {
        if (!event) {
          console.warn('[AI_SDK_HANDLER] Received null/undefined event');
@@ -293,7 +334,7 @@ export function createAiSdkStreamHandler(
 
        switch (event.type) {
       case 'start': {
-        emit({ type: 'loading_start', stage: 'thinking', message: 'Thinking...' } as unknown as EngineEvent);
+        emit({ type: 'loading_start', stage: 'thinking', message: 'Thinking...' });
         break;
       }
 
@@ -301,7 +342,7 @@ export function createAiSdkStreamHandler(
           state.stepCount++;
           state.stepTextStartLength = state.accumulatedContent.length;
           if (state.stepCount > 1) {
-            emit({ type: 'loading_start', stage: 'tool_execution', message: 'Executing...' } as unknown as EngineEvent);
+            emit({ type: 'loading_start', stage: 'tool_execution', message: 'Executing...' });
           }
           const snapshot = gitManager?.snapshot();
           if (snapshot) {
@@ -316,7 +357,7 @@ export function createAiSdkStreamHandler(
             step: state.stepCount,
             totalSteps: 'unknown',
             stage: state.stepCount === 1 ? 'thinking' : 'execution',
-          } as unknown as EngineEvent);
+          });
           break;
         }
 
@@ -334,12 +375,12 @@ export function createAiSdkStreamHandler(
           reservedTokens,
           streamingTokens: 0,
           estimated: true,
-        } as unknown as EngineEvent);
+        });
         break;
       }
 
       case 'text-delta': {
-        const delta = extractStreamTextDelta(event as Record<string, unknown>);
+        const delta = extractStreamTextDelta(event);
         state.accumulatedContent = appendStreamText(state.accumulatedContent, delta);
         persist({ type: 'text-delta', content: delta, timestamp: Date.now() });
         emit({ type: 'stream_chunk', content: delta, fullContent: state.accumulatedContent });
@@ -357,10 +398,10 @@ export function createAiSdkStreamHandler(
       case 'reasoning-end': break;
 
        case 'reasoning-delta': {
-         const delta = event.text as string || '';
+         const delta = event.text || '';
          state.accumulatedReasoning += delta;
          persist({ type: 'reasoning-delta', content: delta, timestamp: Date.now() });
-         emit({ type: 'reasoning_delta', content: delta } as unknown as EngineEvent);
+         emit({ type: 'reasoning_delta', content: delta });
          
          // ─── Enhanced: Also emit as thinking event for UI ───
          emit({
@@ -368,7 +409,7 @@ export function createAiSdkStreamHandler(
            content: delta,
            fullThought: state.accumulatedReasoning,
            agent: 'primary',
-         } as unknown as EngineEvent);
+         });
          break;
        }
 
@@ -393,7 +434,7 @@ export function createAiSdkStreamHandler(
             onSessionEvent?.({ type: 'tool_called', sessionId, sequence: ++sequence, timestamp: Date.now(), payload: { tool: toolName, callId: toolCallId, args } });
           } catch (e) {
             console.error('[AI_SDK_HANDLER] Error processing tool-call event:', e, 'event:', event);
-            emit({ type: 'error', code: 'TOOL_CALL_HANDLER_ERROR', message: `Failed to process tool call: ${String(e)}`, recoverable: true } as unknown as EngineEvent);
+            emit({ type: 'error', code: 'TOOL_CALL_HANDLER_ERROR', message: `Failed to process tool call: ${String(e)}`, recoverable: true });
           }
           break;
         }
@@ -430,7 +471,7 @@ export function createAiSdkStreamHandler(
             checkContextWarning(total);
           } catch (e) {
             console.error('[AI_SDK_HANDLER] Error processing tool-result event:', e, 'event:', event);
-            emit({ type: 'error', code: 'TOOL_RESULT_HANDLER_ERROR', message: `Failed to process tool result: ${String(e)}`, recoverable: true } as unknown as EngineEvent);
+            emit({ type: 'error', code: 'TOOL_RESULT_HANDLER_ERROR', message: `Failed to process tool result: ${String(e)}`, recoverable: true });
           }
           break;
         }
@@ -451,7 +492,7 @@ export function createAiSdkStreamHandler(
                  tool: 'step',
                  filePath: files[0] || '',
                  diff: diffText.slice(0, 5000),
-               } as unknown as EngineEvent);
+               });
              }
            }
          }
@@ -486,7 +527,7 @@ export function createAiSdkStreamHandler(
         const trimmedContent = (state.accumulatedContent || '').trim();
         // Questionnaire-only turns: skip empty recap bubbles after ask_clarification steps
         if (state.clarificationUsed && !trimmedContent) {
-          emit({ type: 'completion_finished', message: 'Thought.' } as unknown as EngineEvent);
+          emit({ type: 'completion_finished', message: 'Thought.' });
           break;
         }
 
@@ -512,7 +553,7 @@ export function createAiSdkStreamHandler(
         };
 
         // Emit completion signal before message_received
-        emit({ type: 'completion_finished', message: 'Thought.' } as unknown as EngineEvent);
+        emit({ type: 'completion_finished', message: 'Thought.' });
         
         emit({
           type: 'message_received',
@@ -540,9 +581,9 @@ export function createAiSdkStreamHandler(
        }
 
        case 'tool_complete': {
-         const tool = event.tool as string;
+         const tool = event.tool || 'unknown';
          const result = event.result as { success: boolean; output: string } | undefined;
-         const elapsed = event.elapsed as number || 0;
+         const elapsed = event.elapsed || 0;
          
          if (result) {
            state.toolExecutions.push({ tool, success: result.success, output: result.output, elapsed });
@@ -570,7 +611,7 @@ export function createAiSdkStreamHandler(
        }
      } catch (e) {
        console.error('[AI_SDK_HANDLER] Unhandled error in event processing:', e, 'event:', event);
-       emit({ type: 'error', code: 'EVENT_HANDLER_ERROR', message: `Event processing error: ${String(e)}`, recoverable: true } as unknown as EngineEvent);
+       emit({ type: 'error', code: 'EVENT_HANDLER_ERROR', message: `Event processing error: ${String(e)}`, recoverable: true });
      }
    }
 

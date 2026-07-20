@@ -10,10 +10,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import { useApp } from '../store/AppContext';
 import { colors, alphaColor } from '../theme';
 import { Footer } from '../components/Footer';
+import { MigrationUpgrade } from '../components/MigrationUpgrade';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { usePageVisible } from '../hooks/usePageVisible';
-import { webuiActive, agent, crewCatalog, crews, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
+import { webuiActive, agent, crewCatalog, crews, clientSituation as clientSituationApi, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
 function computeTotalCrewCatalogCount(
@@ -84,6 +85,7 @@ export function DockingStation() {
   const [rosterCrews, setRosterCrews] = useState<Crew[]>([]);
   const introStartedRef = useRef(false);
   const introPlayedRef = useRef(false);
+  const lastSentClientSituationRef = useRef<string | null>(null);
   const pageVisible = usePageVisible();
 
   useEffect(() => {
@@ -153,6 +155,16 @@ export function DockingStation() {
     return () => clearInterval(interval);
   }, [pageVisible]);
 
+  // Sync the app launch location/timezone to the server so channel agents (Telegram, Slack, etc.)
+  // use the same context as the desktop/web UI instead of stale or inferred location.
+  useEffect(() => {
+    if (!serverOnline || !location.clientSituation) return;
+    const key = `${location.clientSituation.latitude ?? 'x'},${location.clientSituation.longitude ?? 'x'},${location.clientSituation.locationLabel ?? 'x'},${location.clientSituation.timezone}`;
+    if (lastSentClientSituationRef.current === key) return;
+    lastSentClientSituationRef.current = key;
+    clientSituationApi.set(location.clientSituation).catch(() => {});
+  }, [serverOnline, location.clientSituation]);
+
   useEffect(() => {
     const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
     setLines(built);
@@ -165,7 +177,7 @@ export function DockingStation() {
   }, [healthData, catalogSeed, rosterCrews]);
 
   const handleLaunch = useCallback(() => {
-    navigate('/console/agent-x');
+    navigate('/console/dashboard');
   }, [navigate]);
 
   useEffect(() => {
@@ -219,6 +231,7 @@ export function DockingStation() {
         : 'On demand';
 
   return (
+    <MigrationUpgrade>
     <Box sx={{
       height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column',
       overflow: 'hidden', bgcolor: colors.bg.primary,
@@ -427,29 +440,62 @@ export function DockingStation() {
       </Box>
 
       {vitals && vitals.status !== 'uninitialized' && (
-        <Box sx={{
-          borderTop: `1px solid ${colors.border.default}`,
-          px: 3, py: 2, mx: 3, mb: 2,
-          bgcolor: colors.bg.secondary, borderRadius: 1,
-          border: `1px solid ${colors.border.default}`,
-        }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <VitalChip label="Age" value={`${vitals.ageDays}d`} />
-            <VitalChip label="Level" value={vitals.level} color={colors.accent.blue} />
-            <VitalChip label="Wisdom" value={`${Math.round(vitals.wisdomScore)}`} />
-            <VitalChip label="Experiences" value={String(vitals.totalExperiences)} />
-            <VitalChip label="Memories" value={String(vitals.memories.total)} />
-            <VitalChip label="Mood" value={vitals.currentMood} color={
-              vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green :
-              vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange :
-              colors.text.secondary
-            } />
+        <Box sx={{ px: 2, pb: 2, flexShrink: 0 }}>
+          <Box sx={{
+            py: 1.5,
+            px: 2,
+            bgcolor: colors.bg.secondary,
+            borderRadius: '6px',
+            border: `1px solid ${colors.border.default}`,
+          }}>
+            <Box sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0,
+              flexWrap: 'nowrap',
+              overflow: 'hidden',
+            }}>
+              {([
+                { label: 'Age', value: `${vitals.ageDays}d` },
+                { label: 'Level', value: vitals.level, color: colors.accent.blue },
+                { label: 'Wisdom', value: `${Math.round(vitals.wisdomScore)}` },
+                { label: 'Experiences', value: String(vitals.totalExperiences) },
+                { label: 'Memories', value: String(vitals.memories.total) },
+                {
+                  label: 'Mood',
+                  value: vitals.currentMood,
+                  color:
+                    vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green
+                      : vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange
+                        : colors.text.secondary,
+                },
+              ] as Array<{ label: string; value: string; color?: string }>).map((chip, index) => (
+                <Box key={chip.label} sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  {index > 0 && (
+                    <Typography
+                      component="span"
+                      sx={{
+                        color: colors.border.strong,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '0.62rem',
+                        mx: 1.25,
+                        userSelect: 'none',
+                      }}
+                    >
+                      |
+                    </Typography>
+                  )}
+                  <VitalChip label={chip.label} value={chip.value} color={chip.color} />
+                </Box>
+              ))}
+            </Box>
           </Box>
         </Box>
       )}
 
       <Footer />
     </Box>
+    </MigrationUpgrade>
   );
 }
 

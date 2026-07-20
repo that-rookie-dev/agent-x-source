@@ -52,12 +52,15 @@ export class StreamingPlayback {
   private scheduleIdleNotify(): void {
     if (!this.onIdle || this.activeSources.length > 0 || this.notifyIdleScheduled) return;
     this.notifyIdleScheduled = true;
+    // Wait 400ms after the final audio chunk before declaring playback idle.
+    // This prevents the UI from snapping to "listening" before the very end of
+    // the assistant's last word has been heard.
     window.setTimeout(() => {
       this.notifyIdleScheduled = false;
       if (this.activeSources.length === 0) {
         this.onIdle?.();
       }
-    }, 0);
+    }, 400);
   }
 
   stop(): void {

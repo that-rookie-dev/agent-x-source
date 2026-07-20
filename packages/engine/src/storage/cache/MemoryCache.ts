@@ -39,7 +39,8 @@ export class MemoryCache<T> {
     if (!this.repo.getAll) return [];
     const all = await this.repo.getAll();
     for (const item of all) {
-      const key = (item as any).id ?? (item as any).key ?? JSON.stringify(item).slice(0, 32);
+      const keyedItem = item as { id?: string; key?: string };
+      const key = keyedItem.id ?? keyedItem.key ?? JSON.stringify(item).slice(0, 32);
       this.cache.set(key, { data: item, dirty: false });
     }
     return all;

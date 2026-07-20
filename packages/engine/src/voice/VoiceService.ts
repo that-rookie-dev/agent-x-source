@@ -40,6 +40,28 @@ export interface VoiceSynthesizeOptions {
   requestId?: string;
 }
 
+/** Default voice ID for each TTS engine. */
+const DEFAULT_VOICE_ID: Record<TtsEngine, string> = {
+  kokoro: 'kokoro-af',
+};
+
+/**
+ * Resolve the voice ID for a synthesis request.
+ * When the filler engine (kokoro) is different from the configured engine,
+ * use the filler engine's default voice — not the main engine's voice ID.
+ * Otherwise Kokoro would try to load e.g. a non-Kokoro voice file and fail.
+ */
+function resolveVoiceId(
+  engine: TtsEngine,
+  configuredEngine: TtsEngine,
+  configuredVoiceId: string | undefined,
+  overrideVoiceId: string | undefined,
+): string | undefined {
+  if (overrideVoiceId) return overrideVoiceId;
+  if (engine !== configuredEngine) return DEFAULT_VOICE_ID[engine];
+  return configuredVoiceId ?? DEFAULT_VOICE_ID[engine];
+}
+
 export class VoiceService {
   private config: VoiceConfig;
   private readonly dataDir: string;
@@ -265,18 +287,35 @@ export class VoiceService {
     });
   }
 
+  /** Incremental VAD on a mic chunk — used for duplex end-of-utterance. */
+  async detectVad(
+    pcm: Buffer,
+    sampleRate = 16_000,
+    options: { threshold?: number; reset?: boolean } = {},
+  ) {
+    const client = await this.sidecar.start();
+    return client.detectVad(pcm, sampleRate, options);
+  }
+
   async synthesizeStreamText(text: string, options: VoiceSynthesizeOptions = {}): Promise<VoiceStreamSynthesizeResult> {
     const normalized = normalizeTextForSpeech(text);
     if (!normalized) throw new Error('Nothing to synthesize after speech normalization');
     const client = await this.sidecar.start();
+    const configuredEngine = this.config.tts?.engine ?? 'kokoro';
     const engine = options.forFiller
       ? (this.config.tts?.fillerEngine ?? 'kokoro')
-      : (options.engine ?? this.config.tts?.engine ?? 'kokoro');
+      : (options.engine ?? configuredEngine);
+    const voiceId = resolveVoiceId(
+      engine,
+      configuredEngine,
+      this.config.tts?.voiceId,
+      options.voiceId,
+    );
     const requestId = options.requestId ?? randomUUID();
     const response = await client.synthesizeStream({
       text: normalized,
       engine,
-      voiceId: options.voiceId ?? this.config.tts?.voiceId,
+      voiceId,
       style: options.style ?? this.config.tts?.style,
       requestId,
     });
@@ -305,13 +344,20 @@ export class VoiceService {
     }
     await mkdir(dirname(outputPath), { recursive: true });
     const client = await this.sidecar.start();
+    const configuredEngine = this.config.tts?.engine ?? 'kokoro';
     const engine = options.forFiller
       ? (this.config.tts?.fillerEngine ?? 'kokoro')
-      : (options.engine ?? this.config.tts?.engine ?? 'kokoro');
+      : (options.engine ?? configuredEngine);
+    const voiceId = resolveVoiceId(
+      engine,
+      configuredEngine,
+      this.config.tts?.voiceId,
+      options.voiceId,
+    );
     return client.synthesize({
       text: normalized,
       engine,
-      voiceId: options.voiceId ?? this.config.tts?.voiceId,
+      voiceId,
       style: options.style ?? this.config.tts?.style,
       outputPath,
     });

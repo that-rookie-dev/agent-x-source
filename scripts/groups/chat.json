@@ -1,0 +1,16 @@
+{
+  "routes": [
+    ["post", "/api/chat/message-stream"],
+    ["post", "/api/chat/message"],
+    ["post", "/api/chat/cancel"],
+    ["post", "/api/chat/queue"],
+    ["get", "/api/chat/queue"],
+    ["delete", "/api/chat/queue"],
+    ["post", "/api/chat/steer"],
+    ["post", "/api/chat/checkpoint-respond"],
+    ["post", "/api/chat/stop-and-send"],
+    ["get", "/api/chat/history"],
+    ["post", "/api/chat/clear"],
+    ["get", "/api/chat/stream"]
+  ]
+}

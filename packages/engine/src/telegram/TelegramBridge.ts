@@ -4,6 +4,7 @@ import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { TelegramStore } from './TelegramStore.js';
 import { randomBytes } from 'node:crypto';
+import { getRenderer } from '../channels/renderers/index.js';
 
 export interface TelegramConfig {
   botToken: string;
@@ -36,7 +37,7 @@ export class TelegramBridge {
   private connected = false;
   private commandHandler: ((cmd: string, args: string[], chatId: number) => Promise<string | null>) | null = null;
   private callbackHandlers: Map<string, (data: string, chatId: number, fromUserId?: number) => void> = new Map();
-  private messageHandler: ((text: string, chatId: number) => void) | null = null;
+  private messageHandler: ((text: string, chatId: number, messageId?: number) => void) | null = null;
   private fileHandler: ((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => void) | null = null;
   /** Fired once when the first private DM claims an empty allowlist (sole owner). */
   private ownerClaimHandler: ((userId: number, chatId: number) => void) | null = null;
@@ -74,8 +75,9 @@ export class TelegramBridge {
    * Register a message handler that intercepts ALL non-command messages.
    * When set, the bridge will NOT call agent.sendMessage directly — instead it delegates to this handler.
    * The handler is responsible for processing the message and sending a response.
+   * The messageId parameter is the Telegram message_id of the inbound user message.
    */
-  setMessageHandler(handler: (text: string, chatId: number) => void): void {
+  setMessageHandler(handler: (text: string, chatId: number, messageId?: number) => void): void {
     this.messageHandler = handler;
   }
 
@@ -415,7 +417,7 @@ export class TelegramBridge {
     // If a message handler is registered (e.g., daemon queue), delegate to it
     if (this.messageHandler) {
       await this.apiCall('sendChatAction', { chat_id: chatId, action: 'typing' });
-      this.messageHandler(text, chatId);
+      this.messageHandler(text, chatId, msg.message_id as number | undefined);
       return;
     }
 
@@ -528,8 +530,8 @@ export class TelegramBridge {
   /**
    * Send a message to a specific chat (public API for daemon use).
    */
-  async sendToChat(chatId: number, text: string): Promise<void> {
-    await this.sendMessage(chatId, text);
+  async sendToChat(chatId: number, text: string): Promise<number[]> {
+    return this.sendMessage(chatId, text);
   }
 
   /** Refresh Telegram "typing…" indicator (expires after ~5s). */
@@ -586,10 +588,23 @@ export class TelegramBridge {
   }
 
   /**
-   * Send a message with inline keyboard buttons.
+   * Send a message with inline keyboard buttons (single row).
    */
   async sendWithButtons(chatId: number, text: string, buttons: Array<{ text: string; callbackData: string }>): Promise<void> {
-    const inlineKeyboard = [buttons.map((b) => ({ text: b.text, callback_data: b.callbackData }))];
+    await this.sendWithButtonRows(chatId, text, [buttons]);
+  }
+
+  /**
+   * Send a message with inline keyboard button rows. Returns message_id when available.
+   */
+  async sendWithButtonRows(
+    chatId: number,
+    text: string,
+    rows: Array<Array<{ text: string; callbackData: string }>>,
+  ): Promise<number | null> {
+    const inlineKeyboard = rows.map((row) =>
+      row.map((b) => ({ text: b.text, callback_data: b.callbackData })),
+    );
     const result = await this.apiCall('sendMessage', {
       chat_id: chatId,
       text,
@@ -597,64 +612,118 @@ export class TelegramBridge {
       reply_markup: { inline_keyboard: inlineKeyboard },
     });
     if (!result.ok && result.description?.includes('parse')) {
-      await this.apiCall('sendMessage', {
+      const plain = await this.apiCall('sendMessage', {
         chat_id: chatId,
         text,
         reply_markup: { inline_keyboard: inlineKeyboard },
       });
+      if (!plain.ok) {
+        throw new Error(plain.description ?? 'Failed to send Telegram message with buttons');
+      }
+      return (plain.result?.message_id as number | undefined) ?? null;
     }
+    if (!result.ok) {
+      throw new Error(result.description ?? 'Failed to send Telegram message with buttons');
+    }
+    return (result.result?.message_id as number | undefined) ?? null;
   }
 
-  async sendMessage(chatId: number, text: string): Promise<void> {
-    // Telegram has a 4096 character limit per message
-    const maxLen = 4096;
-    const chunks: string[] = [];
-    if (text.length <= maxLen) {
-      chunks.push(text);
-    } else {
-      for (let i = 0; i < text.length; i += maxLen) {
-        chunks.push(text.slice(i, i + maxLen));
-      }
-    }
-
-    for (const chunk of chunks) {
-      const result = await this.apiCall('sendMessage', {
+  /** Edit message text and inline keyboard rows. */
+  async editMessageButtonRows(
+    chatId: number,
+    messageId: number,
+    text: string,
+    rows: Array<Array<{ text: string; callbackData: string }>>,
+  ): Promise<boolean> {
+    const inlineKeyboard = rows.map((row) =>
+      row.map((b) => ({ text: b.text, callback_data: b.callbackData })),
+    );
+    const result = await this.apiCall('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      reply_markup: { inline_keyboard: inlineKeyboard },
+    });
+    if (result.ok) return true;
+    if (result.description?.includes('message is not modified')) return true;
+    if (result.description?.includes('parse')) {
+      const plain = await this.apiCall('editMessageText', {
         chat_id: chatId,
-        text: chunk,
-        parse_mode: 'Markdown',
+        message_id: messageId,
+        text,
+        reply_markup: { inline_keyboard: inlineKeyboard },
       });
-      if (!result.ok) {
-        if (result.description?.includes('parse')) {
-          const plain = await this.apiCall('sendMessage', { chat_id: chatId, text: chunk });
+      if (plain.ok) return true;
+      if (plain.description?.includes('message is not modified')) return true;
+    }
+    getLogger().warn('TELEGRAM', `editMessageButtonRows failed: ${result.description ?? 'unknown error'}`);
+    return false;
+  }
+
+  async sendMessage(chatId: number, text: string): Promise<number[]> {
+    // Use the TelegramRenderer for native MarkdownV2 formatting + chunking
+    const renderer = getRenderer('telegram');
+    const results = renderer.renderMarkdown(text);
+    const sentMessageIds: number[] = [];
+
+    for (const result of results) {
+      const payload = result.payload as { text: string; parse_mode?: string; reply_markup?: unknown };
+      const apiParams: Record<string, unknown> = {
+        chat_id: chatId,
+        text: payload.text,
+      };
+      if (payload.parse_mode) apiParams['parse_mode'] = payload.parse_mode;
+      if (payload.reply_markup) apiParams['reply_markup'] = payload.reply_markup;
+
+      const apiResult = await this.apiCall('sendMessage', apiParams);
+      if (!apiResult.ok) {
+        // Fallback: try plain text without markdown if parsing failed
+        if (apiResult.description?.includes('parse') || apiResult.description?.includes('can\'t parse')) {
+          const plain = await this.apiCall('sendMessage', { chat_id: chatId, text: payload.text });
           if (!plain.ok) {
             throw new Error(plain.description ?? 'Failed to send Telegram message');
           }
+          const mid = plain.result?.message_id as number | undefined;
+          if (mid != null) sentMessageIds.push(mid);
         } else {
-          throw new Error(result.description ?? 'Failed to send Telegram message');
+          throw new Error(apiResult.description ?? 'Failed to send Telegram message');
         }
+      } else {
+        const mid = apiResult.result?.message_id as number | undefined;
+        if (mid != null) sentMessageIds.push(mid);
       }
     }
+    return sentMessageIds;
   }
 
   /**
    * Send a file (document) to a specific chat.
    * Uses multipart/form-data to upload the file to Telegram.
    */
-  async sendDocumentToChat(chatId: number, filePath: string, caption?: string): Promise<{ ok: boolean; description?: string }> {
+  async sendDocumentToChat(chatId: number, file: string | { name: string; content: Buffer }, caption?: string): Promise<{ ok: boolean; description?: string }> {
     const { statSync, readFileSync } = await import('node:fs');
     const { basename } = await import('node:path');
 
-    // Verify file exists and is reasonable size (Telegram limit: 50MB)
-    const stat = statSync(filePath);
-    if (stat.size > 50 * 1024 * 1024) {
-      return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+    let fileName: string;
+    let fileBuffer: Buffer;
+
+    if (typeof file === 'string') {
+      const stat = statSync(file);
+      if (stat.size > 50 * 1024 * 1024) {
+        return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+      }
+      fileName = basename(file);
+      fileBuffer = readFileSync(file);
+    } else {
+      if (file.content.length > 50 * 1024 * 1024) {
+        return { ok: false, description: 'File exceeds Telegram 50MB limit' };
+      }
+      fileName = file.name || 'attachment';
+      fileBuffer = file.content;
     }
 
-    const fileName = basename(filePath);
     const url = `https://api.telegram.org/bot${this.config.botToken}/sendDocument`;
-
-    const fileBuffer = readFileSync(filePath);
-    const blob = new Blob([fileBuffer], { type: 'application/octet-stream' });
+    const blob = new Blob([fileBuffer.buffer as ArrayBuffer], { type: 'application/octet-stream' });
 
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
@@ -682,7 +751,7 @@ export class TelegramBridge {
 
     const url = `https://api.telegram.org/bot${this.config.botToken}/sendVoice`;
     const fileBuffer = readFileSync(filePath);
-    const blob = new Blob([fileBuffer], { type: 'audio/ogg' });
+    const blob = new Blob([fileBuffer.buffer as ArrayBuffer], { type: 'audio/ogg' });
     const formData = new FormData();
     formData.append('chat_id', String(chatId));
     formData.append('voice', blob, basename(filePath));

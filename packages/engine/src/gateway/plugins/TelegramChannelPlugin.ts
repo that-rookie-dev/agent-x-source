@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { ChannelPlugin } from '../types.js';
 import type { FocusState, FocusManager } from '../FocusManager.js';
-import { getDataDir, type Message, type VisualUpdate, type AgentXConfig, getLogger } from '@agentx/shared';
+import { getDataDir, type Message, type VisualUpdate, type ProviderId, getLogger, formatQuestionnaireForMessagingChannel, extractAssistantReplyText, questionnaireSupportsInlineButtons, type QuestionnairePayload, type QuestionnaireOption } from '@agentx/shared';
 import { TelegramBridge } from '../../telegram/TelegramBridge.js';
 import { TelegramProgressSession } from '../../telegram/TelegramProgressSession.js';
 import type { TelegramConfig } from '../../telegram/TelegramBridge.js';
 import type { Agent } from '../../agent/Agent.js';
 import { syncChannelSuperSessionContext } from '../../channels/channel-super-session-sync.js';
+import { resolveChannelInboundAgent } from '../../channels/channel-inbound-router.js';
+import type { PermissionRequestHandler } from '../../tools/ToolExecutor.js';
+import { MessagingPermissionCoordinator } from '../../channels/MessagingPermissionCoordinator.js';
+import { QuestionnaireWizard } from '../../channels/QuestionnaireWizard.js';
 import { ProviderFactory } from '../../providers/index.js';
 import { VoiceService, convertWavToOggOpus, mergeVoiceConfig } from '../../voice/index.js';
 import { mkdirSync, existsSync } from 'node:fs';
@@ -43,13 +47,26 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       getLogger().warn('TELEGRAM', `Chat id persist skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
-  private permRequesters = new Map<string, number>();
+  private permissionCoordinator = new MessagingPermissionCoordinator();
+  private channelPermissionHandler: PermissionRequestHandler | null = null;
   private pendingResponses = new Map<string, (text: string) => void>();
-  private messageQueue: Array<{ text: string; chatId: number; voiceReply?: boolean }> = [];
+  private messageQueue: Array<{ text: string; chatId: number; voiceReply?: boolean; platformMessageId?: number }> = [];
   private static readonly MAX_QUEUE_DEPTH = 25;
+  /** Base turn timeout — scheduling/automation turns need more than 2 minutes. */
+  private static readonly TURN_TIMEOUT_MS = 300_000;
+  /** Extend deadline while tools are actively running. */
+  private static readonly TOOL_ACTIVITY_EXTENSION_MS = 120_000;
   private processingQueue = false;
+  /** Chat id for the inbound turn currently being processed (permission UI fallback). */
+  private processingChatId: number | null = null;
   private filesDir: string;
+  /** Short-lived state for Telegram inline questionnaire buttons. */
+  private pendingQuestionnaires = new Map<string, {
+    wizard: QuestionnaireWizard;
+    chatId: number;
+    messageId?: number;
+    selected: Set<number>;
+  }>();
 
   constructor(config: TelegramConfig) {
     this.bridge = new TelegramBridge(config);
@@ -78,6 +95,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     this.focusManager = fm;
   }
 
+  /** Resolve the agent's persona name for user-facing messages. */
+  private get agentName(): string {
+    return this.agent?.getPersona()?.name ?? 'Agent-X';
+  }
+
   async onLoad(): Promise<void> {}
 
   async onStart(): Promise<void> {
@@ -92,8 +114,9 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   async onStop(): Promise<void> {
     this.bridge.stop();
     this.agent?.setTelegramConnected(false);
-    this.pendingPermissions.clear();
+    this.pendingQuestionnaires.clear();
     this.pendingResponses.clear();
+    this.pendingQuestionnaires.clear();
     this.messageQueue = [];
     this.processingQueue = false;
   }
@@ -104,6 +127,192 @@ export class TelegramChannelPlugin implements ChannelPlugin {
     this.setupCommandHandling();
     this.setupMessageHandling();
     this.setupCallbackHandlers();
+    this.setupQuestionnaireCallbacks();
+  }
+
+  private setupQuestionnaireCallbacks(): void {
+    this.bridge.onCallback('clar', (data: string, chatId: number) => {
+      void this.handleQuestionnaireCallback(data, chatId);
+    });
+  }
+
+  private buildChoiceButtonRows(
+    options: QuestionnaireOption[],
+    callbackForIndex: (index: number) => string,
+    selected?: Set<number>,
+  ): Array<Array<{ text: string; callbackData: string }>> {
+    const rows: Array<Array<{ text: string; callbackData: string }>> = [];
+    for (let i = 0; i < options.length; i += 2) {
+      const row: Array<{ text: string; callbackData: string }> = [];
+      for (let j = i; j < Math.min(i + 2, options.length); j++) {
+        const opt = options[j]!;
+        const prefix = selected?.has(j) ? '✅ ' : '';
+        const star = !selected && opt.recommended ? '⭐ ' : '';
+        row.push({
+          text: `${prefix}${star}${opt.label}`.trim(),
+          callbackData: callbackForIndex(j),
+        });
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  private permToolIds = new Map<string, string>();
+
+  private async sendQuestionnaireToTelegram(chatId: number, payload: QuestionnairePayload): Promise<boolean> {
+    if (!questionnaireSupportsInlineButtons(payload)) {
+      return false;
+    }
+
+    const token = randomUUID().slice(0, 8);
+    const wizard = new QuestionnaireWizard(payload);
+    this.pendingQuestionnaires.set(token, {
+      wizard,
+      chatId,
+      selected: new Set(),
+    });
+    await this.showQuestionnaireStep(chatId, token);
+    return true;
+  }
+
+  private questionnaireStepPrompt(_token: string, q: QuestionnairePayload['questions'][number], wizard: QuestionnaireWizard): string {
+    const header = wizard.totalQuestions > 1
+      ? `*${wizard.currentIndex + 1}/${wizard.totalQuestions}* ${q.prompt}`
+      : q.prompt;
+    if (q.type === 'multi_choice') {
+      return `${header}\n\nTap to toggle, then Submit. Or type your answer.`;
+    }
+    return q.allowCustom !== false ? `${header}\n\n_Or type a custom answer._` : header;
+  }
+
+  private async showQuestionnaireStep(chatId: number, token: string): Promise<void> {
+    const pending = this.pendingQuestionnaires.get(token);
+    if (!pending) return;
+    const q = pending.wizard.currentQuestion;
+    if (!q || (q.type !== 'single_choice' && q.type !== 'multi_choice')) return;
+
+    const options = (q.options ?? []).filter((o) => !o.disabled);
+    pending.selected = new Set();
+    const prompt = this.questionnaireStepPrompt(token, q, pending.wizard);
+
+    if (q.type === 'single_choice') {
+      const rows = this.buildChoiceButtonRows(options, (idx) => `clar:pick:${token}:${idx}`);
+      await this.bridge.sendWithButtonRows(chatId, prompt, rows);
+      return;
+    }
+
+    const rows = this.buildChoiceButtonRows(options, (idx) => `clar:tog:${token}:${idx}`, new Set());
+    rows.push([{ text: '✓ Submit', callbackData: `clar:sub:${token}` }]);
+    const messageId = await this.bridge.sendWithButtonRows(chatId, prompt, rows);
+    if (messageId) pending.messageId = messageId;
+  }
+
+  private async finishQuestionnaireWizard(
+    token: string,
+    chatId: number,
+    agent: Agent,
+  ): Promise<void> {
+    const pending = this.pendingQuestionnaires.get(token);
+    if (!pending) return;
+    const answer = pending.wizard.formatFinalAnswer();
+    this.pendingQuestionnaires.delete(token);
+    if (answer && agent.respondToClarification(answer)) {
+      getLogger().info('TELEGRAM', `Questionnaire completed chat=${chatId}`);
+    }
+  }
+
+  private async handleQuestionnaireCallback(data: string, chatId: number): Promise<void> {
+    const parts = data.split(':');
+    if (parts[0] !== 'clar' || parts.length < 3) return;
+    const action = parts[1];
+    const token = parts[2]!;
+    const pending = this.pendingQuestionnaires.get(token);
+    if (!pending || pending.chatId !== chatId) return;
+
+    const agent = resolveChannelInboundAgent('telegram', this.agent);
+    if (!agent?.isAwaitingClarification()) {
+      this.pendingQuestionnaires.delete(token);
+      return;
+    }
+
+    const q = pending.wizard.currentQuestion;
+    const options = (q?.options ?? []).filter((o) => !o.disabled);
+
+    if (action === 'pick' && q?.type === 'single_choice') {
+      const idx = parseInt(parts[3] ?? '', 10);
+      const value = options[idx]?.value;
+      if (!value) return;
+      pending.wizard.recordSingleAnswer(String(value));
+      if (pending.wizard.isComplete()) {
+        await this.finishQuestionnaireWizard(token, chatId, agent);
+      } else {
+        await this.showQuestionnaireStep(chatId, token);
+      }
+      return;
+    }
+
+    if (action === 'tog' && q?.type === 'multi_choice') {
+      const idx = parseInt(parts[3] ?? '', 10);
+      if (Number.isNaN(idx) || idx < 0 || idx >= options.length) return;
+      if (pending.selected.has(idx)) pending.selected.delete(idx);
+      else pending.selected.add(idx);
+      if (pending.messageId) {
+        const rows = this.buildChoiceButtonRows(options, (i) => `clar:tog:${token}:${i}`, pending.selected);
+        rows.push([{
+          text: pending.selected.size > 0 ? `✓ Submit (${pending.selected.size})` : '✓ Submit',
+          callbackData: `clar:sub:${token}`,
+        }]);
+        const selectedLabels = [...pending.selected].map((i) => options[i]?.label).filter(Boolean).join(', ');
+        const prompt = selectedLabels
+          ? `${this.questionnaireStepPrompt(token, q, pending.wizard)}\n\nSelected: ${selectedLabels}`
+          : this.questionnaireStepPrompt(token, q, pending.wizard);
+        await this.bridge.editMessageButtonRows(chatId, pending.messageId, prompt, rows);
+      }
+      return;
+    }
+
+    if (action === 'sub' && q?.type === 'multi_choice') {
+      const values = [...pending.selected].map((i) => options[i]?.value).filter(Boolean) as string[];
+      if (values.length === 0) {
+        await this.bridge.sendToChat(chatId, 'Select at least one option, or type your answer.');
+        return;
+      }
+      pending.wizard.recordMultiAnswer(new Set(values));
+      if (pending.wizard.isComplete()) {
+        await this.finishQuestionnaireWizard(token, chatId, agent);
+      } else {
+        await this.showQuestionnaireStep(chatId, token);
+      }
+    }
+  }
+
+  private formatPermissionPromptText(details: {
+    toolId: string;
+    path: string;
+    riskLevel: string;
+    forAutomation?: boolean;
+    integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+  }): string {
+    const riskEmoji = details.riskLevel === 'high' ? '🔴' : details.riskLevel === 'medium' ? '🟡' : '🟢';
+    const preview = details.integrationPreview;
+    const previewLines = preview
+      ? [
+        '',
+        `*${preview.summary}*`,
+        preview.impact,
+        ...preview.parameters.filter((p) => !p.sensitive).slice(0, 4).map((p) => `• ${p.key}: ${p.value.slice(0, 80)}`),
+      ].join('\n')
+      : '';
+    const automationNote = details.forAutomation
+      ? '\n\nThis tool is required for a scheduled automation.'
+      : '';
+    return `${riskEmoji} *Permission Request*\n\nTool: \`${details.toolId}\`\nPath: \`${details.path}\`\nRisk: ${details.riskLevel}${previewLines}${automationNote}\n\nAllow this action, deny, or send a custom instruction?`;
+  }
+
+  private telegramUserKey(chatId: number): string | undefined {
+    const fromId = this.bridge.getLastFromId(chatId);
+    return fromId != null ? `${chatId}:${fromId}` : undefined;
   }
 
   private setupCallbackHandlers(): void {
@@ -114,7 +323,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         void this.bridge.sendToChat(chatId, '⚠️ Agent not initialized.');
         return;
       }
-      const cfg = (this.agent as any).config as AgentXConfig;
+      const cfg = this.agent.config;
       let foundProviderId: string | null = null;
       for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
         if (pcfg.profiles?.[profileId]) { foundProviderId = pid; break; }
@@ -126,7 +335,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       }
       const pCfg = cfg.provider.providers[foundProviderId];
       if (!pCfg) return;
-      this.agent.switchProvider(foundProviderId as any, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
+      this.agent.switchProvider(foundProviderId as ProviderId, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
       void this.bridge.sendToChat(chatId, `✅ Switched to ${profileId}\nUse /models to pick a model.`);
     });
 
@@ -166,84 +375,99 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       return;
     }
 
-    toolExecutor.setChannelPermissionRequestHandler(
-      async (toolId: string, path: string, riskLevel: string, context?: { args?: Record<string, unknown>; integrationPreview?: import('@agentx/shared').IntegrationActionPreview }) => {
-        if (!this.activeChatId) return 'deny' as const;
+    const activeChatId = () => this.activeChatId ?? this.processingChatId ?? undefined;
 
-        const permId = randomUUID();
-        const requesterId = this.activeChatId ? this.bridge.getLastFromId(this.activeChatId) : undefined;
-        if (requesterId) this.permRequesters.set(permId, requesterId);
-        const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
-        const preview = context?.integrationPreview;
-        const previewLines = preview
-          ? [
-            '',
-            `*${preview.summary}*`,
-            preview.impact,
-            ...preview.parameters.filter((p) => !p.sensitive).slice(0, 4).map((p) => `• ${p.key}: ${p.value.slice(0, 80)}`),
-          ].join('\n')
-          : '';
-
+    this.channelPermissionHandler = this.permissionCoordinator.createHandler(
+      async (permId, details) => {
+        const chatId = activeChatId();
+        if (!chatId) return;
+        this.permToolIds.set(permId, details.toolId);
         await this.bridge.sendWithButtons(
-          this.activeChatId,
-          `${riskEmoji} *Permission Request*\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}${previewLines}\n\nAllow this action?`,
+          chatId,
+          this.formatPermissionPromptText(details),
           [
             { text: '✅ Allow Once', callbackData: `perm:${permId}:allow_once` },
             { text: '✅ Always Allow', callbackData: `perm:${permId}:allow_always` },
             { text: '❌ Deny', callbackData: `perm:${permId}:deny` },
+            { text: '✏️ Instruct', callbackData: `perm:${permId}:instruct` },
           ],
         );
-
-        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          const timeout = setTimeout(() => {
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            if (this.activeChatId) {
-              this.bridge.sendToChat(this.activeChatId, '⏰ Permission request timed out — denied.');
-            }
-            resolve('deny');
-          }, 120_000);
-
-          this.pendingPermissions.set(permId, (choice: 'allow_once' | 'allow_always' | 'deny') => {
-            clearTimeout(timeout);
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            if (this.agent && choice !== 'allow_once') {
-              this.agent.recordToolPermissionDecision(toolId, choice);
-            }
-            resolve(choice);
-          });
-        });
+      },
+      () => {
+        const chatId = activeChatId();
+        return chatId != null ? this.telegramUserKey(chatId) : undefined;
+      },
+      async (userKey) => {
+        const chatId = Number(userKey.split(':')[0]);
+        if (Number.isFinite(chatId)) {
+          await this.bridge.sendToChat(chatId, '✏️ Reply with your instruction for the agent (how to proceed instead).');
+        }
       },
     );
 
+    toolExecutor.setChannelPermissionRequestHandler(this.channelPermissionHandler);
+
+    // When a permission prompt times out (user didn't respond in 120s), abort the
+    // entire agent turn. This prevents the agent from continuing and firing more
+    // permission prompts in a loop — which is the #1 source of prompt spam on channels.
+    this.permissionCoordinator.onTimeout(() => {
+      const chatId = activeChatId();
+      if (this.agent?.processing) {
+        getLogger().info('TELEGRAM', `Permission timed out — aborting active turn chat=${chatId ?? 'unknown'}`);
+        this.agent.cancel();
+        if (chatId != null) {
+          void this.bridge.sendToChat(chatId, '⏱ Permission timed out — run stopped. Send a new message to resume.').catch(() => {});
+        }
+      }
+    });
+
     this.bridge.onCallback('perm', (data: string, chatId: number, fromUserId?: number) => {
-      if (chatId !== this.activeChatId) return;
       const parts = data.split(':');
       const permId = parts[1];
-      const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
-      if (!permId || !choice) return;
+      const action = parts[2];
+      if (!permId || !action) return;
 
-      const expectedRequester = this.permRequesters.get(permId);
-      if (expectedRequester && fromUserId && fromUserId !== expectedRequester) {
-        void this.bridge.sendToChat(chatId, '⚠️ Only the user who triggered this action can approve it.');
+      const userKey = fromUserId != null ? `${chatId}:${fromUserId}` : undefined;
+
+      if (action === 'instruct') {
+        if (!userKey) return;
+        void this.permissionCoordinator.beginInstruct(permId, userKey, async () => {
+          await this.bridge.sendToChat(chatId, '✏️ Reply with your instruction for the agent (how to proceed instead).');
+        });
         return;
       }
 
-      const resolver = this.pendingPermissions.get(permId);
-      if (resolver) {
-        this.permRequesters.delete(permId);
-        resolver(choice);
-        const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
-        this.bridge.sendToChat(chatId, label);
+      const choice = action as 'allow_once' | 'allow_always' | 'deny';
+      if (!this.permissionCoordinator.resolveDecision(permId, choice, userKey)) return;
+
+      const toolId = this.permToolIds.get(permId);
+      this.permToolIds.delete(permId);
+      if (this.agent && toolId && choice !== 'allow_once') {
+        this.agent.recordToolPermissionDecision(toolId, choice);
       }
+      const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+      void this.bridge.sendToChat(chatId, label);
     });
+  }
+
+  /** Route permission prompts on the channel super-session agent (__channel__). */
+  private wireInboundAgentPermissions(agent: Agent): void {
+    if (agent !== this.agent) return;
+    const exec = agent.getToolExecutor();
+    if (!exec || !this.channelPermissionHandler) return;
+    exec.setChannelPermissionRequestHandler(this.channelPermissionHandler);
+    exec.setMessagingPermissionMode(true);
+  }
+
+  private clearInboundAgentPermissions(agent: Agent): void {
+    if (agent !== this.agent) return;
+    agent.getToolExecutor()?.setMessagingPermissionMode(false);
   }
 
   private setupFileHandling(): void {
     this.bridge.setFileHandler((fileId: string, fileName: string, mimeType: string, caption: string | undefined, chatId: number) => {
       if (!this.agent) {
-        void this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+        void this.bridge.sendToChat(chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
         return;
       }
       this.trackActiveChat(chatId);
@@ -281,11 +505,11 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
   private async handleVoiceNote(savedPath: string, caption: string | undefined, chatId: number): Promise<void> {
     if (!this.agent) {
-      await this.bridge.sendToChat(chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+      await this.bridge.sendToChat(chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
       return;
     }
 
-    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const cfg = this.agent?.config;
     const voiceConfig = mergeVoiceConfig(cfg?.voice);
     if (!voiceConfig.enabled || voiceConfig.mode?.channels !== 'voice-notes') {
       await this.bridge.sendToChat(chatId, '⚠️ Voice notes are disabled. Enable Voice → Channels → Voice notes in Settings.');
@@ -317,7 +541,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       return;
     }
 
-    const cfg = (this.agent as unknown as { config?: AgentXConfig }).config;
+    const cfg = this.agent?.config;
     const voiceConfig = mergeVoiceConfig(cfg?.voice);
     const outDir = join(getDataDir(), 'voice', 'tmp');
     await mkdir(outDir, { recursive: true });
@@ -348,47 +572,123 @@ export class TelegramChannelPlugin implements ChannelPlugin {
   }
 
   private setupMessageHandling(): void {
-    this.bridge.setMessageHandler((text: string, chatId: number) => {
-      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}`);
+    this.bridge.setMessageHandler((text: string, chatId: number, messageId?: number) => {
+      getLogger().info('TELEGRAM', `Inbound message chat=${chatId} len=${text.length}${messageId != null ? ` msgId=${messageId}` : ''}`);
       try {
         this.trackActiveChat(chatId);
         this.focusManager?.onActivity('telegram');
       } catch (e) {
         getLogger().warn('TELEGRAM', `Inbound setup skipped: ${e instanceof Error ? e.message : String(e)}`);
       }
-      this.enqueueMessage(text, chatId);
+
+      // "stop" / "abort" / "cancel" as a plain text message cancels the active run.
+      // This is in addition to the /cancel slash command — users on mobile often
+      // type "stop" without the slash prefix.
+      const trimmed = text.trim().toLowerCase();
+      if ((trimmed === 'stop' || trimmed === 'abort' || trimmed === 'cancel') && this.agent?.processing) {
+        getLogger().info('TELEGRAM', `Stop command received — cancelling active run chat=${chatId}`);
+        this.agent.cancel();
+        void this.bridge.sendToChat(chatId, '⏹ Stopped. Send a new message when you\'re ready.').catch(() => {});
+        return;
+      }
+
+      const userKey = this.telegramUserKey(chatId);
+      if (userKey && this.permissionCoordinator.isAwaitingInstruct(userKey)) {
+        if (this.permissionCoordinator.consumeInstructText(userKey, text)) {
+          void this.bridge.sendToChat(chatId, '✏️ Instruction sent to the agent.');
+          return;
+        }
+      }
+
+      // Clarification answers must resume the in-flight turn — not start a new sendMessage.
+      const agent = resolveChannelInboundAgent('telegram', this.agent);
+      if (agent?.isAwaitingClarification()) {
+        const delivered = agent.respondToClarification(text);
+        if (delivered) {
+          getLogger().info('TELEGRAM', `Clarification answer delivered chat=${chatId}`);
+          return;
+        }
+        getLogger().warn('TELEGRAM', `Clarification waiter stale chat=${chatId} — enqueueing as new message`);
+      }
+
+      this.enqueueMessage(text, chatId, false, messageId);
     });
   }
 
-  private enqueueMessage(text: string, chatId: number, voiceReply = false): void {
+  private enqueueMessage(text: string, chatId: number, voiceReply = false, platformMessageId?: number): void {
     if (this.messageQueue.length >= TelegramChannelPlugin.MAX_QUEUE_DEPTH) {
       void this.bridge.sendToChat(chatId, '⚠️ Too many pending messages. Please wait for the current request to finish.');
       return;
     }
-    this.messageQueue.push({ text, chatId, voiceReply });
+    this.messageQueue.push({ text, chatId, voiceReply, platformMessageId });
     void this.processQueue().catch((e) => {
       getLogger().error('TELEGRAM', `Inbound queue failed: ${e instanceof Error ? e.message : String(e)}`);
     });
   }
 
-  private async dispatchInbound(item: { text: string; chatId: number; voiceReply?: boolean }, attempt = 0): Promise<Message> {
-    if (!this.agent) throw new Error('Channel agent not attached');
+  private async dispatchInbound(
+    item: { text: string; chatId: number; voiceReply?: boolean; platformMessageId?: number },
+    agent: Agent,
+    attempt = 0,
+  ): Promise<Message> {
+    if (!agent) throw new Error('Channel agent not attached');
+
+    let deadline = Date.now() + TelegramChannelPlugin.TURN_TIMEOUT_MS;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let rejectRef: ((err: Error) => void) | null = null;
+
+    const clearTurnTimeout = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+
+    const scheduleTurnTimeout = () => {
+      if (!rejectRef) return;
+      clearTurnTimeout();
+      const remaining = Math.max(1, deadline - Date.now());
+      timeoutHandle = setTimeout(() => {
+        rejectRef!(new Error('Response timed out after 5 minutes'));
+      }, remaining);
+    };
+
+    const unsubActivity = agent.events.on((event) => {
+      if (
+        event.type === 'tool_executing'
+        || event.type === 'tool_complete'
+        || event.type === 'turn_heartbeat'
+        || event.type === 'loading_start'
+      ) {
+        deadline = Math.max(deadline, Date.now() + TelegramChannelPlugin.TOOL_ACTIVITY_EXTENSION_MS);
+        scheduleTurnTimeout();
+      }
+    });
+
     try {
-      return await Promise.race([
-        this.agent.sendMessage(item.text, { sourceChannel: 'telegram', channelId: String(item.chatId) }),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Response timed out after 2 minutes')), 120_000);
-        }),
-      ]);
+      return await new Promise<Message>((resolve, reject) => {
+        rejectRef = reject;
+        scheduleTurnTimeout();
+        void agent.sendMessage(item.text, {
+          sourceChannel: 'telegram',
+          channelId: String(item.chatId),
+          sourceMessageId: item.platformMessageId != null ? String(item.platformMessageId) : undefined,
+        })
+          .then(resolve)
+          .catch(reject);
+      });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const stuckRun = /already has an active run|already processing/i.test(errMsg);
       if (stuckRun && attempt < 1) {
         getLogger().warn('TELEGRAM', `Channel agent busy — cancelling stale run and retrying chat=${item.chatId}`);
-        this.agent.cancel();
-        return this.dispatchInbound(item, attempt + 1);
+        agent.cancel();
+        return this.dispatchInbound(item, agent, attempt + 1);
       }
       throw err;
+    } finally {
+      clearTurnTimeout();
+      unsubActivity();
     }
   }
 
@@ -402,7 +702,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       // Drain queue with error responses — agent not initialized yet
       while (this.messageQueue.length > 0) {
         const item = this.messageQueue.shift()!;
-        await this.bridge.sendToChat(item.chatId, '⚠️ Agent-X is starting up. Please wait a moment and try again.');
+        await this.bridge.sendToChat(item.chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
       }
       return;
     }
@@ -422,21 +722,74 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       );
       while (this.messageQueue.length > 0) {
         const item = this.messageQueue.shift()!;
-        getLogger().info('TELEGRAM', `Processing inbound chat=${item.chatId} agent=${this.agent?.currentSessionId ?? 'unknown'}`);
-        const progress = new TelegramProgressSession(this.bridge, item.chatId, this.agent);
+        const agent = this.agent;
+        if (!agent) {
+          await this.bridge.sendToChat(item.chatId, `⚠️ ${this.agentName} is starting up. Please wait a moment and try again.`);
+          continue;
+        }
+        getLogger().info(
+          'TELEGRAM',
+          `Processing inbound chat=${item.chatId} agent=${agent.currentSessionId ?? 'unknown'}`,
+        );
+        this.trackActiveChat(item.chatId);
+        this.processingChatId = item.chatId;
+        this.wireInboundAgentPermissions(agent);
+        const progress = new TelegramProgressSession(this.bridge, item.chatId, agent);
         await progress.start();
+        const unsubClarification = agent.events.on((event) => {
+          if (event.type === 'clarification_required') {
+            void this.sendQuestionnaireToTelegram(item.chatId, event.questionnaire).then((sentUi) => {
+              if (sentUi) return;
+              const text = formatQuestionnaireForMessagingChannel(event.questionnaire);
+              if (!text) return;
+              void this.bridge.sendToChat(item.chatId, text).catch((e) => {
+                getLogger().warn('TELEGRAM', `Clarification send failed: ${e instanceof Error ? e.message : String(e)}`);
+              });
+            }).catch((e) => {
+              getLogger().warn('TELEGRAM', `Questionnaire UI failed: ${e instanceof Error ? e.message : String(e)}`);
+            });
+            return;
+          }
+          if (event.type === 'permission_required') {
+            if (this.activeChatId == null) this.trackActiveChat(item.chatId);
+            return;
+          }
+          if (event.type === 'message_received' && agent.isAwaitingClarification()) {
+            const msg = event.message;
+            const hasQuestionnaire = Array.isArray(msg.parts)
+              && msg.parts.some((p) => (p as { type?: string }).type === 'questionnaire');
+            const text = typeof msg.content === 'string' ? msg.content.trim() : '';
+            if (!hasQuestionnaire && text) {
+              void this.bridge.sendToChat(item.chatId, text).catch((e) => {
+                getLogger().warn('TELEGRAM', `Open clarification send failed: ${e instanceof Error ? e.message : String(e)}`);
+              });
+            }
+          }
+        });
         try {
-          const response = await this.dispatchInbound(item);
-          const text = typeof response.content === 'string' ? response.content.trim() : '';
+          const response = await this.dispatchInbound(item, agent);
+          const text = extractAssistantReplyText(response);
           getLogger().info('TELEGRAM', `Reply ready chat=${item.chatId} len=${text.length}`);
+          let replyMessageIds: number[] = [];
           if (text) {
             if (item.voiceReply) {
               await this.sendVoiceReply(item.chatId, text);
             } else {
-              await this.bridge.sendToChat(item.chatId, text);
+              replyMessageIds = await this.bridge.sendToChat(item.chatId, text);
             }
           } else {
-            await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
+            replyMessageIds = await this.bridge.sendToChat(item.chatId, '_(No response generated)_');
+          }
+          // Persist the Telegram message_ids of the assistant reply so we can
+          // delete them from Telegram when the conversation is cleared.
+          if (replyMessageIds.length > 0 && response?.id) {
+            try {
+              const store = agent.sessionManager?.getStorageAdapter();
+              store?.updateMessage?.(agent.sessionId, response.id, {
+                platformMessageIds: replyMessageIds,
+                platformChatId: item.chatId,
+              });
+            } catch { /* best-effort */ }
           }
         } catch (err) {
           let errMsg = err instanceof Error ? err.message : String(err);
@@ -446,6 +799,9 @@ export class TelegramChannelPlugin implements ChannelPlugin {
           if (errMsg.length > 400) errMsg = errMsg.slice(0, 400) + '...';
           await this.bridge.sendToChat(item.chatId, `⚠️ ${errMsg}`);
         } finally {
+          unsubClarification?.();
+          this.clearInboundAgentPermissions(agent);
+          this.processingChatId = null;
           await progress.stop();
         }
       }
@@ -470,7 +826,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
       case 'help':
         return [
-          '🤖 *Agent-X Channel Commands:*',
+          `🤖 *${this.agentName} Channel Commands:*`,
           '',
           '🔐 *Permissions:*',
           '  /permissions — List allowed/denied tools',
@@ -515,12 +871,8 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         return 'Usage: /permissions [list|revoke <tool>|revoke-all]';
       }
 
-      case 'plan':
-      case 'hyperdrive':
-        return 'ℹ️ Plan Mode and Hyperdrive are not available on messaging channels. Every tool is approved individually via Allow Once, Always Allow, or Deny.';
-
       case 'profiles': {
-        const cfg = (this.agent as any).config as AgentXConfig;
+        const cfg = this.agent.config;
         const profiles: Array<{ id: string; label: string; providerId: string }> = [];
         Object.entries(cfg.provider.providers).forEach(([pid, pcfg]) => {
           if (pcfg.profiles) {
@@ -541,7 +893,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'profile': {
         const profileId = args[0];
         if (!profileId) return '❌ Usage: /profile <profile_id>\nUse /profiles to list available profiles.';
-        const cfg = (this.agent as any).config as AgentXConfig;
+        const cfg = this.agent.config;
         let foundProviderId: string | null = null;
         for (const [pid, pcfg] of Object.entries(cfg.provider.providers)) {
           if (pcfg.profiles?.[profileId]) {
@@ -556,13 +908,13 @@ export class TelegramChannelPlugin implements ChannelPlugin {
         if (!foundProviderId) return `❌ Profile "${profileId}" not found. Use /profiles to list.`;
         const pCfg = cfg.provider.providers[foundProviderId];
         if (!pCfg) return `❌ Provider "${foundProviderId}" not configured.`;
-        this.agent.switchProvider(foundProviderId as any, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
+        this.agent.switchProvider(foundProviderId as ProviderId, pCfg.profiles?.[profileId]?.apiKey ?? pCfg.apiKey, pCfg.profiles?.[profileId]?.baseUrl ?? pCfg.baseUrl);
         return `✅ Switched to profile: ${profileId} (${foundProviderId})\nUse /models to pick a model.`;
       }
 
       case 'models': {
         try {
-          const cfg = (this.agent as any).config as AgentXConfig;
+          const cfg = this.agent.config;
           const provider = ProviderFactory.create(
             cfg.provider.activeProvider,
             cfg.provider.providers[cfg.provider.activeProvider]?.apiKey,
@@ -611,7 +963,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       }
 
       case 'tools': {
-        const toolRegistry = (this.agent as any).toolRegistry;
+        const toolRegistry = this.agent.getToolExecutor()?.getRegistry();
         if (!toolRegistry) return '🔧 No tools available.';
         const tools = toolRegistry.list();
         const categories = new Map<string, string[]>();
@@ -647,9 +999,9 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'status': {
         const tokens = this.agent.tokens;
         return [
-          '📊 *Agent-X Status*',
-          `├ Provider: ${(this.agent as any).config?.provider?.activeProvider ?? 'unknown'}`,
-          `├ Model: ${(this.agent as any).config?.provider?.activeModel ?? 'unknown'}`,
+          `📊 *${this.agentName} Status*`,
+          `├ Provider: ${this.agent.config?.provider?.activeProvider ?? 'unknown'}`,
+          `├ Model: ${this.agent.config?.provider?.activeModel ?? 'unknown'}`,
           `├ Tokens: ${tokens.tokensUsed} / ${tokens.tokensTotal}`,
           `├ Processing: ${this.agent.processing ? 'yes' : 'idle'}`,
           `└ Active Chat: ${this.activeChatId ?? 'none'}`,
@@ -662,7 +1014,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
       case 'timezone':
       case 'tz': {
         const newTz = args.join(' ').trim();
-        const cfg = (this.agent as any).config as AgentXConfig | undefined;
+        const cfg = this.agent.config;
         if (!cfg) return '❌ Agent config not available.';
         if (!newTz) {
           const currentTz = cfg.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;

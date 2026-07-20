@@ -8,7 +8,7 @@
 import type { Pool } from 'pg';
 
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
-export type JobKind = 'web_distill' | 'document_ingest' | 're_extract' | 'memory_consolidate' | 'louvain_layout' | 'rag_telemetry' | 'community_summarize';
+export type JobKind = 'web_distill' | 're_extract' | 'memory_consolidate' | 'louvain_layout' | 'rag_telemetry' | 'community_summarize';
 
 /** Atomic stage detail persisted alongside job progress. */
 export interface StageDetail {

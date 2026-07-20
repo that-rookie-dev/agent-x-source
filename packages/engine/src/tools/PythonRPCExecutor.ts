@@ -1,9 +1,12 @@
-import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { exec, spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { getLogger } from '@agentx/shared';
+
+const execAsync = promisify(exec);
 
 const logger = getLogger();
 
@@ -39,16 +42,17 @@ export class PythonRPCExecutor {
   private pythonPath = 'python3';
   private activeProcesses = new Map<string, ChildProcess>();
   private tempDirs: string[] = [];
+  private pythonDetection: Promise<void>;
 
   constructor(pythonPath?: string) {
     if (pythonPath) this.pythonPath = pythonPath;
-    this.detectPython();
+    this.pythonDetection = this.detectPython();
   }
 
-  private detectPython(): void {
+  private async detectPython(): Promise<void> {
     for (const cmd of ['python3', 'python', 'python3.11', 'python3.12', 'python3.13']) {
       try {
-        execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 3000 });
+        await execAsync(`${cmd} --version`, { timeout: 3000 });
         this.pythonPath = cmd;
         logger.info('PYTHON_RPC', `Using python: ${cmd}`);
         return;
@@ -58,13 +62,14 @@ export class PythonRPCExecutor {
   }
 
   /**
-   * Execute a Python script synchronously and return the result.
+   * Execute a Python script asynchronously and return the result.
    */
-  executeScript(script: string, args: Record<string, unknown> = {}, opts: {
+  async executeScript(script: string, args: Record<string, unknown> = {}, opts: {
     timeout?: number;
     workDir?: string;
     env?: Record<string, string>;
-  } = {}): PythonResult {
+  } = {}): Promise<PythonResult> {
+    await this.pythonDetection;
     const start = Date.now();
     const workDir = opts.workDir || this.createWorkDir();
 
@@ -81,29 +86,28 @@ export class PythonRPCExecutor {
     };
 
     try {
-      const stdout = execSync(`${this.pythonPath} "${scriptPath}"`, {
+      const { stdout, stderr } = await execAsync(`${this.pythonPath} "${scriptPath}"`, {
         timeout: opts.timeout || 60000,
         encoding: 'utf-8',
         cwd: workDir,
         env,
         maxBuffer: 10 * 1024 * 1024,
-        stdio: ['pipe', 'pipe', 'pipe'],
       });
 
       return {
         success: true,
-        stdout: stdout as string,
-        stderr: '',
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
         exitCode: 0,
         elapsed: Date.now() - start,
       };
     } catch (error) {
-      const err = error as { stdout?: Buffer; stderr?: Buffer; status?: number };
+      const err = error as { stdout?: string; stderr?: string; code?: number };
       return {
         success: false,
-        stdout: err.stdout?.toString() || '',
-        stderr: err.stderr?.toString() || '',
-        exitCode: err.status || 1,
+        stdout: err.stdout || '',
+        stderr: err.stderr || '',
+        exitCode: err.code || 1,
         elapsed: Date.now() - start,
       };
     } finally {
@@ -172,14 +176,14 @@ export class PythonRPCExecutor {
   /**
    * Install Python packages in the work directory.
    */
-  pipInstall(packages: string[], workDir?: string): { success: boolean; output: string } {
+  async pipInstall(packages: string[], workDir?: string): Promise<{ success: boolean; output: string }> {
     const dir = workDir || this.createWorkDir();
     try {
-      const output = execSync(
+      const { stdout } = await execAsync(
         `${this.pythonPath} -m pip install ${packages.join(' ')} --quiet --target "${dir}"`,
-        { timeout: 60000, encoding: 'utf-8', stdio: 'pipe' },
+        { timeout: 60000, encoding: 'utf-8' },
       );
-      return { success: true, output: output as string };
+      return { success: true, output: stdout ?? '' };
     } catch (error) {
       return { success: false, output: (error as Error).message };
     }
@@ -188,10 +192,10 @@ export class PythonRPCExecutor {
   /**
    * Check if a Python package is available.
    */
-  checkPackage(packageName: string): boolean {
+  async checkPackage(packageName: string): Promise<boolean> {
     try {
-      execSync(`${this.pythonPath} -c "import ${packageName}"`, {
-        stdio: 'pipe', timeout: 5000,
+      await execAsync(`${this.pythonPath} -c "import ${packageName}"`, {
+        timeout: 5000,
       });
       return true;
     } catch {

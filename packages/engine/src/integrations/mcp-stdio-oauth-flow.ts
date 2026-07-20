@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { IntegrationMcpStdioAuth, IntegrationProvider, OAuthFlowResult } from '@agentx/shared';
+import { getLogger } from '@agentx/shared';
 import {
   getMcpStdioAuthPaths,
   resolveMcpStdioAuthCredentials,
@@ -190,7 +191,12 @@ export async function exchangeGoogleOAuthCode(
   if (!res.ok) {
     throw new Error(text || `Token exchange failed (${res.status})`);
   }
-  return JSON.parse(text) as Record<string, unknown>;
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch (error) {
+    getLogger().warn('MCP_STDIO_OAUTH', `Failed to parse token exchange response: ${error instanceof Error ? error.message : String(error)}`);
+    return {};
+  }
 }
 
 export function writeMcpStdioOAuthCredentials(

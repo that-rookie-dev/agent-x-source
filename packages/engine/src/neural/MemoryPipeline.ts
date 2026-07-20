@@ -15,6 +15,7 @@ import type { MemoryFabric } from './MemoryFabric.js';
 import type { MemoryConsolidator } from './MemoryConsolidator.js';
 import type { DocumentIngester } from './DocumentIngester.js';
 import { extractArticle } from './ReadabilityExtractor.js';
+import { getLogger } from '@agentx/shared';
 
 export interface DistillFn {
   (rawPayload: unknown): Promise<string>;
@@ -65,7 +66,14 @@ export class MemoryPipeline {
     const seenHashes = new Set<string>();
 
     for (const item of pending) {
-      const raw = typeof item.rawPayload === 'string' ? JSON.parse(item.rawPayload) : (item.rawPayload as any);
+      let raw: { text?: string; contentHash?: string } | undefined;
+      try {
+        raw = typeof item.rawPayload === 'string' ? JSON.parse(item.rawPayload) : (item.rawPayload as { text?: string; contentHash?: string } | undefined);
+      } catch (error) {
+        getLogger().warn('MEMORY_PIPELINE', `Failed to parse web staging rawPayload: ${error instanceof Error ? error.message : String(error)}`);
+        await this.fabric.markWebStagingDone(item.id);
+        continue;
+      }
       const rawText = raw?.text ?? '';
       if (!rawText) {
         await this.fabric.markWebStagingDone(item.id);

@@ -1,9 +1,12 @@
-import { execSync, type ChildProcess } from 'node:child_process';
+import { exec, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { promisify } from 'node:util';
 import { getLogger } from '@agentx/shared';
+
+const execAsync = promisify(exec);
 
 const logger = getLogger();
 
@@ -30,29 +33,30 @@ export class ScriptRPCExecutor {
   private tsxPath: string | null = null;
   private activeProcesses = new Map<string, ChildProcess>();
   private tempDirs: string[] = [];
+  private runtimeDetection: Promise<void>;
 
   constructor() {
-    this.detectRuntimes();
+    this.runtimeDetection = this.detectRuntimes();
   }
 
-  private detectRuntimes(): void {
+  private async detectRuntimes(): Promise<void> {
     for (const cmd of ['node', 'nodejs']) {
       try {
-        execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 3000 });
+        await execAsync(`${cmd} --version`, { timeout: 3000 });
         this.nodePath = cmd;
         break;
       } catch { /* try next */ }
     }
     for (const cmd of ['python3', 'python', 'python3.12', 'python3.11']) {
       try {
-        execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 3000 });
+        await execAsync(`${cmd} --version`, { timeout: 3000 });
         this.pythonPath = cmd;
         break;
       } catch { /* try next */ }
     }
     for (const cmd of ['tsx', 'npx tsx', 'npx ts-node']) {
       try {
-        execSync(`${cmd} --version`, { stdio: 'pipe', timeout: 5000 });
+        await execAsync(`${cmd} --version`, { timeout: 5000 });
         this.tsxPath = cmd;
         break;
       } catch { /* try next */ }
@@ -73,12 +77,13 @@ export class ScriptRPCExecutor {
     return 'javascript';
   }
 
-  executeScript(
+  async executeScript(
     script: string,
     language: ScriptLanguage,
     args: Record<string, unknown> = {},
     opts: { timeout?: number; workDir?: string; scopePath?: string } = {},
-  ): ScriptResult {
+  ): Promise<ScriptResult> {
+    await this.runtimeDetection;
     const start = Date.now();
     const scopePath = opts.scopePath ?? process.cwd();
     const resolved = this.resolveLanguage(language, scopePath);
@@ -124,29 +129,28 @@ export class ScriptRPCExecutor {
     }
 
     try {
-      const stdout = execSync(command, {
+      const { stdout, stderr } = await execAsync(command, {
         timeout,
         encoding: 'utf-8',
         cwd: workDir,
         env,
         maxBuffer: 10 * 1024 * 1024,
-        stdio: ['pipe', 'pipe', 'pipe'],
       });
       return {
         success: true,
-        stdout: stdout as string,
-        stderr: '',
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
         exitCode: 0,
         elapsed: Date.now() - start,
         runtime: resolved,
       };
     } catch (error) {
-      const err = error as { stdout?: Buffer; stderr?: Buffer; status?: number };
+      const err = error as { stdout?: string; stderr?: string; code?: number };
       return {
         success: false,
-        stdout: err.stdout?.toString() ?? '',
-        stderr: err.stderr?.toString() ?? '',
-        exitCode: err.status ?? 1,
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+        exitCode: err.code ?? 1,
         elapsed: Date.now() - start,
         runtime: resolved,
       };
@@ -156,12 +160,13 @@ export class ScriptRPCExecutor {
   }
 
   /** One-liner eval — JavaScript/TypeScript only; Python/Bash use file mode. */
-  evalSnippet(
+  async evalSnippet(
     code: string,
     language: ScriptLanguage,
     args: Record<string, unknown> = {},
     opts: { timeout?: number; scopePath?: string } = {},
-  ): ScriptResult {
+  ): Promise<ScriptResult> {
+    await this.runtimeDetection;
     const start = Date.now();
     const scopePath = opts.scopePath ?? process.cwd();
     let resolved = this.resolveLanguage(language, scopePath);
@@ -179,22 +184,21 @@ export class ScriptRPCExecutor {
     const command = `${this.nodePath} -e ${JSON.stringify(wrapped)}`;
 
     try {
-      const stdout = execSync(command, {
+      const { stdout, stderr } = await execAsync(command, {
         timeout,
         encoding: 'utf-8',
         cwd: scopePath,
         env,
         maxBuffer: 5 * 1024 * 1024,
-        stdio: ['pipe', 'pipe', 'pipe'],
       });
-      return { success: true, stdout: stdout as string, stderr: '', exitCode: 0, elapsed: Date.now() - start, runtime: resolved };
+      return { success: true, stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0, elapsed: Date.now() - start, runtime: resolved };
     } catch (error) {
-      const err = error as { stdout?: Buffer; stderr?: Buffer; status?: number };
+      const err = error as { stdout?: string; stderr?: string; code?: number };
       return {
         success: false,
-        stdout: err.stdout?.toString() ?? '',
-        stderr: err.stderr?.toString() ?? '',
-        exitCode: err.status ?? 1,
+        stdout: err.stdout ?? '',
+        stderr: err.stderr ?? '',
+        exitCode: err.code ?? 1,
         elapsed: Date.now() - start,
         runtime: resolved,
       };

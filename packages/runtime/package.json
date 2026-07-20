@@ -23,6 +23,8 @@
     "setup:python": "node scripts/setup-python.mjs",
     "setup:ffmpeg": "node scripts/setup-ffmpeg.mjs",
     "setup:voice-bundled": "pnpm --filter @agentx/voice-sidecar run setup:bundled",
+    "setup:redis": "node scripts/setup-embedded-redis.mjs",
+    "start:server": "node scripts/start-services.mjs node ../web-api/dist/index.js",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -40,7 +42,12 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/pg": "^8.20.0",
+    "extract-zip": "^2.0.1",
+    "tar": "^7.5.4",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0"
+  },
+  "optionalDependencies": {
+    "redis-memory-server": "^0.16.0"
   }
 }

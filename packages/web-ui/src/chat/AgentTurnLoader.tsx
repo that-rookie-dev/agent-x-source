@@ -47,6 +47,10 @@ export function AgentTurnLoader({ label }: { label?: string }) {
             fontFamily: "'JetBrains Mono', monospace",
             fontStyle: safeLabel ? 'normal' : 'italic',
             ml: 0.25,
+            maxWidth: 520,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
           }}
         >
           {safeLabel || 'Working...'}

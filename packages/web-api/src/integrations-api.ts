@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import type { ConnectIntegrationRequest, IntegrationHubSettings } from '@agentx/shared';
+import { isChannelCoveredMcpIntegration } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { validate, connectIntegrationSchema, mcpImportSchema, integrationSettingsSchema, integrationRunToolSchema } from './validation.js';
 import { importMcpConfig, parseMcpImportConfig } from '@agentx/engine';
@@ -10,6 +11,16 @@ function syncIntegrationTools(): void {
   const eng = getEngine();
   eng.integrationHub.syncToToolkit(eng.toolkit.registry, eng.toolkit.executor);
 }
+
+router.post('/integrations/maintain', async (_req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    await eng.integrationHub.maintainConnections();
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'maintain-failed' });
+  }
+});
 
 router.get('/integrations/catalog', (_req: Request, res: Response) => {
   const eng = getEngine();
@@ -22,7 +33,9 @@ router.get('/integrations/catalog', (_req: Request, res: Response) => {
 
 router.get('/integrations/connections', (_req: Request, res: Response) => {
   const eng = getEngine();
-  res.json({ connections: eng.integrationHub.listConnections() });
+  res.json({
+    connections: eng.integrationHub.listConnections().filter((c) => !isChannelCoveredMcpIntegration(c.providerId)),
+  });
 });
 
 router.get('/integrations/audit', (req: Request, res: Response) => {
@@ -34,6 +47,29 @@ router.get('/integrations/audit', (req: Request, res: Response) => {
 router.get('/integrations/analytics', (_req: Request, res: Response) => {
   const eng = getEngine();
   res.json({ analytics: eng.integrationHub.getAnalytics() });
+});
+
+router.get('/integrations/notifications', (req: Request, res: Response) => {
+  const eng = getEngine();
+  const limit = Number(req.query.limit ?? 100);
+  res.json({
+    notifications: eng.integrationHub.listNotifications(Number.isFinite(limit) ? limit : 100),
+    count: eng.integrationHub.notificationCount(),
+  });
+});
+
+router.post('/integrations/notifications/:id/dismiss', (req: Request, res: Response) => {
+  const eng = getEngine();
+  const id = req.params.id!;
+  const ok = eng.integrationHub.dismissNotification(id);
+  if (!ok) return res.status(404).json({ error: 'Notification not found' });
+  res.json({ ok: true, count: eng.integrationHub.notificationCount() });
+});
+
+router.post('/integrations/notifications/dismiss-all', (_req: Request, res: Response) => {
+  const eng = getEngine();
+  const dismissed = eng.integrationHub.dismissAllNotifications();
+  res.json({ ok: true, dismissed, count: eng.integrationHub.notificationCount() });
 });
 
 router.get('/integrations/settings', (_req: Request, res: Response) => {
@@ -73,6 +109,12 @@ router.post('/integrations/preflight', async (req: Request, res: Response) => {
     const folderPath = typeof req.body?.folderPath === 'string' ? req.body.folderPath : undefined;
     const remoteUrl = typeof req.body?.remoteUrl === 'string' ? req.body.remoteUrl : undefined;
     if (!providerId) return res.status(400).json({ error: 'providerId is required' });
+    if (isChannelCoveredMcpIntegration(providerId)) {
+      res.status(400).json({
+        error: `${providerId} is configured under Settings → Channels, not MCP Store.`,
+      });
+      return;
+    }
     const results = await eng.integrationHub.preflightProvider(providerId, checks, { env, folderPath, remoteUrl });
     res.json({ results });
   } catch (error) {
@@ -96,6 +138,12 @@ router.post('/integrations/:providerId/connect', validate(connectIntegrationSche
   try {
     const eng = getEngine();
     const providerId = req.params.providerId!;
+    if (isChannelCoveredMcpIntegration(providerId)) {
+      res.status(400).json({
+        error: `${providerId} is configured under Settings → Channels. Remove the MCP connection and use Channels instead.`,
+      });
+      return;
+    }
     const body = req.body as ConnectIntegrationRequest;
     const connection = await eng.integrationHub.connect(providerId, body);
     syncIntegrationTools();
@@ -158,7 +206,10 @@ router.get('/integrations/oauth/callback', async (req: Request, res: Response) =
     const connection = await eng.integrationHub.completeOAuth(state, code);
     syncIntegrationTools();
     if (acceptsHtml) {
-      return res.send(oauthResultPage(true, `Connected to ${connection.displayName}`));
+      return res.send(oauthResultPage(true, `Connected to ${connection.displayName}`, {
+        connectionId: connection.id,
+        providerId: connection.providerId,
+      }));
     }
     res.json({ connection });
   } catch (error) {
@@ -247,6 +298,17 @@ router.post('/integrations/:connectionId/sync', async (req: Request, res: Respon
   }
 });
 
+router.post('/integrations/:connectionId/benchmark', async (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const connectionId = req.params.connectionId!;
+    const connection = await eng.integrationHub.benchmarkConnection(connectionId);
+    res.json({ connection });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 router.post('/integrations/:connectionId/run-tool', validate(integrationRunToolSchema), async (req: Request, res: Response) => {
   try {
     const eng = getEngine();
@@ -270,21 +332,69 @@ router.get('/integrations/:connectionId/health', (req: Request, res: Response) =
   res.json({ health });
 });
 
-function oauthResultPage(success: boolean, message: string): string {
+router.get('/integrations/:connectionId/tools', (req: Request, res: Response) => {
+  try {
+    const eng = getEngine();
+    const connectionId = req.params.connectionId!;
+    const mapped = eng.integrationHub.getConnectionToolDefinitions(connectionId);
+    if (!mapped) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+    const connection = eng.integrationHub.listConnections().find((c) => c.id === connectionId);
+    const benchmarks = new Map((connection?.toolBenchmarks ?? []).map((b) => [b.mcpName, b]));
+    const cfg = eng.configManager.load();
+    const permissions = cfg.permissions ?? {};
+    const tools = mapped.map(({ mcpName, definition }) => {
+      const defaultDecision = definition.riskLevel === 'low' ? 'allow' : definition.riskLevel === 'critical' ? 'deny' : 'ask';
+      const bench = benchmarks.get(mcpName);
+      return {
+        mcpName,
+        name: definition.name,
+        description: definition.description,
+        riskLevel: definition.riskLevel,
+        defaultDecision: permissions[definition.id] ?? defaultDecision,
+        benchmarkStatus: bench?.status,
+        benchmarkError: bench?.error,
+        benchmarkSkipReason: bench?.skipReason,
+        lastTestedAt: bench?.testedAt,
+        readonly: bench?.readonly ?? definition.riskLevel === 'low',
+      };
+    });
+    res.json({
+      tools,
+      lastBenchmarkAt: connection?.lastBenchmarkAt,
+      benchmarkSummary: connection?.benchmarkSummary,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+function oauthResultPage(
+  success: boolean,
+  message: string,
+  meta?: { connectionId?: string; providerId?: string },
+): string {
   const color = success ? '#22c55e' : '#ef4444';
-  const payload = JSON.stringify({ type: 'agentx-integration-oauth', success, message });
+  const payload = JSON.stringify({
+    type: 'agentx-integration-oauth',
+    success,
+    message,
+    ...(meta?.connectionId ? { connectionId: meta.connectionId } : {}),
+    ...(meta?.providerId ? { providerId: meta.providerId } : {}),
+  });
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Agent-X Integrations</title></head>
 <body style="font-family:system-ui;background:#0a0a0f;color:#e5e7eb;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
 <div style="max-width:420px;padding:2rem;border:1px solid ${color}44;border-radius:12px;background:#111827">
 <h1 style="color:${color};font-size:1.1rem;margin:0 0 1rem">Integration ${success ? 'Connected' : 'Failed'}</h1>
 <p style="font-size:0.9rem;line-height:1.5;margin:0 0 1.5rem">${escapeHtml(message)}</p>
-<p style="font-size:0.75rem;color:#9ca3af;margin:0">${success ? 'Returning to Agent-X…' : 'Close this window, return to the Agent-X setup wizard, and click "Sign in again" to retry.'}</p>
+<p style="font-size:0.75rem;color:#9ca3af;margin:0">${success ? 'Returning to Agent-X — tools will sync automatically…' : 'Close this window, return to the Agent-X setup wizard, and click "Sign in again" to retry.'}</p>
 </div>
 <script>
 (function () {
   var payload = ${payload};
-  try { window.opener && window.opener.postMessage(payload, '*'); } catch (e) {}
-  try { new BroadcastChannel('agentx-integrations').postMessage(payload); } catch (e) {}
+  try { window.opener && window.opener.postMessage(payload, '*'); } catch (e) { /* ignore */ }
+  try { new BroadcastChannel('agentx-integrations').postMessage(payload); } catch (e) { /* ignore */ }
   if (${success ? 'true' : 'false'}) { setTimeout(function () { window.close(); }, 1200); }
 })();
 </script>
@@ -335,7 +445,10 @@ export async function handleMcpStdioOAuthCallback(req: Request, res: Response): 
     const connection = await eng.integrationHub.completeMcpStdioBrowserOAuth(state, code);
     syncIntegrationTools();
     if (acceptsHtml) {
-      res.send(oauthResultPage(true, `Signed in to ${connection.displayName}`));
+      res.send(oauthResultPage(true, `Signed in to ${connection.displayName}`, {
+        connectionId: connection.id,
+        providerId: connection.providerId,
+      }));
       return;
     }
     res.json({ connection });

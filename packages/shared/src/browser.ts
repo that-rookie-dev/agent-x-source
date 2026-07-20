@@ -85,7 +85,20 @@ export {
   hydrateMessageHistoryEntries,
   coerceQuestionnaireOptionText,
   sanitizeQuestionnairePayload,
+  formatQuestionnaireForMessagingChannel,
+  extractAssistantReplyText,
+  questionnaireSupportsInlineButtons,
+  MESSAGING_INLINE_MAX_OPTIONS,
+  MESSAGING_INLINE_MAX_QUESTIONS,
 } from './utils/questionnaire.js';
+
+export {
+  PERMISSION_INSTRUCTED_ERROR,
+  isPermissionInstructResult,
+  normalizePermissionHandlerResult,
+  formatPermissionInstructedToolOutput,
+} from './utils/messaging-permission.js';
+export type { PermissionHandlerResult, PermissionInstructResult } from './utils/messaging-permission.js';
 
 export {
   CHART_P0_TYPES,
@@ -131,19 +144,18 @@ export {
 
 export { summarizeMessageForTurnFeedback, displayTextForTurnFeedback } from './utils/turn-display.js';
 export { sanitizeAutomationNotificationBody } from './utils/notification-body.js';
-export { deriveCanvasTitle, isGenericCanvasTitle } from './utils/canvas-title.js';
-export type { DeriveCanvasTitleInput } from './utils/canvas-title.js';
+export { sanitizeMarkdownDeliverable } from './utils/markdown-deliverable.js';
+export { deriveMarkdownTitle, isGenericMarkdownTitle } from './utils/markdown-title.js';
+export type { DeriveMarkdownTitleInput } from './utils/markdown-title.js';
 
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 
 export {
   NEURAL_BRAIN_MIN_RAM_GB,
-  STYLETTS2_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
   VOICE_WARMUP_MIN_RAM_GB,
   getSystemMemoryGB,
   isNeuralBrainSupported,
-  isStyleTtsSupported,
   isLocalModelSupported,
   isVoiceWarmupSupported,
   buildPublicSystemCapabilities,
@@ -166,10 +178,30 @@ export {
 } from './utils/automation-session.js';
 export {
   CHANNEL_SESSION_ID,
+  channelSessionIdForBinding,
+  parseChannelBindingFromSessionId,
   isChannelSessionId,
   isSuperSessionId,
   resolveFleetToolSessionScope,
 } from './utils/channel-session.js';
+export {
+  CHANNEL_COVERED_MCP_INTEGRATION_IDS,
+  isChannelCoveredMcpIntegration,
+  detectChannelHandoffIntent,
+  isBareContinueIntent,
+} from './utils/channel-integration-overlap.js';
+export {
+  buildResumeTurnInstructionFromMessages,
+  resolveContinuationInstruction,
+  isContinuationTrigger,
+  detectIncompleteLastTurn,
+} from './utils/resume-turn.js';
+export type { ResumeTurnMessage } from './utils/resume-turn.js';
+export type { ChannelCoveredMcpIntegrationId } from './utils/channel-integration-overlap.js';
+export {
+  formatChannelBindingLabel,
+} from './utils/channel-session-binding.js';
+export type { ChannelBindingId, ChannelSessionBinding } from './utils/channel-session-binding.js';
 
 export {
   isMemoryFabricSuperSession,
@@ -189,6 +221,8 @@ export {
   VOICE_BLOCK_CLOSE,
   normalizeVoiceAssistantContent,
 } from './utils/voice-channel.js';
+
+export { formatProviderErrorMessage } from './utils/provider-error-message.js';
 
 export type {
   DeepSearchContentType,

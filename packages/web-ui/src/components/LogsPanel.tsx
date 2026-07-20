@@ -190,6 +190,7 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
         title="System Logs"
         subtitle={`Live system event stream · ${connected ? '● LIVE' : '○ disconnected'} · ${counts.total} total`}
         inline
+        compact
         action={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <Tooltip title="Copy logs">
@@ -218,8 +219,8 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
       }
     />
 
-    {/* Toolbar */}
-    <Box sx={{ px: 2, py: 0.75, borderBottom: `1px solid ${colors.border.subtle}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+    {/* Toolbar — same row height as compact panel header */}
+    <Box sx={{ px: 2, py: 0.75, minHeight: 36, boxSizing: 'border-box', borderBottom: `1px solid ${colors.border.subtle}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
       {/* Level filter chips */}
       {(['all', 'error', 'warn', 'info'] as LevelFilter[]).map((level) => (
         <Chip

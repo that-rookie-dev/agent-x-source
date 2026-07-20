@@ -2,7 +2,6 @@ export type TurnPhase =
   | 'idle'
   | 'running'
   | 'awaiting_plan'
-  | 'awaiting_mode'
   | 'awaiting_permission'
   | 'awaiting_step_cap'
   | 'done'
@@ -20,7 +19,6 @@ export interface TurnStateSnapshot {
 const USER_WAIT_PHASES: ReadonlySet<TurnPhase> = new Set([
   'awaiting_permission',
   'awaiting_plan',
-  'awaiting_mode',
   'awaiting_step_cap',
 ]);
 

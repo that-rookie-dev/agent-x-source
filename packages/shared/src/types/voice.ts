@@ -17,7 +17,19 @@ export type FasterWhisperComputeType = 'auto' | 'int8' | 'int8_float16' | 'float
 
 export type VoiceComputeDevice = 'auto' | 'cpu' | 'cuda';
 
-export type TtsEngine = 'kokoro' | 'styletts2';
+export type TtsEngine = 'kokoro';
+
+export type VoiceEngineType = 'stt_llm_tts' | 'realtime_xai';
+
+export interface VoiceXaiConfig {
+  apiKey?: string;
+  /** xAI realtime model, e.g. grok-voice-latest. */
+  model?: string;
+  /** xAI voice ID, e.g. eve. */
+  voice?: string;
+  /** Optional WSS override. Defaults to wss://api.x.ai/v1/realtime. */
+  baseUrl?: string;
+}
 
 export interface VoiceSurfaceConfig {
   web?: 'off' | 'push-to-talk' | 'duplex';
@@ -82,9 +94,22 @@ export interface VoiceAssetCatalogEntry {
   recommended?: boolean;
 }
 
+export interface VoiceProviderConfig {
+  /** Provider for voice sessions. Defaults to cfg.provider.activeProvider. */
+  activeProvider?: string;
+  /** Model for voice sessions. Defaults to cfg.provider.activeModel. */
+  activeModel?: string;
+  /** Provider profile label for voice sessions. Defaults to the provider's activeProfile. */
+  activeProfile?: string;
+}
+
 export interface VoiceConfig {
   enabled?: boolean;
   mode?: VoiceSurfaceConfig;
+  /** Active voice engine. Defaults to the local STT/LLM/TTS stack. */
+  engine?: VoiceEngineType;
+  /** xAI realtime settings. */
+  xai?: VoiceXaiConfig;
   stt?: VoiceSttConfig;
   tts?: VoiceTtsConfig;
   sidecar?: VoiceSidecarConfig;
@@ -94,6 +119,8 @@ export interface VoiceConfig {
     phrase?: string;
   };
   downloadedAssets?: VoiceDownloadedAsset[];
+  /** Separate provider/model for voice sessions. Falls back to default provider config. */
+  provider?: VoiceProviderConfig;
 }
 
 export type VoiceSidecarHealthState = 'not-installed' | 'stopped' | 'starting' | 'ready' | 'crashed';
@@ -118,10 +145,17 @@ export interface VoiceCapabilityStatus {
     selectedVoiceId?: string;
     selectedVoiceInstalled: boolean;
     kokoroInstalled: boolean;
-    styleTts2Installed: boolean;
   };
   vadInstalled: boolean;
   gpuAvailable?: boolean;
   canRunWeb: boolean;
   canRunChannels: boolean;
+  /** Active/selected engine. */
+  engine?: VoiceEngineType;
+  /** xAI realtime readiness. */
+  realtimeXai?: {
+    configured: boolean;
+    reachable?: boolean;
+    error?: string;
+  };
 }

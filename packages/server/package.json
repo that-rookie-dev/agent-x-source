@@ -9,8 +9,9 @@
   },
   "scripts": {
     "build": "tsup",
-    "build:deps": "pnpm --filter @agentx/shared --filter @agentx/canvas --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-ui --filter @agentx/web-neuron --filter @agentx/runtime run build",
-    "pack:server": "pnpm run build:deps && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:python && pnpm --filter @agentx/runtime run setup:ffmpeg && pnpm --filter @agentx/runtime run setup:voice-bundled && pnpm run build && node scripts/pack-server.mjs",
+    "build:deps": "pnpm --filter @agentx/shared --filter @agentx/engine --filter @agentx/web-api --filter @agentx/web-ui --filter @agentx/web-neuron --filter @agentx/runtime run build",
+    "pack:server": "pnpm run build:deps && pnpm --filter @agentx/runtime run setup:extensions:if-needed && pnpm --filter @agentx/runtime run setup:python && pnpm --filter @agentx/runtime run setup:ffmpeg && pnpm --filter @agentx/runtime run setup:redis && pnpm --filter @agentx/runtime run setup:voice-bundled && pnpm run build && node scripts/pack-server.mjs",
+    "start:server": "node scripts/start-server.mjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

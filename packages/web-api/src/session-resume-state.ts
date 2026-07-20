@@ -25,6 +25,7 @@ export function saveSessionResumeState(sessionId: string, state: SessionResumeSt
     payload: {
       questionnaireMessageId: state.questionnaireMessageId,
       userText: state.userText,
+      lastFailure: state.lastFailure,
       delegateCrewIds: state.delegateCrewIds,
       primaryCrewId: state.primaryCrewId,
       crewIntakeFromPicker: state.crewIntakeFromPicker,
@@ -49,6 +50,7 @@ export function loadSessionResumeState(sessionId: string): SessionResumeState | 
     messageId: String(row['message_id'] ?? row['messageId'] ?? ''),
     questionnaireMessageId: payload.questionnaireMessageId as string | undefined,
     userText: payload.userText as string | undefined,
+    lastFailure: payload.lastFailure as string | undefined,
     delegateCrewIds: payload.delegateCrewIds as string[] | undefined,
     primaryCrewId: payload.primaryCrewId as string | undefined,
     crewIntakeFromPicker: payload.crewIntakeFromPicker as boolean | undefined,

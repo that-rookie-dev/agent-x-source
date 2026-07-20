@@ -44,7 +44,7 @@ export type QuestionnaireResponseState = Record<string, QuestionnaireAnswerValue
 export const QUESTIONNAIRE_CUSTOM_SUFFIX = '__custom';
 
 /** Persisted questionnaire state on a chat message part. */
-export interface QuestionnaireRecord {
+export interface QuestionnaireRecord extends Record<string, unknown> {
   payload: QuestionnairePayload;
   status: 'pending' | 'answered' | 'skipped';
   answer?: string;

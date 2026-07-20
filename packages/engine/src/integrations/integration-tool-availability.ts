@@ -86,19 +86,38 @@ function buildDegradedActiveToolsetHint(label: string): string {
 }
 
 /**
- * Final pass after plan-mode / compact-context filtering: align turn hints with tools
+ * Final pass after tool permission / compact-context filtering: align turn hints with tools
  * the model can actually call. Works for any MCP server.
+ *
+ * @param discoveryToolIds Optional full registry IDs. When progressive disclosure exposes
+ *   only tool_search/tool_call, provider tools may be absent from `activeToolIds` but still
+ *   callable via the bridge — pass discovery IDs so we do not false-degrade.
  */
 export function reconcileIntegrationHintWithActiveTools(
   hint: string | undefined,
   policy: ThirdPartyTurnPolicy | undefined,
   activeToolIds: string[],
+  discoveryToolIds?: string[],
 ): { hint?: string; policy?: ThirdPartyTurnPolicy } {
   if (!hint?.trim()) return { hint, policy };
   if (!INTEGRATION_READY_HINT_RE.test(hint)) return { hint, policy };
 
   const activeForPolicy = activeToolsForPolicy(activeToolIds, policy);
   if (activeForPolicy.length === 0) {
+    const bridgeReady = activeToolIds.includes('tool_search') && activeToolIds.includes('tool_call');
+    const discoverable = discoveryToolIds
+      ? activeToolsForPolicy(discoveryToolIds, policy)
+      : [];
+    if (bridgeReady && discoverable.length > 0) {
+      const toolList = discoverable.slice(0, 8).join(', ');
+      return {
+        hint: [
+          hint.replace(/Active tools this turn: [^.]+\./, `Discoverable MCP tools: ${toolList}.`),
+          `Use tool_search / tool_call for: ${toolList}.`,
+        ].join(' '),
+        policy,
+      };
+    }
     return {
       hint: buildDegradedActiveToolsetHint(providerLabel(policy)),
       policy: policy

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectThirdPartyServiceIntent } from '../src/integrations/service-intent.js';
+import { detectThirdPartyServiceIntent } from '../src/integrations/third-party-access.js';
 
 describe('service-intent', () => {
   it('detects email and gmail inbox queries', () => {

@@ -15,98 +15,54 @@
       ]
     },
     {
-      "id": "faster-whisper-base.en",
+      "id": "faster-distil-whisper-small.en",
       "tier": "download",
       "kind": "stt-model",
-      "target": "models/stt/faster-whisper-base.en",
-      "displayName": "faster-whisper base.en",
-      "sizeMB": 145,
+      "target": "models/stt/faster-distil-whisper-small.en",
+      "displayName": "faster-distil-whisper small.en",
+      "sizeMB": 166,
       "license": "MIT",
       "sha256": null,
       "sources": [
-        { "type": "hf", "repo": "Systran/faster-whisper-base.en", "revision": "main" }
+        { "type": "hf", "repo": "Systran/faster-distil-whisper-small.en", "revision": "main" }
       ]
     },
     {
-      "id": "kokoro-82m",
+      "id": "kokoro-onnx",
       "tier": "download",
       "kind": "tts-model",
-      "target": "models/tts/kokoro/kokoro-82m",
-      "displayName": "Kokoro 82M",
-      "sizeMB": 330,
+      "target": "models/tts/kokoro/kokoro-onnx",
+      "displayName": "Kokoro ONNX FP32",
+      "sizeMB": 312,
       "license": "Apache-2.0",
       "sha256": null,
       "alsoInstalls": ["kokoro-af"],
       "sources": [
-        { "type": "hf", "repo": "hexgrad/Kokoro-82M", "revision": "main" }
+        {
+          "type": "github-release",
+          "repo": "thewh1teagle/kokoro-onnx",
+          "tag": "model-files-v1.0",
+          "assets": ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+        }
       ]
     },
     {
       "id": "kokoro-af",
       "tier": "download",
       "kind": "tts-voice",
-      "target": "models/tts/kokoro/kokoro-82m",
+      "target": "models/tts/kokoro/kokoro-onnx",
       "displayName": "Kokoro AF Voice",
       "sizeMB": 1,
       "license": "Apache-2.0",
       "sha256": null,
-      "aliasOf": "kokoro-82m",
+      "aliasOf": "kokoro-onnx",
       "sources": [
-        { "type": "hf", "repo": "hexgrad/Kokoro-82M", "revision": "main" }
-      ]
-    },
-    {
-      "id": "faster-whisper-tiny.en",
-      "tier": "optional",
-      "kind": "stt-model",
-      "target": "models/stt/faster-whisper-tiny.en",
-      "displayName": "faster-whisper tiny.en",
-      "sizeMB": 75,
-      "license": "MIT",
-      "sha256": null,
-      "sources": [
-        { "type": "hf", "repo": "Systran/faster-whisper-tiny.en", "revision": "main" }
-      ]
-    },
-    {
-      "id": "faster-whisper-small.en",
-      "tier": "optional",
-      "kind": "stt-model",
-      "target": "models/stt/faster-whisper-small.en",
-      "displayName": "faster-whisper small.en",
-      "sizeMB": 465,
-      "license": "MIT",
-      "sha256": null,
-      "sources": [
-        { "type": "hf", "repo": "Systran/faster-whisper-small.en", "revision": "main" }
-      ]
-    },
-    {
-      "id": "styletts2",
-      "tier": "optional",
-      "kind": "tts-model",
-      "target": "models/tts/styletts2/styletts2",
-      "displayName": "StyleTTS 2",
-      "sizeMB": 900,
-      "license": "Check model license before distribution",
-      "sha256": null,
-      "alsoInstalls": ["styletts2-default"],
-      "sources": [
-        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
-      ]
-    },
-    {
-      "id": "styletts2-default",
-      "tier": "optional",
-      "kind": "tts-voice",
-      "target": "models/tts/styletts2/styletts2",
-      "displayName": "StyleTTS 2 Default Reference",
-      "sizeMB": 1,
-      "license": "Check model license before distribution",
-      "sha256": null,
-      "aliasOf": "styletts2",
-      "sources": [
-        { "type": "hf", "repo": "yl4579/StyleTTS2-LibriTTS", "revision": "main" }
+        {
+          "type": "github-release",
+          "repo": "thewh1teagle/kokoro-onnx",
+          "tag": "model-files-v1.0",
+          "assets": ["kokoro-v1.0.onnx", "voices-v1.0.bin"]
+        }
       ]
     }
   ]

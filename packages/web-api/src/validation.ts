@@ -26,7 +26,15 @@ export function validate(schema: z.ZodSchema) {
 
 const MAX_CHAT_TEXT_LEN = 100_000;
 const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENT_CONTENT_LEN = 512_000;
+
+export const attachmentRefSchema = z.object({
+  id: z.string(),
+  name: z.string().max(256),
+  mimeType: z.string().optional(),
+  storageId: z.string().optional(),
+  source: z.enum(['upload', 'gmail', 'tool']).optional(),
+  type: z.enum(['file', 'image', 'url']).optional(),
+});
 
 export const clientSituationSchema = z.object({
   clientNow: z.string().min(1).max(64),
@@ -42,14 +50,11 @@ export const clientSituationSchema = z.object({
 }).optional();
 
 export const chatMessageSchema = z.object({
-  text: z.string().min(1, 'text is required').max(MAX_CHAT_TEXT_LEN),
-  attachments: z.array(z.object({
-    name: z.string().max(256),
-    content: z.string().max(MAX_ATTACHMENT_CONTENT_LEN),
-  })).max(MAX_ATTACHMENTS).optional(),
+  text: z.string().max(MAX_CHAT_TEXT_LEN).default(''),
+  attachments: z.array(attachmentRefSchema).max(MAX_ATTACHMENTS).optional(),
   retry: z.boolean().optional(),
   delegateCrewIds: z.array(z.string()).optional(),
-  /** Set after user skips/deploys from CrewSuggestionModal — prevents server re-prompt. */
+  /** Set after user resolves a crew suggestion — prevents server re-prompt. */
   crewSuggestionResolved: z.boolean().optional(),
   /** After in-chat crew roster picker — lead crew asks intake question first. */
   crewIntakeFromPicker: z.boolean().optional(),
@@ -59,6 +64,8 @@ export const chatMessageSchema = z.object({
   priorUserMessages: z.array(z.string()).optional(),
   /** Globe toggle in chat — force web search on this turn. */
   forceWebSearch: z.boolean().optional(),
+  /** Crew-suggestion toggle in chat — explicitly request crew evaluation for this turn. */
+  crewSuggestionRequested: z.boolean().optional(),
   resumeCrewIntake: z.object({
     originalUserText: z.string(),
     intakeAnswer: z.string(),
@@ -100,33 +107,42 @@ export const crewSuggestionResolveSchema = z.object({
   })).optional(),
 });
 
+const crewChatRecruitSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  title: z.string().optional(),
+  callsign: z.string().optional(),
+  systemPrompt: z.string(),
+  description: z.string().optional(),
+  tone: z.string().optional(),
+  expertise: z.array(z.string()).optional(),
+  traits: z.array(z.string()).optional(),
+  tools: z.array(z.string()).optional(),
+  source: z.string().optional(),
+  catalogId: z.string().optional(),
+  categoryId: z.string().optional(),
+  color: z.string().optional(),
+});
+
 export const crewChatSessionSchema = z.object({
   crewId: z.string().optional(),
   scopePath: z.string().optional(),
-  recruit: z.object({
-    id: z.string().optional(),
-    name: z.string(),
-    title: z.string().optional(),
-    callsign: z.string().optional(),
-    systemPrompt: z.string(),
-    description: z.string().optional(),
-    tone: z.string().optional(),
-    expertise: z.array(z.string()).optional(),
-    traits: z.array(z.string()).optional(),
-    tools: z.array(z.string()).optional(),
-    source: z.string().optional(),
-    catalogId: z.string().optional(),
-    categoryId: z.string().optional(),
-    color: z.string().optional(),
-  }).optional(),
+  recruit: crewChatRecruitSchema.optional(),
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
 
+/** Same as text crew chat, plus optional textSessionId to bind `voice:{textSessionId}`. */
+export const crewChatVoiceSessionSchema = z.object({
+  crewId: z.string().optional(),
+  scopePath: z.string().optional(),
+  textSessionId: z.string().optional(),
+  recruit: crewChatRecruitSchema.optional(),
+}).refine((d) => d.crewId || d.recruit || d.textSessionId, {
+  message: 'crewId, recruit, or textSessionId required',
+});
+
 export const chatSteerSchema = z.object({
-  text: z.string().min(1, 'text is required'),
-  attachments: z.array(z.object({
-    name: z.string(),
-    content: z.string(),
-  })).optional(),
+  text: z.string().default(''),
+  attachments: z.array(attachmentRefSchema).optional(),
   delegateCrewIds: z.array(z.string()).optional(),
   crewSuggestionResolved: z.boolean().optional(),
   crewIntakeFromPicker: z.boolean().optional(),
@@ -172,6 +188,11 @@ export const permissionRespondSchema = z.object({
   choice: z.enum(['allow_once', 'allow_always', 'deny']),
 });
 
+export const permissionInstructSchema = z.object({
+  requestId: z.string().min(1),
+  instruction: z.string().min(1).max(4000),
+});
+
 export const permissionRespondBatchSchema = z.object({
   choice: z.enum(['allow_once', 'allow_always', 'deny']),
 });
@@ -179,7 +200,6 @@ export const permissionRespondBatchSchema = z.object({
 export const createSessionSchema = z.object({
   scopePath: z.string().optional(),
   parentId: z.string().optional(),
-  mode: z.enum(['agent', 'plan']).optional(),
 });
 
 export const createCheckpointSchema = z.object({
@@ -199,7 +219,6 @@ export const turnFeedbackSchema = z.object({
 
 export const updateSessionSchema = z.object({
   title: z.string().optional(),
-  mode: z.enum(['agent', 'plan']).optional(),
 });
 
 export const providerValidateSchema = z.object({
@@ -333,32 +352,17 @@ export const memorySourceCreateSchema = z.object({
   colorHex: z.string().min(1),
 });
 
-export const documentIngestSchema = z.object({
-  name: z.string().min(1),
-  kind: z.enum(['pdf', 'web', 'markdown', 'text', 'json']),
-  content: z.string().min(1),
-  colorHex: z.string().optional(),
-  sourceId: z.string().optional(),
-  sessionId: z.string().optional(),
-  agentId: z.string().optional(),
-  chunkSize: z.number().int().min(100).max(5000).optional(),
-  chunkOverlap: z.number().int().min(0).max(1000).optional(),
-  maxEntitiesPerChunk: z.number().int().min(1).max(100).optional(),
-  maxChunks: z.number().int().min(1).max(200).optional(),
-});
-
 export const benchmarkRunSchema = z.object({
   model: z.string().min(1),
   provider: z.string().min(1),
   tag: z.string().optional(),
 });
 
-export const createCanvasSchema = z.object({
+export const createMarkdownDocumentSchema = z.object({
   sessionId: z.string().min(1),
   title: z.string().optional(),
   contentMarkdown: z.string().optional(),
   contentTsx: z.string().optional(),
-  contentFormat: z.enum(['markdown', 'canvas_tsx']).optional(),
   messageId: z.string().optional(),
   sourceRole: z.enum(['user', 'assistant', 'system']).optional(),
 }).refine(

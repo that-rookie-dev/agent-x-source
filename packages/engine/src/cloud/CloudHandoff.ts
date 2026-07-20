@@ -387,7 +387,7 @@ export async function runCloudWorker(
     const { ConfigManager } = await import('../config/ConfigManager.js');
 
     const config = new ConfigManager().load();
-    const eng = (globalThis as any).__agentx_engine__;
+    const eng = (globalThis as unknown as { __agentx_engine__?: { sessionManager?: { getActiveSession?: () => { scopePath?: string } | null } } }).__agentx_engine__;
     const scopePath = eng?.sessionManager?.getActiveSession?.()?.scopePath || '';
     const agent = new Agent({ config, sessionId, scopePath });
 

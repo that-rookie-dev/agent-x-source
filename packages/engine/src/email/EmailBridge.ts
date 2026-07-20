@@ -107,6 +107,7 @@ export class EmailBridge extends EventEmitter {
   private imapConnected = false;
   private attachedAgent: Agent | null = null;
   private agentDeps: EmailBridgeAgentDeps | null = null;
+  private messageHandler: ((email: ParsedEmail) => void | Promise<void>) | null = null;
   private senderAgents = new Map<string, Agent>();
   private backoffMs = 5000;
   private readonly maxBackoffMs = 300_000; // 5 minutes
@@ -134,6 +135,10 @@ export class EmailBridge extends EventEmitter {
    */
   setAgentDeps(deps: EmailBridgeAgentDeps): void {
     this.agentDeps = deps;
+  }
+
+  setMessageHandler(handler: (email: ParsedEmail) => void | Promise<void>): void {
+    this.messageHandler = handler;
   }
 
   get events(): AgentEventBus {
@@ -268,7 +273,7 @@ export class EmailBridge extends EventEmitter {
     this.senderAgents.clear();
   }
 
-  async sendEmail(to: string, subject: string, body: string): Promise<void> {
+  async sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<void> {
     if (!this.smtpTransporter || !this.config) {
       throw new Error('SMTP not configured');
     }
@@ -278,6 +283,7 @@ export class EmailBridge extends EventEmitter {
       to,
       subject,
       text: body,
+      attachments: attachments?.map((att) => ({ filename: att.filename, content: att.content })),
     });
 
     this.emitTyped('email_sent', {
@@ -286,7 +292,7 @@ export class EmailBridge extends EventEmitter {
     });
   }
 
-  async replyTo(originalMessageId: string, to: string, subject: string, body: string): Promise<void> {
+  async replyTo(originalMessageId: string, to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<void> {
     if (!this.smtpTransporter || !this.config) {
       throw new Error('SMTP not configured');
     }
@@ -298,6 +304,7 @@ export class EmailBridge extends EventEmitter {
       text: body,
       inReplyTo: originalMessageId,
       references: [originalMessageId],
+      attachments: attachments?.map((att) => ({ filename: att.filename, content: att.content })),
     });
 
     this.emitTyped('email_sent', {
@@ -557,6 +564,11 @@ export class EmailBridge extends EventEmitter {
     const senderEmail = this.extractSenderEmail(email.from);
     if (!senderEmail) {
       this.emitTyped('email_error', new Error('Could not extract sender email'));
+      return;
+    }
+
+    if (this.messageHandler) {
+      await this.messageHandler(email);
       return;
     }
 

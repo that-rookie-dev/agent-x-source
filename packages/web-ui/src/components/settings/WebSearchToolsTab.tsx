@@ -12,7 +12,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import TravelExploreIcon from '@mui/icons-material/TravelExplore';
 import type { WebSearchToolsConfig } from '@agentx/shared';
 import { settings } from '../../api';
-import { hasConfiguredSecret, isRedactedSecret, REDACTED_SECRET } from '../../utils/secret-field';
+import { hasConfiguredSecret, isRedactedSecret } from '../../utils/secret-field';
 import {
   settingsTheme,
   settingsScanlineSx,
@@ -413,6 +413,3 @@ export function mergeWebSearchConfig(existing?: WebSearchToolsConfig | null): We
     tavily: { ...defaults.tavily!, ...existing?.tavily },
   };
 }
-
-/** @deprecated use hasConfiguredSecret — kept for tests importing REDACTED placeholder behavior */
-export { REDACTED_SECRET };

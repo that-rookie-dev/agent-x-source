@@ -1,0 +1,14 @@
+{
+  "routes": [
+    ["get", "/api/agent/persona"],
+    ["put", "/api/agent/persona"],
+    ["post", "/api/agent/mode-escalation"],
+    ["post", "/api/agent/step-cap/respond"],
+    ["get", "/api/agent/turn-state"],
+    ["get", "/api/chat/turn/:turnId"],
+    ["get", "/api/agent/state"],
+    ["get", "/api/agent/vitals"],
+    ["get", "/api/agent/autonomy-status"],
+    ["post", "/api/agent/circuit-breaker/reset"]
+  ]
+}

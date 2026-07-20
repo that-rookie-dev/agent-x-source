@@ -8,6 +8,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  AttachmentBuilder,
   type Interaction,
   type Message,
   type TextChannel,
@@ -19,8 +20,16 @@ import type { Agent } from '../agent/Agent.js';
 import { AgentEventBus } from '../EventBus.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { getDataDir, isChannelUserAllowed } from '@agentx/shared';
+import { MessagingPermissionCoordinator, permissionResultLabel } from '../channels/MessagingPermissionCoordinator.js';
+import { MessagingQuestionnaireCoordinator } from '../channels/MessagingQuestionnaireCoordinator.js';
+import { getRenderer } from '../channels/renderers/index.js';
+import {
+  attachMessagingClarificationListener,
+  deliverQuestionnaireCallback,
+  extractMessagingReplyText,
+  tryConsumeMessagingClarification,
+} from '../channels/MessagingClarificationHelper.js';
 
 export interface DiscordConfig {
   botToken: string;
@@ -54,9 +63,9 @@ export class DiscordBridge {
   private filesDir: string;
   private allowedUserIds: string[] = [];
   private lastChannelByUser = new Map<string, string>();
-  private pendingPermissions = new Map<string, (choice: 'allow_once' | 'allow_always' | 'deny') => void>();
-  private permRequesters = new Map<string, string>();
-  private permChannels = new Map<string, string>();
+  private permissionCoordinator = new MessagingPermissionCoordinator();
+  private questionnaireCoordinator = new MessagingQuestionnaireCoordinator();
+  private permToolIds = new Map<string, string>();
   private wiredAgents = new WeakSet<Agent>();
 
   constructor() {
@@ -79,50 +88,59 @@ export class DiscordBridge {
     const toolExecutor = agent.getToolExecutor?.();
     if (!toolExecutor?.setChannelPermissionRequestHandler) return;
 
-    toolExecutor.setChannelPermissionRequestHandler(
-      async (toolId: string, path: string, riskLevel: string) => {
+    const handler = this.permissionCoordinator.createHandler(
+      async (permId, details) => {
         const channelId = this.lastChannelByUser.get(userId);
-        if (!channelId || !this.client) return 'deny' as const;
-
-        const permId = randomUUID();
-        this.permRequesters.set(permId, userId);
-        this.permChannels.set(permId, channelId);
-        const riskEmoji = riskLevel === 'high' ? '🔴' : riskLevel === 'medium' ? '🟡' : '🟢';
+        if (!channelId || !this.client) return;
+        this.permToolIds.set(permId, details.toolId);
+        const riskEmoji = details.riskLevel === 'high' ? '🔴' : details.riskLevel === 'medium' ? '🟡' : '🟢';
+        const automationNote = details.forAutomation ? '\n\nThis tool is required for a scheduled automation.' : '';
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
           new ButtonBuilder().setCustomId(`perm:${permId}:allow_once`).setLabel('Allow Once').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`perm:${permId}:allow_always`).setLabel('Always Allow').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId(`perm:${permId}:deny`).setLabel('Deny').setStyle(ButtonStyle.Danger),
+          new ButtonBuilder().setCustomId(`perm:${permId}:instruct`).setLabel('Instruct').setStyle(ButtonStyle.Secondary),
         );
 
         try {
           const channel = await this.client.channels.fetch(channelId);
           if (channel?.isTextBased()) {
             await (channel as TextChannel).send({
-              content: `${riskEmoji} **Permission Request**\n\nTool: \`${toolId}\`\nPath: \`${path}\`\nRisk: ${riskLevel}\n\nAllow this action?`,
+              content: `${riskEmoji} **Permission Request**\n\nTool: \`${details.toolId}\`\nPath: \`${details.path}\`\nRisk: ${details.riskLevel}${automationNote}\n\nAllow, deny, or send a custom instruction?`,
               components: [row],
             });
           }
         } catch {
-          return 'deny' as const;
+          return;
         }
-
-        return new Promise<'allow_once' | 'allow_always' | 'deny'>((resolve) => {
-          const timeout = setTimeout(() => {
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            this.permChannels.delete(permId);
-            resolve('deny');
-          }, 120_000);
-          this.pendingPermissions.set(permId, (choice) => {
-            clearTimeout(timeout);
-            this.pendingPermissions.delete(permId);
-            this.permRequesters.delete(permId);
-            this.permChannels.delete(permId);
-            resolve(choice);
-          });
-        });
+      },
+      () => userId,
+      async (key) => {
+        const channelId = this.lastChannelByUser.get(key);
+        if (!channelId || !this.client) return;
+        const channel = await this.client.channels.fetch(channelId);
+        if (channel?.isTextBased()) {
+          await (channel as TextChannel).send('✏️ Reply with your instruction for the agent (how to proceed instead).');
+        }
       },
     );
+
+    toolExecutor.setChannelPermissionRequestHandler(handler);
+
+    // Abort the active turn when a permission prompt times out — prevents prompt loops.
+    this.permissionCoordinator.onTimeout(() => {
+      if (agent.processing) {
+        agent.cancel();
+        const channelId = this.lastChannelByUser.get(userId);
+        if (channelId && this.client) {
+          void this.client.channels.fetch(channelId).then((ch) => {
+            if (ch?.isTextBased()) {
+              void (ch as TextChannel).send('⏱ Permission timed out — run stopped. Send a new message to resume.').catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      }
+    });
   }
 
   attach(agent: Agent): void {
@@ -158,7 +176,7 @@ export class DiscordBridge {
           this.userAgents.delete(userId);
           this.userAgentActivity.delete(userId);
           this.eventBus.emit({
-            type: 'discord_agent_evicted' as any,
+            type: 'discord_agent_evicted',
             code: 'DISCORD_AGENT_EVICTED',
             message: `Evicted inactive agent for user ${userId}`,
             recoverable: false,
@@ -274,6 +292,7 @@ export class DiscordBridge {
     this.stopActivityCleanup();
     this.connected = false;
     if (this.client) {
+      this.client.removeAllListeners();
       this.client.destroy();
       this.client = null;
     }
@@ -286,9 +305,11 @@ export class DiscordBridge {
     try {
       const channel = await this.client.channels.fetch(channelId);
       if (channel && channel.isTextBased()) {
-        const chunks = this.chunkContent(content);
-        for (const chunk of chunks) {
-          await (channel as TextChannel).send(chunk);
+        const renderer = getRenderer('discord');
+        const results = renderer.renderMarkdown(content);
+        for (const result of results) {
+          const payload = result.payload as { content?: string };
+          await (channel as TextChannel).send(payload.content ?? '');
         }
       }
     } catch (error) {
@@ -297,13 +318,38 @@ export class DiscordBridge {
     }
   }
 
+  async sendFile(channelId: string, file: string | { name: string; content: Buffer }, messageText?: string): Promise<void> {
+    if (!this.client) return;
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) {
+        throw new Error('Discord channel not found or not text-based');
+      }
+      let attachment: AttachmentBuilder;
+      if (typeof file === 'string') {
+        const { readFileSync } = await import('node:fs');
+        const { basename } = await import('node:path');
+        const data = readFileSync(file);
+        attachment = new AttachmentBuilder(data, { name: basename(file) });
+      } else {
+        attachment = new AttachmentBuilder(file.content, { name: file.name || 'attachment' });
+      }
+      await (channel as TextChannel).send({ content: messageText || '', files: [attachment] });
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : 'Failed to send file';
+      this.emitError(errMsg);
+    }
+  }
+
   async sendDM(userId: string, content: string): Promise<void> {
     if (!this.client) return;
     try {
       const user = await this.client.users.fetch(userId);
-      const chunks = this.chunkContent(content);
-      for (const chunk of chunks) {
-        await user.send(chunk);
+      const renderer = getRenderer('discord');
+      const results = renderer.renderMarkdown(content);
+      for (const result of results) {
+        const payload = result.payload as { content?: string };
+        await user.send(payload.content ?? '');
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : 'Failed to send DM';
@@ -347,27 +393,54 @@ export class DiscordBridge {
 
   private async handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
     const customId = interaction.customId;
+
+    if (customId.startsWith('clar:')) {
+      const agent = this.userAgents.get(interaction.user.id);
+      await deliverQuestionnaireCallback(
+        this.questionnaireCoordinator,
+        customId,
+        interaction.user.id,
+        agent,
+        {
+          sendQuestionnaireStep: (prompt, buttons) =>
+            this.sendDiscordQuestionnaireStep(interaction.channelId, prompt, buttons),
+          sendText: (text) => this.sendMessage(interaction.channelId, text),
+        },
+      );
+      await interaction.deferUpdate();
+      return;
+    }
+
     if (!customId.startsWith('perm:')) return;
 
     const parts = customId.split(':');
     const permId = parts[1];
-    const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny';
+    const choice = parts[2] as 'allow_once' | 'allow_always' | 'deny' | 'instruct';
     if (!permId || !choice) return;
 
-    const expectedRequester = this.permRequesters.get(permId);
-    if (expectedRequester && interaction.user.id !== expectedRequester) {
-      await interaction.reply({ content: '⚠️ Only the user who triggered this action can approve it.', ephemeral: true });
+    if (choice === 'instruct') {
+      if (!this.permissionCoordinator.beginInstruct(permId, interaction.user.id)) {
+        await interaction.reply({ content: '⏰ Permission request expired.', ephemeral: true });
+        return;
+      }
+      await interaction.reply({ content: '✏️ Reply with your instruction in chat.', ephemeral: true });
+      await this.sendMessage(interaction.channelId, '✏️ Reply with your instruction for the agent (how to proceed instead).');
       return;
     }
 
-    const resolver = this.pendingPermissions.get(permId);
-    if (!resolver) {
+    if (!this.permissionCoordinator.resolveDecision(permId, choice, interaction.user.id)) {
       await interaction.reply({ content: '⏰ Permission request expired.', ephemeral: true });
       return;
     }
 
-    resolver(choice);
-    const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';
+    const toolId = this.permToolIds.get(permId);
+    this.permToolIds.delete(permId);
+    const agent = this.userAgents.get(interaction.user.id);
+    if (agent && toolId && choice !== 'allow_once') {
+      agent.recordToolPermissionDecision(toolId, choice);
+    }
+
+    const label = permissionResultLabel(choice);
     await interaction.update({ content: label, components: [] });
   }
 
@@ -397,12 +470,32 @@ export class DiscordBridge {
           recoverable: true,
         });
 
-        const response = await agent.sendMessage(text);
-        const content = response.content ?? '(No response generated)';
-        const chunks = this.chunkContent(content);
-        await interaction.editReply(chunks[0] ?? '(empty)');
-        for (let i = 1; i < chunks.length; i++) {
-          await interaction.followUp(chunks[i]!);
+        const exec = agent.getToolExecutor();
+        exec?.setMessagingPermissionMode(true);
+        const unsubClarification = attachMessagingClarificationListener(agent, {
+          userKey: userId,
+          questionnaireCoordinator: this.questionnaireCoordinator,
+          sendText: (text) => this.sendMessage(interaction.channelId, text),
+          sendQuestionnaireStep: (prompt, buttons) =>
+            this.sendDiscordQuestionnaireStep(interaction.channelId, prompt, buttons),
+        });
+
+        let response;
+        try {
+          response = await agent.sendMessage(text);
+        } finally {
+          unsubClarification();
+          exec?.setMessagingPermissionMode(false);
+        }
+
+        const content = extractMessagingReplyText(response);
+        const renderer = getRenderer('discord');
+        const renderResults = renderer.renderMarkdown(content);
+        const firstPayload = renderResults[0]?.payload as { content?: string } | undefined;
+        await interaction.editReply(firstPayload?.content ?? '(empty)');
+        for (let i = 1; i < renderResults.length; i++) {
+          const payload = renderResults[i]!.payload as { content?: string };
+          await interaction.followUp(payload.content ?? '');
         }
       } else if (commandName === 'status') {
         const statusLines = [
@@ -484,6 +577,15 @@ export class DiscordBridge {
 
       if (!userContent.trim()) return;
 
+      if (this.permissionCoordinator.isAwaitingInstruct(userId)) {
+        if (this.permissionCoordinator.consumeInstructText(userId, userContent.trim())) {
+          if (message.channel.isTextBased()) {
+            await (message.channel as TextChannel).send('✏️ Instruction sent to the agent.');
+          }
+          return;
+        }
+      }
+
       // If a message handler is registered (e.g., daemon queue), delegate to it
       if (this.messageHandler) {
         if (message.channel.isTextBased()) {
@@ -499,6 +601,10 @@ export class DiscordBridge {
 
       const agent = await this.getAgentForUser(userId);
 
+      if (tryConsumeMessagingClarification(agent, userContent.trim())) {
+        return;
+      }
+
       // Send typing indicator if in a text-based channel
       if (message.channel.isTextBased()) {
         try {
@@ -508,17 +614,38 @@ export class DiscordBridge {
         }
       }
 
-      const response = await agent.sendMessage(userContent.trim());
-      const content = response.content ?? '(No response generated)';
-      const chunks = this.chunkContent(content);
+      const exec = agent.getToolExecutor();
+      exec?.setMessagingPermissionMode(true);
+      const unsubClarification = attachMessagingClarificationListener(agent, {
+        userKey: userId,
+        questionnaireCoordinator: this.questionnaireCoordinator,
+        sendText: (text) => this.sendMessage(message.channel.id, text),
+        sendQuestionnaireStep: (prompt, buttons) =>
+          this.sendDiscordQuestionnaireStep(message.channel.id, prompt, buttons),
+      });
+
+      let response;
+      try {
+        response = await agent.sendMessage(userContent.trim());
+      } finally {
+        unsubClarification();
+        exec?.setMessagingPermissionMode(false);
+      }
+
+      const content = extractMessagingReplyText(response);
+
+      // Use DiscordRenderer for native Discord markdown formatting + chunking
+      const renderer = getRenderer('discord');
+      const renderResults = renderer.renderMarkdown(content);
 
       // Reply in the same channel/thread/DM
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]!;
+      for (let i = 0; i < renderResults.length; i++) {
+        const result = renderResults[i]!;
+        const payload = result.payload as { content?: string; components?: unknown };
         if (i === 0) {
-          await message.reply(chunk);
+          await message.reply(payload.content ?? '');
         } else {
-          await (message.channel as TextChannel).send(chunk);
+          await (message.channel as TextChannel).send(payload.content ?? '');
         }
       }
     } catch (error) {
@@ -574,14 +701,35 @@ export class DiscordBridge {
     return savedPath;
   }
 
-  private chunkContent(content: string): string[] {
-    const maxLen = 2000;
-    if (content.length <= maxLen) return [content];
-    const chunks: string[] = [];
-    for (let i = 0; i < content.length; i += maxLen) {
-      chunks.push(content.slice(i, i + maxLen));
+  private async sendDiscordQuestionnaireStep(
+    channelId: string,
+    prompt: string,
+    buttons: Array<{ label: string; actionId: string }>,
+  ): Promise<void> {
+    if (!this.client) return;
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel?.isTextBased()) return;
+
+    const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+    let current = new ActionRowBuilder<ButtonBuilder>();
+    for (const btn of buttons.slice(0, 25)) {
+      if (current.components.length >= 5) {
+        rows.push(current);
+        current = new ActionRowBuilder<ButtonBuilder>();
+      }
+      current.addComponents(
+        new ButtonBuilder()
+          .setCustomId(btn.actionId.slice(0, 100))
+          .setLabel(btn.label.slice(0, 80))
+          .setStyle(ButtonStyle.Secondary),
+      );
     }
-    return chunks;
+    if (current.components.length > 0) rows.push(current);
+
+    await (channel as TextChannel).send({
+      content: prompt.replace(/\*/g, '').slice(0, 2000),
+      components: rows.slice(0, 5),
+    });
   }
 
   private emitError(message: string): void {

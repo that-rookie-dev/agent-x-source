@@ -27,10 +27,12 @@ export interface ResolvedClientLocation {
   vpnSuspected: boolean;
   uiState: LocationUiState;
   coords: GeolocationCoords | null;
+  /** Timestamp (ms) when this location was last resolved. */
+  resolvedAt?: number;
 }
 
 function readSource(): ClientSituation['source'] {
-  const agentx = (window as unknown as { agentx?: { isDesktop?: boolean } }).agentx;
+  const agentx = (window as Window & { agentx?: { isDesktop?: boolean } }).agentx;
   return agentx?.isDesktop ? 'desktop' : 'browser';
 }
 

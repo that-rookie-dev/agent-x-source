@@ -105,4 +105,38 @@ describe('CrewManager', () => {
     expect(updated!.title).toBe('Renamed');
     expect(updated!.expertise).toEqual(['new-skill']);
   });
+
+  it('recovers missing crews from session host snapshots', () => {
+    const pm = new CrewManager();
+    const restored = pm.recoverFromSessionHosts([
+      {
+        id: 'orphan-1',
+        name: 'Elena',
+        callsign: 'elena',
+        title: 'Luxury Travel Concierge',
+        source: 'custom',
+      },
+    ]);
+    expect(restored).toBe(1);
+    expect(pm.get('orphan-1')?.title).toBe('Luxury Travel Concierge');
+    // Idempotent — already present.
+    expect(pm.recoverFromSessionHosts([{
+      id: 'orphan-1',
+      name: 'Elena',
+      callsign: 'elena',
+    }])).toBe(0);
+  });
+
+  it('writes a local crews.json backup on create', () => {
+    const pm = new CrewManager();
+    pm.create({
+      id: 'backed-up',
+      name: 'Backup',
+      callsign: 'backup',
+      systemPrompt: 'persist me',
+      isDefault: false,
+    });
+    const again = new CrewManager();
+    expect(again.get('backed-up')?.name).toBe('Backup');
+  });
 });

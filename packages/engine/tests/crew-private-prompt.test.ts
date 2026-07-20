@@ -23,7 +23,7 @@ describe('buildCrewPrivateIdentityPrompt', () => {
     expect(prompt).toContain('Elias Vance');
     expect(prompt).toContain('Travel Specialist');
     expect(prompt).toContain('You are a travel expert');
-    expect(prompt).toContain('private 1:1 chat');
+    expect(prompt).toContain('private 1:1 channel');
     expect(prompt).not.toContain('EXECUTE, not just describe');
     expect(prompt).toContain('not Agent-X');
     expect(prompt).toContain('INTERNAL REFERENCE');

@@ -67,7 +67,7 @@ const CREDENTIAL_ENV_FILTER_RE = /^(?:gmail|mail|oauth|api[_-]?key|secret|token|
 const SHELL_LIKE_TOOLS = new Set(['shell_exec', 'bash', 'python_rpc', 'script_run', 'node_rpc']);
 
 export function isIntegrationToolId(toolId: string): boolean {
-  return toolId.startsWith('integration__') || toolId.startsWith('integration:');
+  return toolId.startsWith('integration__');
 }
 
 export function isLocalSubstituteTool(toolId: string): boolean {

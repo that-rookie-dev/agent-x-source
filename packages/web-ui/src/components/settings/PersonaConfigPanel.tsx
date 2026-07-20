@@ -39,6 +39,57 @@ const DEFAULT_PERSONA: AgentPersonaConfig = {
   traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'],
 };
 
+/** Quick-pick presets — same as the setup wizard. */
+const PERSONA_PRESETS: Array<{
+  name: string;
+  description: string;
+  communicationStyle: CommunicationStyle;
+  decisionMaking: DecisionMakingStyle;
+  domainContext: string;
+  traits: string[];
+}> = [
+  {
+    name: 'JARVIS',
+    description: 'A sophisticated AI assistant that combines British precision with unwavering loyalty. Expert in data analysis, system management, and predictive modeling.',
+    communicationStyle: 'formal',
+    decisionMaking: 'balanced',
+    domainContext: 'Intelligent system management, data analysis, predictive modeling, and personal assistance.',
+    traits: ['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty'],
+  },
+  {
+    name: 'FRIDAY',
+    description: 'A sharp, efficient AI assistant with an Irish wit. Excels at rapid problem-solving, multitasking, and keeping things moving without unnecessary formality.',
+    communicationStyle: 'casual',
+    decisionMaking: 'aggressive',
+    domainContext: 'Rapid problem-solving, multitasking, real-time operations, and hands-on assistance.',
+    traits: ['Efficient', 'Witty', 'Direct', 'Resourceful', 'Fast-thinking'],
+  },
+  {
+    name: 'CORTANA',
+    description: 'A calm, strategic AI companion focused on mission success. Combines tactical awareness with empathetic communication to guide users through complex decisions.',
+    communicationStyle: 'empathetic',
+    decisionMaking: 'conservative',
+    domainContext: 'Strategic planning, tactical analysis, mission-critical operations, and user guidance.',
+    traits: ['Calm', 'Strategic', 'Loyal', 'Empathetic', 'Tactical'],
+  },
+  {
+    name: 'SAGE',
+    description: 'A wise, thoughtful AI advisor that values careful analysis and clear communication. Best for research, planning, and situations requiring depth over speed.',
+    communicationStyle: 'direct',
+    decisionMaking: 'conservative',
+    domainContext: 'Research, analysis, long-term planning, knowledge management, and advisory tasks.',
+    traits: ['Wise', 'Thorough', 'Patient', 'Insightful', 'Methodical'],
+  },
+  {
+    name: 'AXIOM',
+    description: 'A decisive, no-nonsense AI built for execution. Cuts through complexity to deliver results. Ideal for development, automation, and high-throughput workflows.',
+    communicationStyle: 'direct',
+    decisionMaking: 'aggressive',
+    domainContext: 'Software development, automation, system operations, and high-efficiency workflows.',
+    traits: ['Decisive', 'Efficient', 'Technical', 'Autonomous', 'Results-driven'],
+  },
+];
+
 interface Props {
   value: AgentPersonaConfig | null;
   onChange: (persona: AgentPersonaConfig | null) => void;
@@ -88,6 +139,66 @@ export function PersonaConfigPanel({ value, onChange }: Props) {
         title="Agent Persona"
         subtitle={`${persona.name} · ${persona.communicationStyle} · ${persona.decisionMaking}`}
       />
+
+      <SettingsCard title="Quick Presets" subtitle="Pick a ready-made persona or customize below">
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          {PERSONA_PRESETS.map((preset) => {
+            const isActive = persona.name === preset.name;
+            return (
+              <Box
+                key={preset.name}
+                onClick={() => onChange({ ...preset })}
+                sx={{
+                  cursor: 'pointer',
+                  p: 1.5,
+                  borderRadius: 1.5,
+                  position: 'relative',
+                  border: `1px solid ${isActive ? settingsTheme.accent.signal : settingsTheme.border.default}`,
+                  bgcolor: isActive ? `${settingsTheme.accent.signal}0a` : 'transparent',
+                  boxShadow: isActive ? `0 0 8px ${settingsTheme.accent.signal}22` : 'none',
+                  transition: 'all 0.2s ease',
+                  flex: '1 1 120px',
+                  maxWidth: 160,
+                  '&:hover': {
+                    borderColor: isActive ? settingsTheme.accent.signal : settingsTheme.border.strong,
+                    transform: 'translateY(-1px)',
+                    boxShadow: isActive
+                      ? `0 0 12px ${settingsTheme.accent.signal}33`
+                      : `0 1px 6px rgba(0,0,0,0.12)`,
+                  },
+                }}
+              >
+                {isActive && (
+                  <Box sx={{
+                    position: 'absolute',
+                    top: -5,
+                    right: -5,
+                    width: 16,
+                    height: 16,
+                    borderRadius: '50%',
+                    bgcolor: settingsTheme.accent.signal,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '0.55rem',
+                    color: settingsTheme.bg.void,
+                    fontWeight: 700,
+                    boxShadow: `0 0 6px ${settingsTheme.accent.signal}44`,
+                  }}>
+                      ✓
+                    </Box>
+                )}
+                <Typography sx={{ fontSize: '0.72rem', ...settingsMonoSx, fontWeight: 700, color: isActive ? settingsTheme.accent.signal : settingsTheme.text.primary, mb: 0.5 }}>
+                  {preset.name}
+                </Typography>
+                <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, lineHeight: 1.3, textTransform: 'capitalize' }}>
+                  {preset.communicationStyle} · {preset.decisionMaking}
+                </Typography>
+              </Box>
+            );
+          })}
+        </Box>
+      </SettingsCard>
 
       <SettingsCard title="Identity">
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>

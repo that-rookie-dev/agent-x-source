@@ -8,7 +8,7 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { useColorScheme } from '@mui/material/styles';
 import { colors, alphaColor } from '../theme';
 import { crewPalette } from '../styles/brands';
-import { StyledUl, StyledOl, StyledLi, ChartableTableWrapper } from '../components/StructuredViews';
+import { StyledUl, StyledOl, StyledLi, StyledTableWrapper } from '../components/StructuredViews';
 import { splitMarkdownSections, isPlainTextMarkdown, PLAIN_TEXT_BUBBLE_MAX_WIDTH } from './markdown-normalize';
 import { expandCollapsedTreeLine, isTreeDiagramContent } from './tree-diagram';
 import { isHorizontalPipelineContent, isPipelineDiagramContent } from './pipeline-diagram';
@@ -173,7 +173,66 @@ function SyntaxCodeBlock({ code, language }: { code: string; language: string })
   );
 }
 
-function createMarkdownComponents(isFirstSection: boolean) {
+function SimpleCodeBlock({ code, language }: { code: string; language?: string }) {
+  return (
+    <Box sx={{
+      mb: 0.75,
+      border: `1px solid ${colors.border.subtle}`,
+      borderRadius: 1,
+      overflow: 'hidden',
+      bgcolor: colors.bg.tertiary,
+    }}>
+      {language && language !== 'text' && (
+        <Box sx={{
+          px: 1, py: 0.5,
+          borderBottom: `1px solid ${colors.border.subtle}`,
+          fontSize: '0.62rem',
+          fontFamily: "'JetBrains Mono', monospace",
+          color: colors.text.dim,
+          textTransform: 'uppercase',
+        }}>
+          {language}
+        </Box>
+      )}
+      <Box sx={{ p: 1, overflowX: 'auto' }}>
+        <Box component="pre" sx={{
+          m: 0,
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '0.72rem',
+          lineHeight: 1.55,
+          color: colors.text.secondary,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}>
+          {code}
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function SimpleInlineCode({ children, ...props }: { children?: React.ReactNode; [key: string]: unknown }) {
+  return (
+    <Box
+      component="code"
+      sx={{
+        bgcolor: colors.bg.tertiary,
+        color: colors.accent.cyan,
+        px: 0.6, py: 0.1,
+        borderRadius: '4px',
+        fontSize: '0.72rem',
+        border: `1px solid ${colors.border.subtle}`,
+        boxShadow: 'none',
+        textShadow: 'none',
+      }}
+      {...props}
+    >
+      {children}
+    </Box>
+  );
+}
+
+function createMarkdownComponents(isFirstSection: boolean, simpleCode?: boolean) {
   return {
     h1({ children }: { children?: React.ReactNode }) {
       return (
@@ -244,6 +303,10 @@ function createMarkdownComponents(isFirstSection: boolean) {
     code({ className, children, ...props }: { className?: string; children?: React.ReactNode }) {
       const match = /language-(\w+)/.exec(className ?? '');
       const code = String(children).replace(/\n$/, '');
+      if (simpleCode) {
+        if (match || code.includes('\n')) return <SimpleCodeBlock code={code} language={match?.[1]} />;
+        return <SimpleInlineCode {...props}>{children}</SimpleInlineCode>;
+      }
       if (match) return <CodeBlockWithCopy code={code} language={match[1]} />;
       if (code.includes('\n')) {
         if (isChartSpecContent(code) || isMermaidSource(code)) return <ChartBlock code={code} />;
@@ -269,7 +332,7 @@ function createMarkdownComponents(isFirstSection: boolean) {
       );
     },
     pre({ children }: { children?: React.ReactNode }) { return <>{children}</>; },
-    table({ children }: { children?: React.ReactNode }) { return <ChartableTableWrapper>{children}</ChartableTableWrapper>; },
+    table({ children }: { children?: React.ReactNode }) { return <StyledTableWrapper>{children}</StyledTableWrapper>; },
     thead({ children }: { children?: React.ReactNode }) { return <thead>{children}</thead>; },
     tbody({ children }: { children?: React.ReactNode }) { return <tbody>{children}</tbody>; },
     tr({ children }: { children?: React.ReactNode }) { return <tr>{children}</tr>; },
@@ -327,12 +390,12 @@ function createMarkdownComponents(isFirstSection: boolean) {
   };
 }
 
-function MarkdownSection({ content, index, compact, webSources }: { content: string; index: number; compact?: boolean; webSources?: string[] }) {
+export const MarkdownSection = memo(function MarkdownSection({ content, index, compact, webSources, simpleCode }: { content: string; index: number; compact?: boolean; webSources?: string[]; simpleCode?: boolean }) {
   const prepared = useMemo(
     () => prepareWebSourcedMarkdown(content, webSources ?? []),
     [content, webSources],
   );
-  const components = useMemo(() => createMarkdownComponents(index === 0), [index]);
+  const components = useMemo(() => createMarkdownComponents(index === 0, simpleCode), [index, simpleCode]);
   return (
     <Box sx={{
       bgcolor: colors.bg.elevated,
@@ -352,7 +415,7 @@ function MarkdownSection({ content, index, compact, webSources }: { content: str
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{prepared}</ReactMarkdown>
     </Box>
   );
-}
+});
 
 export function UserMentionText({ content }: { content: string }) {
   const parts = content.split(/(@\w+)/g);
@@ -399,5 +462,18 @@ export const CrewAwareMarkdown = memo(function CrewAwareMarkdown({
         />
       ))}
     </Box>
+  );
+});
+
+export const StreamingMarkdown = memo(function StreamingMarkdown({
+  content,
+  webSources,
+}: {
+  content: string;
+  webSources?: string[];
+}) {
+  if (!content) return null;
+  return (
+    <MarkdownSection content={content} index={0} compact={false} simpleCode webSources={webSources} />
   );
 });

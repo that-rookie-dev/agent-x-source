@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../api';
 import type { TodoItem } from '../api';
+import { upsertDeepSearchPart, type MessagePart } from '@agentx/shared/browser';
 
 export interface ToolCall {
   id: string;
@@ -24,7 +25,7 @@ export interface SubAgent {
 
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
-export interface PartEntry {
+export interface PartEntry extends Record<string, unknown> {
   type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
   id: string;
   content?: string;
@@ -50,7 +51,7 @@ export interface UIMessage extends ChatMessage {
   todos?: TodoItem[];
   streaming?: boolean;
   plan?: string[];
-  attachments?: { name: string }[];
+  attachments?: { id: string; name: string; mimeType?: string }[];
   turnTokens?: number;
   voiceTimings?: {
     sttMs: number;
@@ -73,11 +74,29 @@ export interface UIMessage extends ChatMessage {
     reasons?: string[];
   };
   parts?: PartEntry[];
-  isModeChange?: { from: string; to: string };
   turnFeedback?: { rating: import('@agentx/shared/browser').TurnFeedbackRating };
 }
 
 export interface VisibleMessageItem {
   msg: UIMessage;
   isLastUser: boolean;
+}
+
+export interface FileAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  /** base64 data URL for preview / upload. */
+  dataUrl: string;
+  /** server attachment id once uploaded. */
+  storageId?: string;
+  /** true when upload has completed. */
+  uploaded?: boolean;
+}
+
+export type ChatView = 'sessions' | 'chat';
+export type SessionListTab = 'agent_x' | 'crew_private';
+
+export function upsertDeepSearchPartEntry(parts: PartEntry[], payload: Parameters<typeof upsertDeepSearchPart>[1]): PartEntry[] {
+  return upsertDeepSearchPart(parts as MessagePart[], payload) as PartEntry[];
 }

@@ -88,6 +88,7 @@ const SAFE_PARALLEL = new Set([
   'memory_search',
   'memory_recall',
   'memory_fabric_search',
+  'knowledge_search',
   'rag_search',
   'system_info',
   'system_which',
@@ -208,7 +209,7 @@ export class ParallelClassifier {
       return ParallelMode.PATH_SCOPED;
     }
 
-    if (tool.tool.id.startsWith('integration__') || tool.tool.id.startsWith('integration:')) {
+    if (tool.tool.id.startsWith('integration__')) {
       return ParallelMode.INTEGRATION_CHECK;
     }
 

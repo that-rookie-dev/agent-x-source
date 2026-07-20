@@ -94,7 +94,7 @@ const voiceDownloadedAssetSchema = z.object({
     'vad-model',
     'helper-binary',
   ]),
-  engine: z.enum(['faster-whisper', 'kokoro', 'styletts2']).optional(),
+  engine: z.enum(['faster-whisper', 'kokoro']).optional(),
   version: z.string().optional(),
   installedAt: z.string(),
   sizeBytes: z.number().optional(),
@@ -107,6 +107,13 @@ export const voiceConfigSchema = z.object({
     web: z.enum(['off', 'push-to-talk', 'duplex']).optional(),
     channels: z.enum(['off', 'voice-notes']).optional(),
   }).optional(),
+  engine: z.enum(['stt_llm_tts', 'realtime_xai']).optional(),
+  xai: z.object({
+    apiKey: z.string().optional(),
+    model: z.string().optional(),
+    voice: z.string().optional(),
+    baseUrl: z.string().optional(),
+  }).optional(),
   stt: z.object({
     engine: z.literal('faster-whisper').default('faster-whisper'),
     modelId: z.string().optional(),
@@ -114,7 +121,7 @@ export const voiceConfigSchema = z.object({
     device: z.enum(['auto', 'cpu', 'cuda']).optional(),
   }).optional(),
   tts: z.object({
-    engine: z.enum(['kokoro', 'styletts2']).default('kokoro'),
+    engine: z.literal('kokoro').default('kokoro'),
     voiceId: z.string().optional(),
     style: z.object({
       emotion: z.string().optional(),
@@ -135,6 +142,11 @@ export const voiceConfigSchema = z.object({
     phrase: z.string().optional(),
   }).optional(),
   downloadedAssets: z.array(voiceDownloadedAssetSchema).optional(),
+  provider: z.object({
+    activeProvider: z.string().optional(),
+    activeModel: z.string().optional(),
+    activeProfile: z.string().optional(),
+  }).optional(),
 }).optional();
 
 export const featureRoutingConfigSchema = z.object({

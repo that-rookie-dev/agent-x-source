@@ -7,7 +7,9 @@ export type AutomationNotifyChannel = 'in_app' | 'desktop' | 'telegram' | 'slack
 export type NotificationKind =
   | 'automation_success'
   | 'automation_failure'
-  | 'automation_scheduled';
+  | 'automation_scheduled'
+  | 'background_task_complete'
+  | 'background_task_failed';
 
 export interface AutomationRegisterInput {
   title: string;

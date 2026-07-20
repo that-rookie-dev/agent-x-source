@@ -12,7 +12,6 @@ import { parseMcpImportConfig } from '../src/integrations/mcp-config-import.js';
 import { expandStdioArgs } from '../src/integrations/stdio-args.js';
 import { createGoogleDriveBridgeTools } from '../src/integrations/mcp/google-drive-bridge.js';
 import { formatStdioSpawnError, resolveStdioCommand } from '@agentx/shared';
-import { isToolAllowedInPlanMode } from '../src/agent/plan-mode-utils.js';
 import {
   canUseHubBrowserOAuth,
   requiresRemoteUrlForHubOAuth,
@@ -38,9 +37,6 @@ describe('action-classifier', () => {
     expect(isReadOnlyIntegrationTool('booking_login_status', booking)).toBe(true);
     expect(isReadOnlyIntegrationTool('booking_search', booking)).toBe(true);
     expect(isReadOnlyIntegrationTool('booking_login', booking)).toBe(false);
-    expect(isToolAllowedInPlanMode('integration__booking-com__booking_search')).toBe(true);
-    expect(isToolAllowedInPlanMode('integration__booking-com__booking_status')).toBe(true);
-    expect(isToolAllowedInPlanMode('integration__booking-com__booking_login')).toBe(true);
   });
 
   it('round-trips integration tool ids', () => {
@@ -49,12 +45,6 @@ describe('action-classifier', () => {
     expect(parseIntegrationToolId(id)).toEqual({ providerId: 'github', toolName: 'create_issue' });
   });
 
-  it('parses legacy colon integration tool ids', () => {
-    expect(parseIntegrationToolId('integration:github:create_issue')).toEqual({
-      providerId: 'github',
-      toolName: 'create_issue',
-    });
-  });
 });
 
 describe('tool-adapter', () => {
@@ -95,15 +85,6 @@ describe('mcp import', () => {
       },
     });
     expect(config.mcpServers.fetch?.command).toBe('npx');
-  });
-});
-
-describe('plan-mode integration tools', () => {
-  it('allows create/send integration tools in plan mode; blocks edit/delete', () => {
-    expect(isToolAllowedInPlanMode('integration__fetch__fetch')).toBe(true);
-    expect(isToolAllowedInPlanMode('integration__slack__send_message')).toBe(true);
-    expect(isToolAllowedInPlanMode('integration__github__create_issue')).toBe(true);
-    expect(isToolAllowedInPlanMode('integration__github__delete_issue')).toBe(false);
   });
 });
 

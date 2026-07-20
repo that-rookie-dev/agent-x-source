@@ -1,6 +1,9 @@
 export { IntegrationHub, createCustomProvider } from './integration-hub.js';
 export { IntegrationConnectionStore } from './connection-store.js';
 export { IntegrationAuditLog } from './audit-log.js';
+export { cleanMcpErrorMessage } from './clean-mcp-error.js';
+export { IntegrationNotificationStore } from './notification-store.js';
+export { benchmarkReadTools, summarizeBenchmarks } from './tool-benchmark.js';
 export { McpSession } from './mcp/client.js';
 export { IntegrationConnectionManager } from './mcp/connection-manager.js';
 export { adaptMcpTool, adaptMcpTools } from './mcp/tool-adapter.js';

@@ -4,7 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
-import { getLogger } from '@agentx/shared';
+import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
 import { createGroq } from '@ai-sdk/groq';
 import { createCohere } from '@ai-sdk/cohere';
 import { createMistral } from '@ai-sdk/mistral';
@@ -12,16 +12,19 @@ import { createXai } from '@ai-sdk/xai';
 import { createPerplexity } from '@ai-sdk/perplexity';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
-import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload } from '@agentx/shared';
-import { normalizeAskClarificationArgs } from '@agentx/shared';
-import { isToolAllowedInPlanMode, buildPlanModeRestrictedToolHint, type PlanGatePromptProfile } from './plan-mode-utils.js';
-import { isCompactToolAllowed } from './context-profile.js';
+import type { AgentXConfig, EngineEvent, ToolResult, CompletionChunk, CompletionToolCall, QuestionnairePayload, ToolDefinition } from '@agentx/shared';
+import { normalizeAskClarificationArgs, shouldUseQuestionnaireClarification, TEXT_CLARIFICATION_REJECTED_MESSAGE } from '@agentx/shared';
 import {
   shouldDisclose,
   getCoreTools,
   createBridgeTools,
   resolveBridgeToolCall,
 } from '../tools/ProgressiveDisclosure.js';
+import {
+  resolveCommandCodeAnthropicBaseUrl,
+  resolveCommandCodeModelProtocol,
+  resolveCommandCodeOpenAiBaseUrl,
+} from '@agentx/shared';
 import { resolveGoogleNativeBaseUrl } from '../providers/google/gemini-metadata.js';
 
 /** Defaults for OpenAI-compatible chat paths only. Native SDK providers use their package defaults. */
@@ -76,7 +79,7 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return google(modelId);
     }
     case 'azure': {
-      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...((providerCfg as any)?.azureResourceName ? { resourceName: (providerCfg as any).azureResourceName } : {}) });
+      const azure = createAzure({ apiKey, baseURL: baseURL || '', ...(providerCfg?.azureResourceName ? { resourceName: providerCfg.azureResourceName } : {}) });
       return azure(modelId);
     }
     case 'groq': {
@@ -105,15 +108,38 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
       return perplexity(modelId);
     }
     // OpenAI-compatible vendors & gateways (documented base URLs — never native vendor SDKs)
+    case 'opencode':
+    case 'opencode-zen':
     case 'ollama':
     case 'lmstudio':
     case 'deepseek':
     case 'together':
     case 'moonshot':
-    case 'fireworks':
-    case 'opencode':
-    case 'opencode-zen':
-    case 'commandcode':
+    case 'fireworks': {
+      const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
+      const compat = createOpenAICompatible({
+        name: activeProvider,
+        apiKey,
+        baseURL: resolvedUrl,
+      });
+      return compat(modelId);
+    }
+    case 'commandcode': {
+      const protocol = resolveCommandCodeModelProtocol(modelId);
+      if (protocol === 'anthropic-messages') {
+        const anthropic = createAnthropic({
+          apiKey,
+          baseURL: resolveCommandCodeAnthropicBaseUrl(baseURL),
+        });
+        return anthropic(modelId);
+      }
+      const compat = createOpenAICompatible({
+        name: 'commandcode',
+        apiKey,
+        baseURL: resolveCommandCodeOpenAiBaseUrl(baseURL),
+      });
+      return compat(modelId);
+    }
     default: {
       const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
       const compat = createOpenAICompatible({
@@ -190,8 +216,9 @@ export function normalizeJsonSchemaNode(node: unknown, propName?: string): Schem
   }
 
   for (const combiner of ['oneOf', 'anyOf', 'allOf'] as const) {
-    if (Array.isArray(out[combiner])) {
-      out[combiner] = (out[combiner] as unknown[]).map((entry, index) =>
+    const combinerVal = out[combiner];
+    if (Array.isArray(combinerVal)) {
+      out[combiner] = combinerVal.map((entry, index) =>
         normalizeJsonSchemaNode(entry, propName ? `${propName}_${combiner}_${index}` : undefined),
       );
     }
@@ -213,41 +240,51 @@ export function convertToJsonSchema(schema: unknown): Record<string, unknown> {
   return { type: 'object', properties: {}, required: [], additionalProperties: false };
 }
 
+export interface AiSdkToolExecutor {
+  execute: (toolId: string, args: Record<string, unknown>, sessionId: string, options?: { signal?: AbortSignal }) => Promise<ToolResult>;
+  setToolOutputHandler?: (handler: (output: string) => void) => void;
+  isTurnAborted: () => boolean;
+  shouldDisclose?: (toolCount: number) => boolean;
+  getCoreTools?: (tools: ToolDefinition[]) => ToolDefinition[];
+  createBridgeTools?: () => ToolDefinition[];
+  resolveBridgeToolCall?: (
+    toolName: string,
+    args: Record<string, unknown>,
+    allTools: ToolDefinition[],
+  ) => { resolved: ToolDefinition | null; resolvedArgs: Record<string, unknown>; error?: string };
+}
+
 export function createAiSdkTools(
   toolRegistry: ToolRegistry,
-  toolExecutor: { execute: (toolId: string, args: Record<string, unknown>, sessionId: string) => Promise<ToolResult>; setToolOutputHandler?: (handler: (output: string) => void) => void; isTurnAborted: () => boolean },
+  toolExecutor: AiSdkToolExecutor,
   sessionId: string,
   emit: (event: EngineEvent) => void,
   waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>,
-  planMode: boolean = false,
-  waitForModeEscalation?: (toolId: string, reason: string) => Promise<boolean>,
   onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
-  promptProfile: PlanGatePromptProfile = 'default',
-  compactContext = false,
 ): ToolSet {
   const allTools = toolRegistry.list();
   const tools: ToolSet = {};
+  let filteredTools = allTools;
 
-  // ─── Plan Mode: strict allowlist — read/explore only; plans stay in chat ───
-  let filteredTools = planMode
-    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
-    : allTools;
-
-  if (compactContext) {
-    filteredTools = filteredTools.filter((t) => isCompactToolAllowed(t.id, planMode));
-  } else if (shouldDisclose(filteredTools.length)) {
-    // Progressive disclosure: expose core tools + bridge (search/describe/call)
-    const core = getCoreTools(filteredTools);
-    const bridges = createBridgeTools();
-    const coreIds = new Set(core.map((t) => t.id));
-    filteredTools = [...core, ...bridges.filter((b) => !coreIds.has(b.id))];
+  if (toolExecutor.shouldDisclose?.(filteredTools.length) ?? shouldDisclose(filteredTools.length)) {
+    // Progressive disclosure hides the large builtin catalog behind tool_search, but
+    // connected MCP integrations must stay directly callable — otherwise the model is
+    // told Maps/Gmail/etc. are "not in the active toolset" and falls back to web search.
+    const core = (toolExecutor.getCoreTools?.(filteredTools) ?? getCoreTools(filteredTools));
+    const bridges = (toolExecutor.createBridgeTools?.() ?? createBridgeTools());
+    const integrationTools = filteredTools.filter((t) => t.id.startsWith('integration__'));
+    const seen = new Set<string>();
+    filteredTools = [];
+    for (const toolDef of [...core, ...bridges, ...integrationTools]) {
+      if (seen.has(toolDef.id)) continue;
+      seen.add(toolDef.id);
+      filteredTools.push(toolDef);
+    }
   }
 
   // Full catalog for tool_search / tool_describe / tool_call resolution
-  const discoveryCatalog = planMode
-    ? allTools.filter((t) => isToolAllowedInPlanMode(t.id))
-    : allTools;
+  const discoveryCatalog = allTools;
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name
@@ -261,19 +298,33 @@ export function createAiSdkTools(
   }
 
   // Helpers shared by dedicated tools and tool_call bridge (avoids toolkit stubs)
+  // Guard: only one ask_clarification per turn — additional calls in the same turn
+  // would overwrite the resolve/reject handlers and lose the first promise.
+  let clarificationInProgress = false;
   const runAskClarification = async (args: Record<string, unknown>): Promise<string> => {
-    const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
-    const response = await waitForClarification(questionnaire);
-    return `User response: ${response}`;
+    if (clarificationInProgress) {
+      return '[TOOL ERROR] Another clarification is already in progress this turn. Ask one question at a time — wait for the user to answer before asking the next.';
+    }
+    clarificationInProgress = true;
+    try {
+      const questionnaire = normalizeAskClarificationArgs(args as import('@agentx/shared').AskClarificationToolArgs);
+      if (!shouldUseQuestionnaireClarification(questionnaire)) {
+        return `[TOOL ERROR] ${TEXT_CLARIFICATION_REJECTED_MESSAGE}`;
+      }
+      const response = await waitForClarification(questionnaire);
+      return `User response: ${response}`;
+    } finally {
+      clarificationInProgress = false;
+    }
   };
 
   const runDelegateToSubagent = async (args: Record<string, unknown>): Promise<string> => {
-    const mission = (args as any).mission || '';
-    const items = Array.isArray((args as any).items) ? (args as any).items as string[] : undefined;
-    const toolsList = Array.isArray((args as any).tools) ? (args as any).tools : undefined;
-    const timeout = typeof (args as any).timeout === 'number' ? (args as any).timeout : 120_000;
-    const background = (args as any).background === true;
-    const batchSize = Math.max(1, Math.min(typeof (args as any).batchSize === 'number' ? (args as any).batchSize : 10, 50));
+    const mission = typeof args.mission === 'string' ? args.mission : '';
+    const items = Array.isArray(args.items) ? args.items as string[] : undefined;
+    const toolsList = Array.isArray(args.tools) ? args.tools as string[] : undefined;
+    const timeout = typeof args.timeout === 'number' ? args.timeout : 120_000;
+    const background = args.background === true;
+    const batchSize = Math.max(1, Math.min(typeof args.batchSize === 'number' ? args.batchSize : 10, 50));
 
     if (items && items.length > 0) {
       const chunks: string[][] = [];
@@ -333,7 +384,7 @@ export function createAiSdkTools(
       tools[toolDef.id] = tool({
         description: toolDef.modelDescription,
         inputSchema: jsonSchema(schema),
-        async execute(args) {
+        async execute(args, options) {
           const startTime = Date.now();
           const callId = `tc-${toolDef.id}-${startTime}`;
           emit({
@@ -345,10 +396,16 @@ export function createAiSdkTools(
             callId,
           });
 
-          const resolved = resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog);
+          const resolved = (toolExecutor.resolveBridgeToolCall?.(toolDef.id, args as Record<string, unknown>, discoveryCatalog) ??
+            resolveBridgeToolCall(toolDef.id, args as Record<string, unknown>, discoveryCatalog));
+
+          if (resolved.error) {
+            emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output: resolved.error }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+            return `[TOOL ERROR] ${resolved.error}`;
+          }
 
           if (toolDef.id === 'tool_call') {
-            if (resolved.error || !resolved.resolved) {
+            if (!resolved.resolved) {
               const output = resolved.error ?? 'Tool not found';
               emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
               return `[TOOL ERROR] ${output}`;
@@ -372,7 +429,7 @@ export function createAiSdkTools(
               emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
               return output;
             }
-            const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId);
+            const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId, { signal: options?.abortSignal });
             onToolExecuted?.(targetId, result.success, result.output, Date.now() - startTime, resolved.resolvedArgs);
             emit({ type: 'tool_complete', tool: toolDef.id, result, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
             return result.success ? result.output : `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
@@ -426,7 +483,7 @@ export function createAiSdkTools(
            });
 
            try {
-             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
+             const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId, { signal: options?.abortSignal });
              const elapsed = Date.now() - startTime;
              activeOutputCalls.delete(callId);
              onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
@@ -441,43 +498,6 @@ export function createAiSdkTools(
               });
 
                if (!result.success) {
-                 if (result.error === 'PERMISSION_DENIED' || result.error === 'MODE_RESTRICTED') {
-                   emit({ type: 'mode_restricted', tool: toolDef.id, error: result.error, message: result.output });
-
-                   if (result.error === 'MODE_RESTRICTED' && waitForModeEscalation) {
-                     emit({
-                       type: 'mode_escalation_required',
-                       tool: toolDef.id,
-                       reason: result.output,
-                       pendingAction: `${toolDef.id}(${argsStr})`,
-                     });
-                     const accepted = await waitForModeEscalation(toolDef.id, result.output);
-                     if (accepted) {
-                       emit({ type: 'mode_escalation_accepted', tool: toolDef.id });
-                       const retryResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId);
-                       const retryElapsed = Date.now() - startTime;
-                       onToolExecuted?.(toolDef.id, retryResult.success, retryResult.output, retryElapsed, args as Record<string, unknown>);
-                        emit({
-                          type: 'tool_complete',
-                          tool: toolDef.id,
-                          result: retryResult,
-                          elapsed: retryElapsed,
-                          args: args as Record<string, unknown>,
-                          callId,
-                          message: retryResult.success ? `✅ ${toolDef.name} completed after mode switch` : `❌ ${toolDef.name} still failed`,
-                        });
-                       if (retryResult.success) return retryResult.output;
-                       return `[TOOL ERROR: ${retryResult.error || 'Unknown'}] ${retryResult.output}`;
-                     }
-                     emit({ type: 'mode_escalation_declined', tool: toolDef.id });
-                     throw new Error('MODE_ESCALATION_DECLINED');
-                   }
-
-                   if (result.error === 'MODE_RESTRICTED') {
-                     return buildPlanModeRestrictedToolHint(toolDef.id, result.output, promptProfile);
-                   }
-                   return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
-                 }
                  return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
                }
              return result.output;
@@ -531,6 +551,7 @@ export async function* aiSdkStream(
       })),
       ...(tools ? { tools, stopWhen: stepCountIs(100), toolChoice: 'auto' as const } : {}),
       temperature: 0,
+      maxOutputTokens: resolveMaxOutputTokens(config.maxOutputTokens),
       abortSignal,
     });
 
@@ -541,16 +562,16 @@ export async function* aiSdkStream(
       switch (chunk.type) {
         case 'text-delta':
           textChunkCount++;
-          yield { type: 'text_delta', content: (chunk as any).textDelta || (chunk as any).text || '' };
+          yield { type: 'text_delta', content: chunk.text };
           break;
 
         case 'tool-call': {
           const tc: CompletionToolCall = {
-            id: (chunk as any).toolCallId,
+            id: chunk.toolCallId,
             type: 'function',
             function: {
-              name: (chunk as any).toolName,
-              arguments: JSON.stringify((chunk as any).args || (chunk as any).input || {}),
+              name: chunk.toolName,
+              arguments: JSON.stringify(chunk.input || {}),
             },
           };
           yield { type: 'tool_call_delta', toolCall: tc };
@@ -558,7 +579,7 @@ export async function* aiSdkStream(
         }
 
         case 'finish': {
-          const usage = (chunk as any).usage || (chunk as any).totalUsage;
+          const usage = chunk.totalUsage;
           if (usage) {
             yield {
               type: 'done',
@@ -572,7 +593,7 @@ export async function* aiSdkStream(
         }
 
         case 'error':
-          throw new Error(String((chunk as any).error || 'AI SDK stream error'));
+          throw new Error(String(chunk.error || 'AI SDK stream error'));
       }
     }
     if (chunkCount === 0) {

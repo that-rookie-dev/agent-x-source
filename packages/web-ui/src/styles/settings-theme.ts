@@ -56,9 +56,6 @@ export const settingsScanlineSx: SxProps<Theme> = {
     `repeating-linear-gradient(0deg, transparent, transparent 2px, ${alphaColor(colors.accent.blue, 0.12)} 2px, ${alphaColor(colors.accent.blue, 0.12)} 3px)`,
 };
 
-/** Kept for call-site compatibility — grid texture removed (was distracting). */
-export const settingsGridBgSx: SxProps<Theme> = {};
-
 export function settingsCardSx(accent?: string, active?: boolean): SxProps<Theme> {
   const borderColor = active && accent ? `${alphaColor(accent, '66')}` : settingsTheme.border.default;
   return {

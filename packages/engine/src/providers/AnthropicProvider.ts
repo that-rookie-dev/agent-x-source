@@ -4,6 +4,7 @@ import type {
   ModelInfo,
   ProviderId,
 } from '@agentx/shared';
+import { MIN_OUTPUT_TOKENS } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
 
 export class AnthropicProvider implements ProviderInterface {
@@ -29,7 +30,7 @@ export class AnthropicProvider implements ProviderInterface {
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1,
+          max_tokens: MIN_OUTPUT_TOKENS,
           messages: [{ role: 'user', content: 'hi' }],
         }),
       });

@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -10,7 +10,6 @@ import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 import { crewTheme } from '../../styles/crew-theme';
 import { colors, alphaColor } from '../../theme';
 import { CrewRecruitCard } from './CrewRecruitCard';
-import { PlanModeContext } from '../../chat/PlanModeContext';
 
 export interface CrewRosterPickerRecord {
   id: string;
@@ -130,7 +129,6 @@ export function CrewRosterPickerMessage({
   onSkip,
   onViewDossier,
 }: CrewRosterPickerMessageProps) {
-  const planMode = useContext(PlanModeContext);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dismissSession, setDismissSession] = useState(false);
   const [localResolved, setLocalResolved] = useState<{
@@ -231,11 +229,6 @@ export function CrewRosterPickerMessage({
         <Typography sx={{ fontSize: '0.62rem', color: crewTheme.text.secondary, lineHeight: 1.5 }}>
           Select specialists to add to this session, or continue with Agent-X only.
         </Typography>
-        {planMode && (
-          <Typography sx={{ fontSize: '0.58rem', color: crewTheme.text.dim, mt: 0.5 }}>
-            Plan mode: crew will contribute domain plans in chat (read-only).
-          </Typography>
-        )}
       </Box>
 
       <Box sx={{

@@ -37,8 +37,19 @@ export function IntegrationAuditPanel() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   return (
-    <Box sx={{ mb: 3, p: 2, borderRadius: 1.5, border: `1px solid ${settingsTheme.border.default}`, bgcolor: settingsTheme.bg.panel }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+    <Box sx={{
+      flex: 1,
+      minHeight: 0,
+      height: '100%',
+      p: 2,
+      borderRadius: 1.5,
+      border: `1px solid ${settingsTheme.border.default}`,
+      bgcolor: settingsTheme.bg.panel,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+    }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, flexShrink: 0 }}>
         <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, ...settingsMonoSx }}>
           Audit log
         </Typography>
@@ -52,7 +63,7 @@ export function IntegrationAuditPanel() {
       ) : entries.length === 0 ? (
         <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>No integration tool calls yet.</Typography>
       ) : (
-        <Box sx={{ maxHeight: 240, overflow: 'auto' }}>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
           {entries.slice().reverse().map((entry) => (
             <Box
               key={entry.id}

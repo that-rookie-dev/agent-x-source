@@ -9,13 +9,10 @@ dependencies = []
 voice = [
   "faster-whisper",
   "huggingface-hub",
-  "kokoro",
+  "kokoro-onnx",
   "silero-vad",
   "numpy",
   "soundfile",
-]
-styletts2 = [
-  "styletts2",
 ]
 dev = [
   "pytest",

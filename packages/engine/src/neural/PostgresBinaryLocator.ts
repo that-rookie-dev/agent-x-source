@@ -53,7 +53,8 @@ function fallbackPackageNames(primary: string): string[] {
 }
 
 function binaryDirCandidates(packageName: string): string[] {
-  const resourcesPath = (process as any).resourcesPath ?? '';
+  // process.resourcesPath is only defined in Electron-packaged builds.
+  const resourcesPath = (process as unknown as { resourcesPath?: string }).resourcesPath ?? '';
   const installDir = process.env['AGENTX_INSTALL_DIR'] ?? '';
   const execDir = dirname(process.execPath);
 

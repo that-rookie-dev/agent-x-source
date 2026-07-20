@@ -42,8 +42,8 @@ export async function scriptRun(args: Record<string, unknown>, context: ToolExec
   const executor = getScriptRPC();
 
   const result = mode === 'eval' && script.length < 2000
-    ? executor.evalSnippet(script, language, rpcArgs, { timeout, scopePath: context.scopePath })
-    : executor.executeScript(script, language, rpcArgs, { timeout, scopePath: context.scopePath });
+    ? await executor.evalSnippet(script, language, rpcArgs, { timeout, scopePath: context.scopePath })
+    : await executor.executeScript(script, language, rpcArgs, { timeout, scopePath: context.scopePath });
 
   return formatResult(result);
 }
@@ -58,7 +58,7 @@ export async function nodeRpc(args: Record<string, unknown>, context: ToolExecut
   const rpcArgs = (args['args'] as Record<string, unknown>) ?? {};
   const timeout = (args['timeout'] as number) || 60_000;
   const executor = getScriptRPC();
-  const result = executor.executeScript(script, language, rpcArgs, { timeout, scopePath: context.scopePath });
+  const result = await executor.executeScript(script, language, rpcArgs, { timeout, scopePath: context.scopePath });
   return formatResult(result);
 }
 
@@ -70,6 +70,6 @@ export async function pythonRpc(args: Record<string, unknown>, _context: ToolExe
   const rpcArgs = (args['args'] as Record<string, unknown>) ?? {};
   const timeout = (args['timeout'] as number) || 60_000;
   const executor = getPythonRPC();
-  const result = executor.executeScript(script, rpcArgs, { timeout });
+  const result = await executor.executeScript(script, rpcArgs, { timeout });
   return formatResult({ ...result, runtime: 'python' });
 }

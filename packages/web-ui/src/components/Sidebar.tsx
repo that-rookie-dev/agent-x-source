@@ -3,20 +3,21 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import Divider from '@mui/material/Divider';
+import DashboardIcon from '@mui/icons-material/Dashboard';
 import ChatIcon from '@mui/icons-material/Chat';
+import PhoneInTalkIcon from '@mui/icons-material/PhoneInTalk';
 import { IconSparkles, tablerNavProps } from '../icons/tabler';
 // Hidden until wired — see source/MILESTONE.md
 // import ExtensionIcon from '@mui/icons-material/Extension';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-// import CellTowerIcon from '@mui/icons-material/CellTower';
 import SettingsIcon from '@mui/icons-material/Settings';
-import StorageIcon from '@mui/icons-material/Storage';
 import GroupsIcon from '@mui/icons-material/Groups';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
-import ViewQuiltIcon from '@mui/icons-material/ViewQuilt';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
@@ -24,11 +25,11 @@ import Badge from '@mui/material/Badge';
 import { useColorScheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
 import { auth, setAuthToken } from '../api';
-import { useApp } from '../store/AppContext';
+import { invalidateApiCache, invalidateCoreSessionCache } from '../perf/api-cache';
+import { useAppCore } from '../store/AppContext';
 import { colors } from '../theme';
 import { layout } from '../styles/layout';
 import type { PanelId } from '../pages/Console';
-import { useNeuralBrainSupported } from '../hooks/useSystemCapabilities';
 
 interface Props {
   active: PanelId;
@@ -38,28 +39,28 @@ interface Props {
 }
 
 const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
+  { id: 'dashboard', icon: <DashboardIcon sx={{ fontSize: 16 }} />, label: 'Dashboard' },
   { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: 'Agent-X' },
   { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
+  { id: 'calls', icon: <PhoneInTalkIcon sx={{ fontSize: 16 }} />, label: 'Calls' },
   { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },
-  { id: 'canvases', icon: <ViewQuiltIcon sx={{ fontSize: 16 }} />, label: 'Canvases' },
+  { id: 'markdown', icon: <ArticleOutlinedIcon sx={{ fontSize: 16 }} />, label: 'Markdown' },
   { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
   { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
-  { id: 'rag-studio', icon: <StorageIcon sx={{ fontSize: 16 }} />, label: 'RAG Studio' },
+  { id: 'knowledge-base', icon: <LibraryBooksIcon sx={{ fontSize: 16 }} />, label: 'Knowledge Base' },
   { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
   { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
   // Hidden until wired — see source/MILESTONE.md
   // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
-  // { id: 'channels', icon: CellTowerIcon, label: 'Channels' },
 ];
 
 const MODE_CYCLE = ['dark', 'light', 'system'] as const;
 
 export function Sidebar({ active, onNavigate, highlightCrews, unreadNotificationCount = 0 }: Props) {
-  const { setAuthenticated } = useApp();
+  const { setAuthenticated } = useAppCore();
   const navigate = useNavigate();
-  const neuralBrainSupported = useNeuralBrainSupported();
   const { mode, setMode } = useColorScheme();
 
   const currentMode = mode ?? 'dark';
@@ -74,13 +75,11 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
       : <DarkModeOutlinedIcon sx={{ fontSize: 14 }} />;
   const modeLabel = `Theme: ${currentMode}`;
 
-  const navItems = NAV_ITEMS.filter((item) =>
-    item.id !== 'rag-studio' || neuralBrainSupported,
-  );
-
   const handleLogout = async () => {
     try { await auth.logout(); } catch { /* ignore */ }
     setAuthToken(null);
+    invalidateApiCache();
+    invalidateCoreSessionCache();
     setAuthenticated(false);
     navigate('/login');
   };
@@ -99,7 +98,7 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
       </Tooltip>
 
       {/* Nav items */}
-      {navItems.map((item) => (
+      {NAV_ITEMS.map((item) => (
         <Tooltip key={item.id} title={item.label} placement="right">
           <IconButton
             onClick={() => onNavigate(item.id)}

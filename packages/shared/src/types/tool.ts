@@ -1,4 +1,5 @@
-import type { ParallelMode } from './communication.js';
+import type { ParallelMode, TurnAttachment } from './communication.js';
+import type { AgentXConfig } from './config.js';
 
 export interface ToolDefinition {
   id: string;
@@ -78,8 +79,26 @@ export interface ToolExecutionContext {
   /** Drives memory fabric read/write scoping for tools. */
   contextKind?: SessionContextKind;
   timeout: number;
-  mode?: 'agent' | 'plan';
   /** Voice comms turn — tighter tool time budgets. */
   voiceTurn?: boolean;
+  /** Originating messaging channel for this turn (telegram, slack, etc.). */
+  sourceChannel?: string;
+  /** Originating channel thread / chat / recipient id (e.g. Telegram chat_id, Slack channel, email address). */
+  sourceThreadId?: string;
+  /** Originating channel message id (e.g. Slack thread_ts, email Message-Id) used for threaded replies. */
+  sourceMessageId?: string;
+  /** Decrypted runtime Agent-X configuration (channels, provider, etc.). */
+  config?: AgentXConfig;
   onOutput?: (output: string) => void;
+  /** Abort signal that should be checked by long-running tool handlers. */
+  signal?: AbortSignal;
+  /** Register a file as an attachment that will be shown in the chat. */
+  registerAttachment?: (opts: {
+    filename: string;
+    mimeType?: string;
+    originalPath?: string;
+    dataUrl?: string;
+    buffer?: Uint8Array | ArrayBuffer | Buffer;
+    source?: string;
+  }) => Promise<TurnAttachment>;
 }

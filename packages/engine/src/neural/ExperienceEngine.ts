@@ -1,4 +1,4 @@
-import { generateId } from '@agentx/shared';
+import { generateId, getLogger } from '@agentx/shared';
 
 export interface ExperienceEntry {
   id: string;
@@ -106,9 +106,11 @@ export class ExperienceEngine {
     const risky = lowConf.filter(e => e.confidence < 0.3 && e.category === 'tool_execution').slice(0, 3);
     if (risky.length === 0) return '';
 
-    const warnings = risky.map(e =>
-      `  - ${e.action}: confidence ${(e.confidence * 100).toFixed(0)}%. ${JSON.parse(e.learnings).slice(-1)[0] || 'Proceed with caution.'}`
-    ).join('\n');
+    const warnings = risky.map(e => {
+      let learnings: string[] = [];
+      try { learnings = JSON.parse(e.learnings); } catch (error) { getLogger().warn('EXPERIENCE_ENGINE', `Failed to parse learnings: ${error instanceof Error ? error.message : String(error)}`); }
+      return `  - ${e.action}: confidence ${(e.confidence * 100).toFixed(0)}%. ${learnings.slice(-1)[0] || 'Proceed with caution.'}`;
+    }).join('\n');
 
     return `[CAUTION]\nLow-confidence actions — verify before executing:\n${warnings}\n[/CAUTION]`;
   }

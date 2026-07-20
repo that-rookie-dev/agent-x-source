@@ -1,5 +1,6 @@
-import { execSync, spawn } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { IS_WINDOWS, getShellCommand, getProcessListCommand } from '../platform.js';
 import { DockerSandbox } from '../../sandbox/DockerSandbox.js';
@@ -10,6 +11,8 @@ import {
   untrackShellPid,
   validateCommandScope,
 } from '../shell-security.js';
+
+const execAsync = promisify(exec);
 
 let sandboxInstance: DockerSandbox | null = null;
 
@@ -66,7 +69,7 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
 
   const shell = getShellCommand(command);
   try {
-    const output = execSync(command, {
+    const { stdout, stderr } = await execAsync(command, {
       cwd,
       timeout,
       encoding: 'utf-8',
@@ -74,18 +77,18 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
       maxBuffer: 10 * 1024 * 1024,
       env: buildShellEnv(cwd),
     });
-    const trimmed = output.trim();
-    const truncated = trimmed.length > maxLength ? trimmed.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : trimmed;
+    const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
+    const truncated = combined.length > maxLength ? combined.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : combined;
     return { success: true, output: truncated };
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message: string; status?: number };
+    const err = error as { stdout?: string; stderr?: string; message: string; code?: number };
     const output = [err.stdout, err.stderr].filter(Boolean).join('\n').trim() || err.message;
     const truncated = output.length > maxLength ? output.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : output;
     return {
       success: false,
       output: truncated,
       error: 'EXEC_ERROR',
-      metadata: { exitCode: err.status },
+      metadata: { exitCode: err.code },
     };
   }
 }
@@ -136,7 +139,7 @@ export async function processKill(args: Record<string, unknown>): Promise<ToolRe
 
   try {
     if (IS_WINDOWS && signal === 'SIGTERM') {
-      execSync(`taskkill /PID ${pid} /F 2>nul`, { encoding: 'utf-8' });
+      await execAsync(`taskkill /PID ${pid} /F 2>nul`, { encoding: 'utf-8' });
     } else {
       process.kill(pid, signal);
     }
@@ -151,13 +154,13 @@ export async function processKill(args: Record<string, unknown>): Promise<ToolRe
 export async function processList(_args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   try {
     const cmd = getProcessListCommand();
-    const output = execSync(cmd, {
+    const { stdout } = await execAsync(cmd, {
       cwd: context.scopePath,
       encoding: 'utf-8',
       timeout: 5000,
       env: buildShellEnv(context.scopePath),
     });
-    return { success: true, output: output.trim() };
+    return { success: true, output: stdout.trim() };
   } catch (error) {
     return { success: false, output: `Failed to list processes: ${(error as Error).message}`, error: 'PS_ERROR' };
   }

@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { SxProps, Theme } from '@mui/material/styles';
 import { crewTheme } from '../../styles/crew-theme';
 import { MEDICAL_INFORMATIONAL_DISCLAIMER, crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
+import type { UIMessage } from '../../chat/types';
+import type { Crew } from '../../api';
 
 export const HAZARD_STRIPE_BG = `repeating-linear-gradient(
   -45deg,
@@ -116,8 +118,43 @@ export function MedicalProfileIdentityFrame({ children }: { children: React.Reac
   );
 }
 
+interface MedicalDisclaimerChatSessionStripProps {
+  isCrewPrivateSession: boolean;
+  crewPrivateHost: { name: string; callsign: string; title?: string } | null;
+  privateHostCrewId: string | null;
+  crewList: Crew[];
+  messages: UIMessage[];
+}
+
 /** Compact session chat strip: full-bleed hazard line + yellow disclaimer (below chat header). */
-export function MedicalDisclaimerChatSessionStrip() {
+function MedicalDisclaimerChatSessionStripComponent({
+  isCrewPrivateSession,
+  crewPrivateHost,
+  privateHostCrewId,
+  crewList,
+  messages,
+}: MedicalDisclaimerChatSessionStripProps) {
+  const show = useMemo(() => {
+    const rosterCrew = privateHostCrewId ? crewList.find((c) => c.id === privateHostCrewId) : undefined;
+    if (isCrewPrivateSession && crewPrivateHost) {
+      const catalogId = rosterCrew?.catalogId
+        ?? (crewPrivateHost.callsign ? `hub-${crewPrivateHost.callsign}` : undefined);
+      return crewRequiresMedicalDisclaimer({
+        catalogId,
+        crewId: rosterCrew?.id,
+        categoryId: rosterCrew?.categoryId,
+        requiresMedicalDisclaimer: rosterCrew?.requiresMedicalDisclaimer,
+      });
+    }
+    return messages.some((m) => {
+      if (m.role !== 'assistant' || !m.crew) return false;
+      const catalogId = m.crew.callsign ? `hub-${m.crew.callsign}` : undefined;
+      return crewRequiresMedicalDisclaimer({ catalogId, crewId: m.crew.crewId || undefined });
+    });
+  }, [isCrewPrivateSession, crewPrivateHost, privateHostCrewId, crewList, messages]);
+
+  if (!show) return null;
+
   return (
     <Box
       role="note"
@@ -137,6 +174,8 @@ export function MedicalDisclaimerChatSessionStrip() {
     </Box>
   );
 }
+
+export const MedicalDisclaimerChatSessionStrip = memo(MedicalDisclaimerChatSessionStripComponent);
 
 export interface MedicalDisclaimerBannerProps {
   compact?: boolean;

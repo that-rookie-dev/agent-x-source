@@ -13,7 +13,7 @@ export interface PdfParseResult {
 function installDomMatrixPolyfill(): void {
   if (typeof globalThis !== 'undefined' && !('DOMMatrix' in globalThis)) {
     try {
-      (globalThis as any).DOMMatrix = class DOMMatrix {
+      (globalThis as unknown as { DOMMatrix?: unknown }).DOMMatrix = class DOMMatrix {
         a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
         m11 = 1; m12 = 0; m13 = 0; m14 = 0;
         m21 = 0; m22 = 1; m23 = 0; m24 = 0;
@@ -54,9 +54,15 @@ function installDomMatrixPolyfill(): void {
 }
 installDomMatrixPolyfill();
 
+/** Minimal typed view of the pdfjs-dist module surface used by parsePdf. */
+interface PdfjsModule {
+  getDocument: (params: { data: Uint8Array; useSystemFonts?: boolean }) => { promise: Promise<{ numPages: number; getPage: (i: number) => Promise<{ getTextContent: () => Promise<{ items: Array<Record<string, unknown>> }> }> }> };
+  GlobalWorkerOptions: { workerSrc: string };
+}
+
 export async function parsePdf(buffer: Buffer | ArrayBuffer): Promise<PdfParseResult> {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const getDoc = (pdfjs as any).getDocument;
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs') as unknown as PdfjsModule;
+  const getDoc = pdfjs.getDocument;
 
   // In a Node.js (non-browser) environment, pdfjs-dist tries to set up a
   // "fake worker" on the main thread. It dynamically imports pdf.worker.mjs
@@ -68,7 +74,7 @@ export async function parsePdf(buffer: Buffer | ArrayBuffer): Promise<PdfParseRe
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
     const workerModulePath = req.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
-    (pdfjs as any).GlobalWorkerOptions.workerSrc = workerUrl.pathToFileURL(workerModulePath).href;
+    pdfjs.GlobalWorkerOptions.workerSrc = workerUrl.pathToFileURL(workerModulePath).href;
   } catch { /* best-effort — if this fails, pdfjs will try its default resolution */ }
 
   const data = new Uint8Array(buffer);
@@ -80,7 +86,7 @@ export async function parsePdf(buffer: Buffer | ArrayBuffer): Promise<PdfParseRe
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const text = content.items
-      .map((item: any) => ('str' in item ? item.str : ''))
+      .map((item: Record<string, unknown>) => ('str' in item ? String(item['str'] ?? '') : ''))
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();

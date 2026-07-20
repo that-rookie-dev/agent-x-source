@@ -73,12 +73,6 @@ const SERVICE_INTENTS: ReadonlyArray<{
     ],
   },
   {
-    category: 'slack',
-    providerIds: ['slack'],
-    reason: 'Slack request — requires Slack MCP',
-    patterns: [/\bslack\b/i],
-  },
-  {
     category: 'notion',
     providerIds: ['notion'],
     reason: 'Notion request — requires Notion MCP',
@@ -98,12 +92,6 @@ const SERVICE_INTENTS: ReadonlyArray<{
       /\b(?:my\s+)?github\b/i,
       /\bgithub\s+(?:repo|issue|pr|pull\s+request|notification)s?\b/i,
     ],
-  },
-  {
-    category: 'discord',
-    providerIds: ['discord'],
-    reason: 'Discord request — requires Discord MCP',
-    patterns: [/\bdiscord\b/i],
   },
   {
     category: 'cloud-drive',
@@ -145,6 +133,24 @@ const SERVICE_INTENTS: ReadonlyArray<{
     patterns: [
       /\b(?:my\s+)?(?:postgres|postgresql|redis)\s+(?:db|database|server|instance)\b/i,
     ],
+  },
+  {
+    category: 'slack',
+    providerIds: ['slack'],
+    reason: 'Slack request — requires Slack MCP',
+    patterns: [/\bslack\b/i],
+  },
+  {
+    category: 'discord',
+    providerIds: ['discord'],
+    reason: 'Discord request — requires Discord MCP',
+    patterns: [/\bdiscord\b/i],
+  },
+  {
+    category: 'telegram',
+    providerIds: ['telegram'],
+    reason: 'Telegram request — requires Telegram MCP',
+    patterns: [/\btelegram\b/i],
   },
 ];
 

@@ -11,7 +11,7 @@ import {
   type CrewCatalogStore,
   type CrewKeywordExpandFn,
 } from '@agentx/engine';
-import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry } from '@agentx/shared';
+import type { CrewMatchCandidate, CrewSuggestionEvaluation, CatalogEntry, TelemetryEvent } from '@agentx/shared';
 import { explicitCrewRequest } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { mapPrimaryCrewId } from './crew-roster-picker-api.js';
@@ -49,7 +49,7 @@ export function emitCrewSuggestionTelemetry(
       type: 'crew_suggestion',
       evaluation,
       message,
-    } as never);
+    } as unknown as TelemetryEvent);
   } catch { /* best-effort */ }
 }
 
@@ -176,7 +176,8 @@ export async function postCrewSuggestionEvaluate(req: Request, res: Response): P
       expandKeywords: resolveKeywordExpander(eng),
     });
 
-    emitCrewSuggestionTelemetry(eng, evaluation, text);
+    // In-chat roster picker uses this endpoint directly; telemetry would race the client gate
+    // and attach a second picker bubble via WebSocket.
     res.json(evaluation);
   } catch (e: unknown) {
     getLogger().error('CREW_SUGGESTION_EVALUATE', e instanceof Error ? e : String(e));

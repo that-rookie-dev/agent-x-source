@@ -13,6 +13,12 @@ export interface WizardProgress {
   skipLocalModel?: boolean;
   voiceCalibrated?: boolean;
   telegramLinked?: boolean;
+  personaName?: string;
+  personaDescription?: string;
+  personaCommStyle?: string;
+  personaDecisionStyle?: string;
+  personaDomain?: string;
+  personaTraits?: string[];
 }
 
 export function saveWizardProgress(data: WizardProgress): void {

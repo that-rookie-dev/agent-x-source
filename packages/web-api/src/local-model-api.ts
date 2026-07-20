@@ -510,7 +510,7 @@ async function downloadModel(model: any): Promise<void> {
         enableCpuMemArena: false,
         enableMemPattern: false,
       },
-    } as any);
+    });
 
     // Verify the downloaded file is complete
     const valid = await verifyModelCache(cacheDir, model, dtype);

@@ -1,10 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
 import MicIcon from '@mui/icons-material/Mic';
 import { colors } from '../theme';
-import { health, config as configApi } from '../api';
-import { useNeuralBrainSupported, useCapabilitiesReady } from '../hooks/useSystemCapabilities';
-import { useVoiceOptional } from './voice/VoiceProvider';
+import { health } from '../api';
+import { cachedApiCall } from '../perf/api-cache';
+import { useCapabilitiesReady } from '../hooks/useSystemCapabilities';
+import { useVoiceOptional, useVoiceCommsOptional } from './voice/VoiceProvider';
+import { useAppCore } from '../store/AppContext';
 
 const NEURON_URL = (import.meta.env.VITE_NEURON_URL as string) || '/neuron';
 
@@ -23,12 +25,38 @@ export interface FooterProps {
 export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
   const [version, setVersion] = useState('');
   const [zoomHint] = useState(getZoomShortcutHint);
-  const neuralBrainSupported = useNeuralBrainSupported();
   const capabilitiesReady = useCapabilitiesReady();
-  const [neuralBrainDisabled, setNeuralBrainDisabled] = useState(true);
+  const { config: appConfig } = useAppCore();
   const voice = useVoiceOptional();
+  const commsCtx = useVoiceCommsOptional();
+  const comms = commsCtx?.comms;
   const showFooterMic = Boolean(voice?.voiceReady && !voice.wakeWordEnabled);
   const showWakeIndicator = Boolean(voice?.voiceReady && voice.wakeWordEnabled);
+
+  // Derive voice status text from the dashboard comms session so the user can
+  // see the exact voice state (listening/thinking/speaking) from any page.
+  const voiceStatusText = useMemo(() => {
+    if (!voice?.voiceActive || !comms) return null;
+    const phase = comms.commsPhase;
+    if (phase === 'operator_record') return 'listening';
+    if (phase === 'agent_tx') return 'speaking';
+    if (phase === 'operator_stt' || phase === 'relay_process' || phase === 'agent_prep') return 'thinking';
+    if (phase === 'boot' || phase === 'link') return 'connecting';
+    return comms.isDuplex ? 'listening' : 'idle';
+  }, [voice?.voiceActive, comms?.commsPhase, comms?.isDuplex]);
+
+  const voiceStatusColor = (() => {
+    if (!voiceStatusText) return colors.text.dim;
+    if (voiceStatusText === 'listening') return colors.accent.green;
+    if (voiceStatusText === 'speaking') return colors.accent.purple;
+    if (voiceStatusText === 'thinking') return colors.accent.orange;
+    if (voiceStatusText === 'connecting') return colors.accent.orange;
+    return colors.text.secondary;
+  })();
+
+  // Neural brain is shown when it's enabled in config (regardless of hardware
+  // support — the user may have opted in on a low-RAM system).
+  const neuralBrainDisabled = appConfig ? appConfig.neuralBrain !== true : true;
 
   const footerMicColor = !voice
     ? colors.text.dim
@@ -51,19 +79,13 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
           : 'Voice idle';
 
   useEffect(() => {
-    health.check().then((h) => setVersion(h.version)).catch(() => {});
-    if (!capabilitiesReady) return;
-    if (!neuralBrainSupported) {
-      setNeuralBrainDisabled(true);
-      return;
-    }
-    configApi.get().then((cfg) => setNeuralBrainDisabled(cfg.neuralBrain === false)).catch(() => {
-      setNeuralBrainDisabled(false);
-    });
-  }, [neuralBrainSupported, capabilitiesReady]);
+    cachedApiCall('health', () => health.check(), 30_000)
+      .then((h) => setVersion(h.version))
+      .catch(() => {});
+  }, []);
 
   const handleBrainClick = () => {
-    const agentx = (window as unknown as { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
+    const agentx = (window as Window & { agentx?: { openInternalWindow?: (url: string) => Promise<boolean> } }).agentx;
     if (agentx?.openInternalWindow) {
       agentx.openInternalWindow(NEURON_URL);
     } else {
@@ -108,9 +130,20 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
         <span>🇮🇳 Made in India</span>
         <span style={{ color: colors.border.default }}>/</span>
         <span>
-          Created by Sivaprakash Rajendran (
-          <a href="mailto:sivaprakash.rajendran.316@gmail.com" style={{ color: colors.accent.blue, textDecoration: 'none' }}>sivaprakash.rajendran.316@gmail.com</a>
-          )
+          Created by{' '}
+          <Box
+            component="a"
+            href="mailto:sivaprakash.rajendran.316@gmail.com"
+            title="sivaprakash.rajendran.316@gmail.com"
+            sx={{
+              color: colors.text.secondary,
+              textDecoration: 'none',
+              transition: 'color 0.15s',
+              '&:hover': { color: colors.accent.blue, textDecoration: 'none' },
+            }}
+          >
+            Sivaprakash Rajendran
+          </Box>
         </span>
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
@@ -180,6 +213,18 @@ export function Footer({ onToggleLogs, logsOpen }: FooterProps) {
                 }}
               />
               <MicIcon sx={{ fontSize: 13 }} />
+              {voiceStatusText && (
+                <Box
+                  component="span"
+                  sx={{
+                    color: voiceStatusColor,
+                    transition: 'color 0.2s',
+                    minWidth: 52,
+                  }}
+                >
+                  {voiceStatusText}
+                </Box>
+              )}
             </Box>
             <span style={{ color: colors.border.default }}>/</span>
           </>

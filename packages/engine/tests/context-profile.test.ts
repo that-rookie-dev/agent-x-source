@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCompletionMessages,
   isCompactContextProfile,
-  isCompactToolAllowed,
   normalizeAiSdkMessages,
   normalizeAiSdkMessagesForProvider,
 } from '../src/agent/context-profile.js';
@@ -108,27 +107,4 @@ describe('normalizeAiSdkMessages', () => {
   });
 });
 
-describe('isCompactToolAllowed', () => {
-  it('allows core tools outside plan mode', () => {
-    expect(isCompactToolAllowed('file_read', false)).toBe(true);
-    expect(isCompactToolAllowed('shell_exec', false)).toBe(true);
-  });
 
-  it('blocks non-core tools', () => {
-    expect(isCompactToolAllowed('chart_generate', false)).toBe(false);
-  });
-
-  it('respects plan mode allowlist', () => {
-    expect(isCompactToolAllowed('file_read', true)).toBe(true);
-    // Plan mode blocks edit/delete tools; shell and reads remain available.
-    expect(isCompactToolAllowed('file_patch', true)).toBe(false);
-    expect(isCompactToolAllowed('shell_exec', true)).toBe(true);
-  });
-
-  it('allows integration tools in compact context', () => {
-    expect(isCompactToolAllowed('integration__gmail__search_emails', false)).toBe(true);
-    expect(isCompactToolAllowed('integration__gmail__send_email', true)).toBe(true);
-    expect(isCompactToolAllowed('integration__gmail__read_email', true)).toBe(true);
-    expect(isCompactToolAllowed('chart_generate', false)).toBe(false);
-  });
-});

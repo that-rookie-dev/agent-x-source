@@ -3,6 +3,7 @@ import type { Permission, PermissionDecision } from '@agentx/shared';
 export class PermissionManager {
   private permissions: Map<string, Permission> = new Map();
   private sessionId = '';
+  private bypassPermissions = false;
 
   constructor() {}
 
@@ -13,11 +14,12 @@ export class PermissionManager {
   /** Reset all permissions for a new session */
   resetForNewSession(sessionId: string): void {
     this.permissions.clear();
+    this.bypassPermissions = false;
     this.sessionId = sessionId;
   }
 
   check(toolName: string, path?: string): PermissionDecision | null {
-    if (this.permissions.has('__all__')) return 'allow_always';
+    if (this.isAllAllowed()) return 'allow_always';
     const key = this.makeKey(toolName, path);
     const permission = this.permissions.get(key) ?? this.permissions.get(toolName);
     if (!permission) return null;
@@ -47,6 +49,7 @@ export class PermissionManager {
 
   revokeAll(): void {
     this.permissions.clear();
+    this.bypassPermissions = false;
   }
 
   allowAll(): void {
@@ -60,8 +63,16 @@ export class PermissionManager {
     });
   }
 
+  setBypassPermissions(enabled: boolean): void {
+    this.bypassPermissions = enabled;
+  }
+
+  getBypassPermissions(): boolean {
+    return this.bypassPermissions;
+  }
+
   isAllAllowed(): boolean {
-    return this.permissions.has('__all__');
+    return this.bypassPermissions || this.permissions.has('__all__');
   }
 
   list(): Permission[] {

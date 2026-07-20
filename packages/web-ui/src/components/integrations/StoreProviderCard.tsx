@@ -16,9 +16,10 @@ export interface StoreProviderCardProps {
   onOpen: (provider: IntegrationProvider) => void;
   onConnect: (provider: IntegrationProvider) => void;
   onSignIn?: (provider: IntegrationProvider) => void;
+  onSync?: (connection: IntegrationConnection) => void;
 }
 
-export function StoreProviderCard({ provider, connection, onOpen, onConnect, onSignIn }: StoreProviderCardProps) {
+export function StoreProviderCard({ provider, connection, onOpen, onConnect, onSignIn, onSync }: StoreProviderCardProps) {
   const installed = isInstalledConnection(connection);
   const packageSignIn = providerPackageSignIn(provider);
   const { isChecking, isSignedIn, needsSignIn } = usePackageSignInStatus(provider, connection);
@@ -145,6 +146,64 @@ export function StoreProviderCard({ provider, connection, onOpen, onConnect, onS
             ...settingsMonoSx,
           }}
         />
+      )}
+
+      {installed && connection && (connection.benchmarkSummary?.error ?? 0) > 0 && connection.status !== 'error' && (
+        <Chip
+          label={`${connection.benchmarkSummary!.error} tool error${connection.benchmarkSummary!.error === 1 ? '' : 's'}`}
+          size="small"
+          onClick={(e) => e.stopPropagation()}
+          sx={{
+            alignSelf: 'flex-start',
+            height: 22,
+            fontSize: '0.62rem',
+            fontWeight: 600,
+            bgcolor: `${alphaColor(settingsTheme.accent.alert, '22')}`,
+            color: settingsTheme.accent.alert,
+            border: `1px solid ${alphaColor(settingsTheme.accent.alert, '55')}`,
+            ...settingsMonoSx,
+          }}
+        />
+      )}
+
+      {installed && connection && connection.status === 'error' && onSync && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignSelf: 'flex-start' }}>
+          <Chip
+            label="Error"
+            size="small"
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              alignSelf: 'flex-start',
+              height: 22,
+              fontSize: '0.62rem',
+              fontWeight: 600,
+              bgcolor: `${alphaColor(settingsTheme.accent.alert, '22')}`,
+              color: settingsTheme.accent.alert,
+              border: `1px solid ${alphaColor(settingsTheme.accent.alert, '55')}`,
+              ...settingsMonoSx,
+            }}
+          />
+          {connection.error && (
+            <Typography sx={{ fontSize: '0.58rem', color: settingsTheme.accent.alert, maxWidth: 220, ...settingsMonoSx }}>
+              {connection.error}
+            </Typography>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => { e.stopPropagation(); onSync(connection); }}
+            sx={{
+              alignSelf: 'flex-start',
+              fontSize: '0.65rem',
+              textTransform: 'none',
+              borderColor: settingsTheme.accent.alert,
+              color: settingsTheme.accent.alert,
+              ...settingsMonoSx,
+            }}
+          >
+            Reconnect
+          </Button>
+        </Box>
       )}
 
       {(needsSignIn || needsMcpAuthSignIn) && (

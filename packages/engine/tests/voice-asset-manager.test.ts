@@ -25,8 +25,8 @@ describe('VoiceAssetManager', () => {
   it('marks running downloads as cancelled', () => {
     const dir = mkdtempSync(join(tmpdir(), 'voice-cancel-'));
     const manager = new VoiceAssetManager({ dataDir: dir, sidecarPackageDir: dir });
-    (manager as unknown as { jobs: Map<string, unknown> }).jobs.set('kokoro-82m', { assetId: 'kokoro-82m', status: 'running', progress: 10 });
-    manager.cancelDownload('kokoro-82m');
-    expect(manager.getJob('kokoro-82m')?.status).toBe('cancelled');
+    (manager as unknown as { jobs: Map<string, unknown> }).jobs.set('kokoro-onnx', { assetId: 'kokoro-onnx', status: 'running', progress: 10 });
+    manager.cancelDownload('kokoro-onnx');
+    expect(manager.getJob('kokoro-onnx')?.status).toBe('cancelled');
   });
 });

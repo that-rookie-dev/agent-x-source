@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import MicIcon from '@mui/icons-material/Mic';
 import { voice, type VoiceSetupStatus } from '../../api';
 import { useMicrophonePermission } from '../../hooks/useMicrophonePermission';
-import { applyVoicePreset, mergeVoiceConfig } from '../../voice/voice-config';
+import { applyVoicePreset, mergeVoiceConfig, KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
 import { markVoiceOutputUnlocked } from '../../voice/support';
 import { hasSeenMicPreprompt, markMicPrepromptSeen } from '../../utils/microphone-permission';
 import { VoicePermissionDialog } from '../VoicePermissionDialog';
+import { VoiceWarmupProgress } from './VoiceWarmupProgress';
 import { WizardStatusLine, WizardStepShell } from './wizard-step-shell';
 import { wizardPrimaryBtnSx, wizardTheme, WIZARD_MONO } from './wizard-theme';
 import { colors, alphaColor } from '../../theme';
@@ -18,6 +21,10 @@ export interface WizardVoiceStepProps {
   onReadyChange?: (ready: boolean) => void;
   /** True while deploy/warmup is in progress — parent should disable Skip/Back. */
   onBusyChange?: (busy: boolean) => void;
+  /** User callsign — used to generate a personalised TTS greeting after warmup. */
+  callsign?: string;
+  /** Agent persona name — used in the test voice greeting. */
+  agentName?: string;
 }
 
 function micStatusLabel(state: string): string {
@@ -27,19 +34,31 @@ function micStatusLabel(state: string): string {
   return 'UNKNOWN';
 }
 
-export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentName }: WizardVoiceStepProps) {
   const mic = useMicrophonePermission();
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [complete, setComplete] = useState(false);
+  const [installComplete, setInstallComplete] = useState(false);
+  const [warmupComplete, setWarmupComplete] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [testingMic, setTestingMic] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [prepromptOpen, setPrepromptOpen] = useState(false);
+  const [engine, setEngine] = useState<'stt_llm_tts' | 'realtime_xai'>('stt_llm_tts');
+  const [xaiApiKey, setXaiApiKey] = useState('');
+  const [xaiValidating, setXaiValidating] = useState(false);
+  const [xaiVoices, setXaiVoices] = useState<Array<{ id: string; name: string; language?: string }>>([]);
+  const [selectedXaiVoice, setSelectedXaiVoice] = useState('eve');
+  const [xaiModel, setXaiModel] = useState('grok-voice-latest');
+  const [xaiConfigured, setXaiConfigured] = useState(false);
+  const [selectedLocalVoice, setSelectedLocalVoice] = useState('kokoro-af');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  const localComplete = installComplete && warmupComplete;
+  const complete = engine === 'realtime_xai' ? xaiConfigured : localComplete;
 
   useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -48,9 +67,30 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   }, []);
 
   useEffect(() => {
-    void voice.setupStatus().then(({ status }) => {
-      if (status.phase === 'complete') setComplete(true);
-    }).catch(() => {});
+    void (async () => {
+      try {
+        const [cfg, capRes] = await Promise.all([voice.getConfig(), voice.capabilities()]);
+        const merged = mergeVoiceConfig(cfg);
+        const activeEngine = merged.engine ?? 'stt_llm_tts';
+        setEngine(activeEngine);
+        if (activeEngine === 'realtime_xai') {
+          setXaiConfigured(Boolean(capRes.capabilities.realtimeXai?.configured));
+          setSelectedXaiVoice(merged.xai?.voice ?? 'eve');
+          if (capRes.capabilities.realtimeXai?.configured) {
+            try {
+              const voices = await voice.xaiVoices();
+              setXaiVoices(voices.voices);
+            } catch { /* ignore */ }
+          }
+        } else {
+          setSelectedLocalVoice(merged.tts?.voiceId ?? 'kokoro-af');
+          if (capRes.capabilities.pythonAvailable && capRes.capabilities.ffmpegAvailable) {
+            const { status } = await voice.setupStatus();
+            if (status.phase === 'complete') setInstallComplete(true);
+          }
+        }
+      } catch { /* ignore */ }
+    })();
   }, []);
 
   useEffect(() => {
@@ -58,35 +98,29 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   }, [complete, onReadyChange]);
 
   useEffect(() => {
-    onBusyChange?.(deploying);
-  }, [deploying, onBusyChange]);
+    onBusyChange?.(deploying || (engine === 'stt_llm_tts' && installComplete && !warmupComplete) || xaiValidating);
+  }, [deploying, installComplete, warmupComplete, engine, xaiValidating, onBusyChange]);
 
-  const persistVoiceEnabled = async () => {
+  const persistVoiceConfig = async (patch: { engine?: 'stt_llm_tts' | 'realtime_xai'; enabled?: boolean; xai?: { apiKey?: string; voice?: string; model?: string } }) => {
     const cfg = await voice.getConfig();
-    await voice.updateConfig(applyVoicePreset(mergeVoiceConfig(cfg)));
+    const merged = mergeVoiceConfig({ ...cfg, ...patch });
+    await voice.updateConfig(applyVoicePreset(merged));
   };
 
-  /** Enable voice, warm the sidecar, then mark the step complete. */
-  const finishDeployWithWarmup = async () => {
-    setDeployStatus({
-      phase: 'runtime',
-      message: 'Warming voice engine…',
-      detail: 'Loading speech models so Test speaker responds immediately',
-      progress: 96,
-    });
+  /** Installation is done — persist voice config and mark install complete. */
+  const finishInstallation = async () => {
     try {
-      await persistVoiceEnabled();
-      await voice.ensureSidecar();
+      await persistVoiceConfig({ engine: 'stt_llm_tts' as const, enabled: true });
     } catch {
-      // Kit is installed; speaker test can still cold-start if warmup fails.
+      // Config persist failure is non-fatal — warmup can still proceed.
     }
     setDeployStatus({
       phase: 'complete',
-      message: 'Voice comms ready',
+      message: 'Installation complete',
       progress: 100,
     });
     setDeploying(false);
-    setComplete(true);
+    setInstallComplete(true);
   };
 
   const pollSetup = () => {
@@ -98,7 +132,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
         if (status.phase === 'complete') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          await finishDeployWithWarmup();
+          await finishInstallation();
         } else if (status.phase === 'error') {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
@@ -117,7 +151,8 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
   const deploy = async () => {
     setDeploying(true);
     setError(null);
-    setComplete(false);
+    setInstallComplete(false);
+    setWarmupComplete(false);
     setDeployStatus({
       phase: 'runtime',
       message: 'Initializing comms array…',
@@ -128,7 +163,7 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
       const { status } = await voice.setup();
       setDeployStatus(status);
       if (status.phase === 'complete') {
-        await finishDeployWithWarmup();
+        await finishInstallation();
         return;
       }
       pollSetup();
@@ -136,6 +171,76 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
       setDeploying(false);
       setError(err instanceof Error ? err.message : 'Failed to start voice calibration');
     }
+  };
+
+  const configureXai = async () => {
+    if (!xaiApiKey.trim()) return;
+    setXaiValidating(true);
+    setError(null);
+    try {
+      const res = await voice.validateXai(xaiApiKey.trim());
+      if (!res.valid) {
+        setError(res.error ?? 'xAI API key is invalid');
+        setXaiConfigured(false);
+        return;
+      }
+      await persistVoiceConfig({
+        engine: 'realtime_xai' as const,
+        enabled: true,
+        xai: { apiKey: xaiApiKey.trim(), voice: selectedXaiVoice, model: xaiModel },
+      });
+      const voices = await voice.xaiVoices();
+      setXaiVoices(voices.voices);
+      setXaiConfigured(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'xAI configuration failed');
+      setXaiConfigured(false);
+    } finally {
+      setXaiValidating(false);
+    }
+  };
+
+  const selectEngine = async (next: 'stt_llm_tts' | 'realtime_xai') => {
+    setError(null);
+    setEngine(next);
+    try {
+      const cfg = await voice.getConfig();
+      await voice.updateConfig(applyVoicePreset(mergeVoiceConfig({ ...cfg, engine: next })));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to switch engine');
+    }
+  };
+
+  const revokeXaiKey = async () => {
+    setError(null);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, xai: { ...mergeVoiceConfig(cfg).xai, apiKey: undefined } });
+      await voice.updateConfig(applyVoicePreset(merged));
+      setXaiConfigured(false);
+      setXaiApiKey('');
+      setXaiVoices([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to revoke API key');
+    }
+  };
+
+  const selectLocalVoice = async (voiceId: string) => {
+    setSelectedLocalVoice(voiceId);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, tts: { ...mergeVoiceConfig(cfg).tts, voiceId } });
+      await voice.updateConfig(applyVoicePreset(merged));
+    } catch { /* best-effort */ }
+  };
+
+  const selectXaiVoice = async (voiceId: string) => {
+    setSelectedXaiVoice(voiceId);
+    try {
+      const cfg = await voice.getConfig();
+      const merged = mergeVoiceConfig({ ...cfg, xai: { ...mergeVoiceConfig(cfg).xai, voice: voiceId } });
+      await voice.updateConfig(applyVoicePreset(merged));
+    } catch { /* best-effort */ }
   };
 
   const stopMicTest = useCallback(() => {
@@ -182,35 +287,37 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     }
   }, [mic, stopMicTest]);
 
-  const synthAndPlay = async () => {
-    const result = await voice.preview(
-      'Voice comms online. Agent-X standing by.',
-      'kokoro',
-      'kokoro-af',
-    );
+  const synthAndPlay = async (text: string) => {
+    if (engine === 'realtime_xai') {
+      const result = await voice.preview(text, 'realtime_xai', selectedXaiVoice);
+      const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
+      await audio.play();
+      return;
+    }
+    const result = await voice.preview(text, 'kokoro', selectedLocalVoice);
     const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
     await audio.play();
-  };
-
-  const isTransientTtsError = (err: unknown): boolean => {
-    const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
-    return msg.includes('abort') || msg.includes('timeout') || msg.includes('timed out')
-      || msg.includes('not ready') || msg.includes('econnrefused') || msg.includes('fetch');
   };
 
   const previewSpeaker = async () => {
     setPreviewing(true);
     setError(null);
     markVoiceOutputUnlocked();
+    const user = callsign?.trim() || null;
+    const agent = agentName?.trim() || 'Agent-X';
+    // Natural, conversational greeting that uses both the agent's name and
+    // the user's callsign without awkward pauses.
+    const greeting = user
+      ? `Hey ${user}, ${agent} here. Voice is live and I'm ready to go.`
+      : `${agent} here. Voice is live and I'm ready to go.`;
     try {
-      // The TTS sidecar may still be cold-starting on the first request, which
-      // surfaces as an abort/timeout. Retry once transparently before failing.
       try {
-        await synthAndPlay();
+        await synthAndPlay(greeting);
       } catch (err) {
-        if (!isTransientTtsError(err)) throw err;
+        const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+        if (!msg.includes('abort') && !msg.includes('timeout') && !msg.includes('not ready')) throw err;
         await new Promise((r) => setTimeout(r, 600));
-        await synthAndPlay();
+        await synthAndPlay(greeting);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Speaker test failed');
@@ -226,11 +333,20 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     if (ok) await runMicTest();
   };
 
+  const handleWarmupComplete = useCallback(() => {
+    setWarmupComplete(true);
+  }, []);
+
+  const handleWarmupError = useCallback((msg: string) => {
+    setError(msg);
+    setWarmupComplete(true); // Allow user to proceed despite greeting failure
+  }, []);
+
   const phaseLabel = (() => {
     switch (deployStatus?.phase) {
       case 'runtime': return 'ENGINE SYNC';
       case 'download': return 'ASSET ACQUISITION';
-      case 'complete': return 'COMMS ONLINE';
+      case 'complete': return 'INSTALLATION COMPLETE';
       case 'error': return 'SIGNAL LOST';
       default: return 'STANDBY';
     }
@@ -240,64 +356,187 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
     <WizardStepShell
       codename="MODULE · VOICE COMMS"
       title="Calibrate Speech Array"
-      subtitle="Deploy local STT/TTS on this machine. All audio stays on-device — nothing leaves the cloud."
+      subtitle="Choose a voice engine. Local runs on-device; xAI streams speech-to-speech through xAI."
       icon={<MicIcon sx={{ fontSize: 26 }} />}
     >
       <Box sx={{ position: 'relative', zIndex: 1 }}>
-        <WizardStatusLine label="STT ENGINE" value="faster-whisper base.en" />
-        <WizardStatusLine label="TTS ENGINE" value="Kokoro 82M (lightweight)" />
-        <WizardStatusLine label="EST. PAYLOAD" value="~480 MB download" />
-        <WizardStatusLine label="SECURITY" value="LOCAL ONLY · ENCRYPTED AT REST" ok />
-
-        {deployStatus && deploying && (
-          <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
-            <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mb: 0.5 }}>
-              {phaseLabel} · {Math.round(deployStatus.progress ?? 0)}%
-            </Typography>
-            <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textDim, mb: 1 }}>
-              {deployStatus.detail ?? deployStatus.message}
-            </Typography>
-            <LinearProgress
-              variant="determinate"
-              value={deployStatus.progress ?? 0}
-              sx={{
-                height: 3,
-                borderRadius: 1,
-                bgcolor: alphaColor(colors.ink, 0.06),
-                '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.text },
-              }}
-            />
-          </Box>
-        )}
-
-        {complete && !deploying && (
-          <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.panelBorder}`, bgcolor: alphaColor(colors.ink, 0.02) }}>
-            <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
-              COMMS ARRAY ONLINE
-            </Typography>
-          </Box>
-        )}
-
-        {!complete && (
-          <Button
-            fullWidth
-            variant="contained"
-            onClick={() => { void deploy(); }}
-            disabled={deploying}
-            sx={{ ...wizardPrimaryBtnSx, mt: 2.5, py: 1.1 }}
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 1.5, mb: 2 }}>
+          <Box
+            onClick={() => { if (engine !== 'stt_llm_tts') void selectEngine('stt_llm_tts'); }}
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: `1.5px solid ${engine === 'stt_llm_tts' ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
+              bgcolor: engine === 'stt_llm_tts' ? alphaColor(colors.accent.green, 0.08) : 'transparent',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s, background-color 0.15s',
+              '&:hover': engine !== 'stt_llm_tts' ? { borderColor: wizardTheme.panelBorderStrong } : {},
+            }}
           >
-            {deploying ? 'CALIBRATING…' : 'INITIATE COMMS DEPLOY'}
-          </Button>
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.72rem', color: wizardTheme.text, mb: 0.5 }}>
+              Local STT + LLM + TTS
+            </Typography>
+            <Typography sx={{ fontSize: '0.58rem', color: wizardTheme.textSecondary }}>
+              On-device audio. Requires Python, ffmpeg, and ~480 MB download.
+            </Typography>
+          </Box>
+          <Box
+            onClick={() => { if (engine !== 'realtime_xai') void selectEngine('realtime_xai'); }}
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: `1.5px solid ${engine === 'realtime_xai' ? wizardTheme.accentOk : wizardTheme.panelBorder}`,
+              bgcolor: engine === 'realtime_xai' ? alphaColor(colors.accent.green, 0.08) : 'transparent',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s, background-color 0.15s',
+              '&:hover': engine !== 'realtime_xai' ? { borderColor: wizardTheme.panelBorderStrong } : {},
+            }}
+          >
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.72rem', color: wizardTheme.text, mb: 0.5 }}>
+              xAI Grok Voice Agent
+            </Typography>
+            <Typography sx={{ fontSize: '0.58rem', color: wizardTheme.textSecondary }}>
+              Cloud speech-to-speech with tool use and permissions.
+            </Typography>
+          </Box>
+        </Box>
+
+        {engine === 'stt_llm_tts' ? (
+        <>
+          <WizardStatusLine label="STT ENGINE" value="faster-distil-whisper small.en" />
+          <WizardStatusLine label="TTS ENGINE" value="Kokoro ONNX (FP32)" />
+          <WizardStatusLine label="EST. PAYLOAD" value="~480 MB download" />
+          <WizardStatusLine label="SECURITY" value="LOCAL ONLY · ENCRYPTED AT REST" ok />
+        </>
+        ) : (
+        <>
+          <WizardStatusLine label="PROVIDER" value="xAI" />
+          <WizardStatusLine label="MODEL" value={xaiModel} />
+          <WizardStatusLine label="SECURITY" value="AUDIO STREAMS TO XAI · KEY ENCRYPTED AT REST" ok={xaiConfigured} />
+        </>
         )}
 
-        {complete && (
-          <Box sx={{ mt: 2.5, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
-            <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, letterSpacing: '1px', mb: 1.5 }}>
-              COMMS CHECK
+        {/* Local voice selection dropdown — only after engine is ready */}
+        {engine === 'stt_llm_tts' && localComplete && (
+          <Box sx={{ my: 2 }}>
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
+              VOICE
             </Typography>
-            <WizardStatusLine label="MIC ACCESS" value={micStatusLabel(mic.state)} ok={mic.state === 'granted' ? true : mic.state === 'denied' ? false : undefined} />
+            <TextField
+              select
+              size="small"
+              fullWidth
+              value={selectedLocalVoice}
+              onChange={(e) => { void selectLocalVoice(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: WIZARD_MONO, fontSize: '0.65rem' } }}
+            >
+              {KOKORO_VOICE_PROFILES.map((v) => (
+                <MenuItem key={v.id} value={v.id} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                  {v.name} — {v.gender} · {v.language} [{v.grade}]
+                </MenuItem>
+              ))}
+            </TextField>
+          </Box>
+        )}
 
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5, mb: 1 }}>
+        {engine === 'realtime_xai' ? (
+        <>
+          {!xaiConfigured ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, my: 2 }}>
+              <TextField
+                label="xAI API key"
+                type="password"
+                size="small"
+                fullWidth
+                value={xaiApiKey}
+                onChange={(e) => setXaiApiKey(e.target.value)}
+                placeholder="sk-..."
+                sx={{ input: { fontFamily: 'monospace', fontSize: '0.65rem' } }}
+              />
+              <Button
+                fullWidth
+                variant="contained"
+                onClick={() => { void configureXai(); }}
+                disabled={xaiValidating || !xaiApiKey.trim()}
+                sx={{ ...wizardPrimaryBtnSx, py: 1.1 }}
+              >
+                {xaiValidating ? 'VALIDATING…' : 'CONNECT XAI'}
+              </Button>
+            </Box>
+          ) : (
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', my: 2, p: 1.5, borderRadius: 1, border: `1px solid ${wizardTheme.accentOk}`, bgcolor: alphaColor(colors.accent.green, 0.06) }}>
+              <Box>
+                <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.accentOk, mb: 0.25 }}>
+                  XAI CONNECTED
+                </Typography>
+                <Typography sx={{ fontSize: '0.55rem', color: wizardTheme.textDim }}>
+                  API key validated · voices loaded
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => { void revokeXaiKey(); }}
+                sx={{
+                  fontFamily: WIZARD_MONO,
+                  fontSize: '0.6rem',
+                  color: wizardTheme.accentErr,
+                  borderColor: alphaColor(colors.accent.red, 0.3),
+                  '&:hover': { borderColor: wizardTheme.accentErr, bgcolor: alphaColor(colors.accent.red, 0.06) },
+                }}
+              >
+                REVOKE KEY
+              </Button>
+            </Box>
+          )}
+
+          {xaiConfigured && (
+          <Box sx={{ mb: 2 }}>
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
+              MODEL
+            </Typography>
+            <TextField
+              select
+              size="small"
+              fullWidth
+              value={xaiModel}
+              onChange={(e) => { setXaiModel(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: WIZARD_MONO, fontSize: '0.65rem' } }}
+            >
+              <MenuItem value="grok-voice-latest" sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                grok-voice-latest
+              </MenuItem>
+              <MenuItem value="grok-voice-think-fast-1.0" sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                grok-voice-think-fast-1.0
+              </MenuItem>
+            </TextField>
+          </Box>
+          )}
+
+          {xaiConfigured && xaiVoices.length > 0 && (
+          <Box sx={{ mb: 2 }}>
+            <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.58rem', color: wizardTheme.textSecondary, mb: 1 }}>
+              VOICE
+            </Typography>
+            <TextField
+              select
+              size="small"
+              fullWidth
+              value={selectedXaiVoice}
+              onChange={(e) => { void selectXaiVoice(e.target.value); }}
+              sx={{ '& .MuiInputBase-input': { fontFamily: WIZARD_MONO, fontSize: '0.65rem' } }}
+            >
+              {xaiVoices.map((v) => (
+                <MenuItem key={v.id} value={v.id} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.65rem' }}>
+                  {v.name}{v.language ? ` — ${v.language}` : ''}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Box>
+          )}
+
+          {xaiConfigured && (
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
               <Button
                 size="small"
                 variant="outlined"
@@ -336,29 +575,167 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
                   '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
                 }}
               >
-                {previewing ? 'Transmitting…' : 'Test speaker'}
+                {previewing ? 'Transmitting…' : 'TEST VOICE'}
               </Button>
             </Box>
+          )}
 
-            {testingMic && (
-              <>
-                <LinearProgress
-                  variant="determinate"
-                  value={micLevel * 100}
+          {xaiConfigured && testingMic && (
+            <>
+              <LinearProgress
+                variant="determinate"
+                value={micLevel * 100}
+                sx={{
+                  mb: 1,
+                  height: 3,
+                  borderRadius: 1,
+                  bgcolor: alphaColor(colors.ink, 0.06),
+                  '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.accentSignal },
+                }}
+              />
+              <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mb: 1 }}>
+                Speak — the bar should move with your voice.
+              </Typography>
+            </>
+          )}
+        </>
+        ) : (
+        <>
+          {/* Installation progress — shown only during installation phase */}
+          {deployStatus && deploying && (
+            <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
+              <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mb: 0.5 }}>
+                {phaseLabel} · {Math.round(deployStatus.progress ?? 0)}%
+              </Typography>
+              <Typography sx={{ fontSize: '0.62rem', color: wizardTheme.textDim, mb: 1 }}>
+                {deployStatus.detail ?? deployStatus.message}
+              </Typography>
+              <LinearProgress
+                variant="determinate"
+                value={deployStatus.progress ?? 0}
+                sx={{
+                  height: 3,
+                  borderRadius: 1,
+                  bgcolor: alphaColor(colors.ink, 0.06),
+                  '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.text },
+                }}
+              />
+            </Box>
+          )}
+
+          {/* Installation complete marker */}
+          {installComplete && !warmupComplete && (
+            <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.accentOk}`, bgcolor: alphaColor(colors.accent.green, 0.06) }}>
+              <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
+                INSTALLATION COMPLETE · 100%
+              </Typography>
+            </Box>
+          )}
+
+          {/* Warmup phase — separate progress UI after installation */}
+          {installComplete && !warmupComplete && (
+            <VoiceWarmupProgress
+              callsign={callsign || 'Operator'}
+              agentName={agentName}
+              onComplete={handleWarmupComplete}
+              onError={handleWarmupError}
+            />
+          )}
+
+          {/* Fully complete marker */}
+          {localComplete && (
+            <Box sx={{ mt: 2, p: 1.25, borderRadius: 1, border: `1px solid ${wizardTheme.panelBorder}`, bgcolor: alphaColor(colors.ink, 0.02) }}>
+              <Typography sx={{ fontSize: '0.62rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk }}>
+                COMMS ARRAY ONLINE
+              </Typography>
+            </Box>
+          )}
+
+          {/* Deploy button — only before installation starts */}
+          {!installComplete && (
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={() => { void deploy(); }}
+              disabled={deploying}
+              sx={{ ...wizardPrimaryBtnSx, mt: 2.5, py: 1.1 }}
+            >
+              {deploying ? 'CALIBRATING…' : 'INITIATE COMMS DEPLOY'}
+            </Button>
+          )}
+
+          {/* Post-deploy controls — mic test + manual speaker test */}
+          {localComplete && (
+            <Box sx={{ mt: 2.5, pt: 2, borderTop: `1px solid ${wizardTheme.panelBorder}` }}>
+              <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, letterSpacing: '1px', mb: 1.5 }}>
+                COMMS CHECK
+              </Typography>
+              <WizardStatusLine label="MIC ACCESS" value={micStatusLabel(mic.state)} ok={mic.state === 'granted' ? true : mic.state === 'denied' ? false : undefined} />
+
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1.5, mb: 1 }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => { void runMicTest(); }}
+                  disabled={testingMic || (mic.blocked && mic.state === 'denied')}
                   sx={{
-                    mb: 1,
-                    height: 3,
-                    borderRadius: 1,
-                    bgcolor: alphaColor(colors.ink, 0.06),
-                    '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.accentSignal },
+                    fontFamily: WIZARD_MONO,
+                    fontSize: '0.62rem',
+                    color: wizardTheme.textSecondary,
+                    borderColor: wizardTheme.panelBorder,
+                    '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
+                    '&.Mui-disabled': {
+                      color: testingMic ? wizardTheme.accentSignal : undefined,
+                      borderColor: testingMic ? wizardTheme.panelBorder : undefined,
+                      opacity: testingMic ? 1 : undefined,
+                    },
                   }}
-                />
-                <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim }}>
-                  Speak — the bar should move with your voice.
-                </Typography>
-              </>
-            )}
-          </Box>
+                >
+                  {testingMic ? 'Listening…' : mic.state === 'granted' ? 'Test microphone' : 'Grant & test mic'}
+                </Button>
+                {testingMic && (
+                  <Button size="small" onClick={stopMicTest} sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.textDim }}>
+                    Stop
+                  </Button>
+                )}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => { void previewSpeaker(); }}
+                  disabled={previewing}
+                  sx={{
+                    fontFamily: WIZARD_MONO,
+                    fontSize: '0.62rem',
+                    color: wizardTheme.textSecondary,
+                    borderColor: wizardTheme.panelBorder,
+                    '&:hover': { borderColor: wizardTheme.panelBorderStrong, bgcolor: alphaColor(colors.ink, 0.03) },
+                  }}
+                >
+                  {previewing ? 'Transmitting…' : 'TEST VOICE'}
+                </Button>
+              </Box>
+
+              {testingMic && (
+                <>
+                  <LinearProgress
+                    variant="determinate"
+                    value={micLevel * 100}
+                    sx={{
+                      mb: 1,
+                      height: 3,
+                      borderRadius: 1,
+                      bgcolor: alphaColor(colors.ink, 0.06),
+                      '& .MuiLinearProgress-bar': { bgcolor: wizardTheme.accentSignal },
+                    }}
+                  />
+                  <Typography sx={{ fontSize: '0.58rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim }}>
+                    Speak — the bar should move with your voice.
+                  </Typography>
+                </>
+              )}
+            </Box>
+          )}
+        </>
         )}
 
         {error && (
@@ -367,20 +744,16 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange }: WizardVoiceStep
           </Typography>
         )}
 
-        <Typography sx={{ mt: 1.5, fontSize: '0.55rem', color: wizardTheme.textDim, textAlign: 'center', fontFamily: WIZARD_MONO }}>
-          Skip to configure later in Settings → Voice
-        </Typography>
+        <VoicePermissionDialog
+          open={prepromptOpen}
+          helpText={mic.helpText}
+          setupInstructions={mic.setupInstructions}
+          preprompt
+          onRequest={() => { void handlePrepromptContinue(); }}
+          onClose={() => setPrepromptOpen(false)}
+          onOpenSettings={() => { void mic.openSettings(); }}
+        />
       </Box>
-
-      <VoicePermissionDialog
-        open={prepromptOpen}
-        helpText={mic.helpText}
-        setupInstructions={mic.setupInstructions}
-        preprompt
-        onRequest={() => { void handlePrepromptContinue(); }}
-        onClose={() => setPrepromptOpen(false)}
-        onOpenSettings={() => { void mic.openSettings(); }}
-      />
     </WizardStepShell>
   );
 }

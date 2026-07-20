@@ -1,21 +1,17 @@
-import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind } from '@agentx/shared';
-import { isChannelSessionId } from '@agentx/shared';
-import { evaluateRules } from './permissions/RuleEngine.js';
-import { isPermissionExemptTool } from './permissions/exempt-tools.js';
+import type { ToolResult, ToolExecutionContext, PermissionRule, SessionContextKind, AgentXConfig, TurnAttachment } from '@agentx/shared';
+import { formatPermissionInstructedToolOutput, type PermissionHandlerResult } from '@agentx/shared';
 import { PermissionManager } from './permissions/PermissionManager.js';
 import { ScopeGuard } from './permissions/ScopeGuard.js';
 import { ToolRegistry } from './ToolRegistry.js';
+import { getAttachmentService } from '../attachments/index.js';
 import type { SafetyAuditor } from '../safety/SafetyAuditor.js';
 import type { PolicyEngine } from '../enterprise/PolicyEngine.js';
-import type { AgentInfo } from '../agent/AgentInfo.js';
-import { isPlanDeniedTool } from '../agent/plan-mode-utils.js';
 import type { ThirdPartyTurnPolicy } from '../integrations/third-party-access.js';
 import {
   blockCredentialScavenger,
   blockThirdPartyLocalSubstitute,
 } from '../integrations/third-party-access-guard.js';
-import { buildIntegrationActionPreview } from '../integrations/action-preview.js';
-import { isIntegrationToolId } from '../integrations/action-classifier.js';
+import { ToolPermissionService, type ToolPermissionHost } from '../services/tool/ToolPermissionService.js';
 
 
 export type PermissionRequestHandler = (
@@ -25,8 +21,17 @@ export type PermissionRequestHandler = (
   context?: {
     args?: Record<string, unknown>;
     integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+    forAutomation?: boolean;
   },
-) => Promise<'allow_once' | 'allow_always' | 'deny'>;
+) => Promise<PermissionHandlerResult>;
+
+export type PermissionPromptHook = (details: {
+  toolId: string;
+  path: string;
+  riskLevel: string;
+  forAutomation?: boolean;
+  integrationPreview?: import('@agentx/shared').IntegrationActionPreview;
+}) => void;
 
 export interface ToolExecutionEntry {
   toolId: string;
@@ -39,14 +44,23 @@ export interface ToolExecutionEntry {
 
 const MAX_HISTORY = 200;
 
-export class ToolExecutor {
+export class ToolExecutor implements ToolPermissionHost {
   private registry: ToolRegistry;
   private permissionManager: PermissionManager;
   private scopeGuard: ScopeGuard;
   private handlers: Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> = new Map();
+
+  getHandlers(): Map<string, (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<ToolResult>> {
+    return this.handlers;
+  }
   private permissionRequestHandler?: PermissionRequestHandler;
   /** Dedicated handler for messaging channel super-sessions — not overwritten by UI agent wiring. */
   private channelPermissionRequestHandler?: PermissionRequestHandler;
+  /** When true, route permission prompts through the channel handler (Telegram-bound super-sessions). */
+  private messagingPermissionMode = false;
+  private inboundSourceChannel: string | null = null;
+  private inboundSourceThreadId: string | null = null;
+  private inboundSourceMessageId: string | null = null;
   private onToolOutput?: (output: string) => void;
   private toolCache: Map<string, ReturnType<ToolRegistry['get']>> = new Map();
   private beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null = null;
@@ -54,30 +68,25 @@ export class ToolExecutor {
   private onExecutionPersist: ((entry: ToolExecutionEntry) => void) | null = null;
   private policyEngine: PolicyEngine | null = null;
   private executionHistory: ToolExecutionEntry[] = [];
-  private mode: 'agent' | 'plan' = 'agent';
-  private currentAgent: AgentInfo | null = null;
   private alwaysPromptPermissions = false;
   private sessionRules: PermissionRule[] = [];
   private agentPermissions: PermissionRule[] = [];
   private userConfigRules: PermissionRule[] = [];
   private voiceTurnActive = false;
   private sessionContextKind?: SessionContextKind;
+  private runtimeConfig: AgentXConfig | null = null;
   private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
   private turnAborted = false;
+  private permissionPromptHook?: PermissionPromptHook;
+  private permissionService: ToolPermissionService;
+  /** Attachments collected from tool handlers during a turn. */
+  private collectedAttachments: TurnAttachment[] = [];
 
   constructor(registry: ToolRegistry, scopePath: string) {
     this.registry = registry;
     this.permissionManager = new PermissionManager();
     this.scopeGuard = new ScopeGuard(scopePath);
-  }
-
-  setMode(mode: 'agent' | 'plan'): void {
-    this.mode = mode;
-  }
-
-  setAgent(agent: AgentInfo): void {
-    this.currentAgent = agent;
-    this.setAgentPermissions(agent.permissions ?? []);
+    this.permissionService = new ToolPermissionService();
   }
 
   setAlwaysPromptPermissions(enabled: boolean): void {
@@ -132,6 +141,10 @@ export class ToolExecutor {
     this.policyEngine = engine;
   }
 
+  setConfig(config: AgentXConfig | null): void {
+    this.runtimeConfig = config;
+  }
+
   setBeforeToolHook(hook: (toolId: string, args: Record<string, unknown>, path?: string) => void): void {
     this.beforeToolHook = hook;
   }
@@ -144,30 +157,104 @@ export class ToolExecutor {
     this.permissionRequestHandler = handler;
   }
 
+  setPermissionPromptHook(hook: PermissionPromptHook | undefined): void {
+    this.permissionPromptHook = hook;
+  }
+
   setChannelPermissionRequestHandler(handler: PermissionRequestHandler | null | undefined): void {
     this.channelPermissionRequestHandler = handler ?? undefined;
   }
 
-  private resolvePermissionRequestHandler(sessionId: string): PermissionRequestHandler | undefined {
-    if (isChannelSessionId(sessionId) && this.channelPermissionRequestHandler) {
-      return this.channelPermissionRequestHandler;
-    }
+  setMessagingPermissionMode(enabled: boolean): void {
+    this.messagingPermissionMode = enabled;
+  }
+
+  setInboundSourceChannel(channel: string | null): void {
+    this.inboundSourceChannel = channel;
+  }
+
+  setInboundSourceThreadId(threadId: string | null): void {
+    this.inboundSourceThreadId = threadId;
+  }
+
+  getInboundSourceThreadId(): string | null {
+    return this.inboundSourceThreadId;
+  }
+
+  setInboundSourceMessageId(messageId: string | null): void {
+    this.inboundSourceMessageId = messageId;
+  }
+
+  getInboundSourceMessageId(): string | null {
+    return this.inboundSourceMessageId;
+  }
+
+  getPermissionRequestHandler(): PermissionRequestHandler | undefined {
     return this.permissionRequestHandler;
   }
 
-  /** Copy permission policy, mode, and hooks from another executor (e.g. parent → crew worker). */
+  getChannelPermissionRequestHandler(): PermissionRequestHandler | undefined {
+    return this.channelPermissionRequestHandler;
+  }
+
+  getPermissionPromptHook(): PermissionPromptHook | undefined {
+    return this.permissionPromptHook;
+  }
+
+  getBeforeToolHook(): ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null {
+    return this.beforeToolHook;
+  }
+
+  getAlwaysPromptPermissions(): boolean {
+    return this.alwaysPromptPermissions;
+  }
+
+  getMessagingPermissionMode(): boolean {
+    return this.messagingPermissionMode;
+  }
+
+  getCollectedAttachments(): TurnAttachment[] {
+    return this.collectedAttachments;
+  }
+
+  clearCollectedAttachments(): void {
+    this.collectedAttachments = [];
+  }
+
+  getInboundSourceChannel(): string | null {
+    return this.inboundSourceChannel;
+  }
+
+  getSessionRules(): PermissionRule[] {
+    return this.sessionRules;
+  }
+
+  getAgentPermissions(): PermissionRule[] {
+    return this.agentPermissions;
+  }
+
+  getUserConfigRules(): PermissionRule[] {
+    return this.userConfigRules;
+  }
+
+  getRegistry(): ToolRegistry {
+    return this.registry;
+  }
+
+  /** Copy permission policy and hooks from another executor (e.g. parent → crew worker). */
   copyExecutionPolicyFrom(source: ToolExecutor): void {
     const src = source as unknown as {
       permissionRequestHandler?: PermissionRequestHandler;
       channelPermissionRequestHandler?: PermissionRequestHandler;
-      mode: 'agent' | 'plan';
       sessionRules: PermissionRule[];
       agentPermissions: PermissionRule[];
       userConfigRules: PermissionRule[];
-      currentAgent: AgentInfo | null;
       beforeToolHook: ((toolId: string, args: Record<string, unknown>, path?: string) => void) | null;
       safetyAuditor: SafetyAuditor | null;
       policyEngine: PolicyEngine | null;
+      inboundSourceChannel: string | null;
+      inboundSourceThreadId: string | null;
+      inboundSourceMessageId: string | null;
     };
     if (src.permissionRequestHandler) {
       this.setPermissionRequestHandler(src.permissionRequestHandler);
@@ -175,14 +262,15 @@ export class ToolExecutor {
     if (src.channelPermissionRequestHandler) {
       this.setChannelPermissionRequestHandler(src.channelPermissionRequestHandler);
     }
-    this.setMode(src.mode);
     this.setSessionRules([...src.sessionRules]);
     this.setAgentPermissions([...src.agentPermissions]);
     this.setUserConfigRules([...src.userConfigRules]);
-    if (src.currentAgent) this.setAgent(src.currentAgent);
     if (src.beforeToolHook) this.setBeforeToolHook(src.beforeToolHook);
     if (src.safetyAuditor) this.setSafetyAuditor(src.safetyAuditor);
     if (src.policyEngine) this.setPolicyEngine(src.policyEngine);
+    this.setInboundSourceChannel(src.inboundSourceChannel ?? null);
+    this.setInboundSourceThreadId(src.inboundSourceThreadId ?? null);
+    this.setInboundSourceMessageId(src.inboundSourceMessageId ?? null);
   }
 
   setToolOutputHandler(handler: (output: string) => void): void {
@@ -219,7 +307,11 @@ export class ToolExecutor {
     toolId: string,
     args: Record<string, unknown>,
     sessionId: string,
+    options?: { signal?: AbortSignal },
   ): Promise<ToolResult> {
+    if (options?.signal?.aborted) {
+      return { success: false, output: 'Tool execution cancelled', error: 'ABORTED' };
+    }
     if (this.turnAborted) {
       return {
         success: false,
@@ -293,30 +385,7 @@ export class ToolExecutor {
       }
     }
 
-    // Plan mode: block edit/delete tools only
-    if (this.mode === 'plan' && isPlanDeniedTool(toolId)) {
-      const modeLabel = this.currentAgent?.name ?? 'Plan';
-      return {
-        success: false,
-        output: `The "${toolId}" tool cannot be executed in ${modeLabel} mode. Editing or deleting existing resources requires Agent Mode or Hyperdrive. Reads, new file creation, scripts, web search, and scheduling work in Plan mode.`,
-        error: 'MODE_RESTRICTED',
-      };
-    }
-
-    // Evaluate permission rules (agent rules → session rules → user config rules)
-    const ruleResult = evaluateRules(
-      `tool:${toolId}`,
-      scopePathForHook ?? '*',
-      this.agentPermissions,
-      this.sessionRules,
-      this.userConfigRules,
-    );
-
-    if (ruleResult === 'deny') {
-      return { success: false, output: `"${toolId}" is not available.`, error: 'MODE_RESTRICTED' };
-    }
-
-    if (this.turnAborted) {
+    if (this.turnAborted || options?.signal?.aborted) {
       return {
         success: false,
         output: 'Turn aborted — tool execution stopped.',
@@ -324,36 +393,36 @@ export class ToolExecutor {
       };
     }
 
-    const permissionExempt = isPermissionExemptTool(toolId);
-    const shouldPrompt = this.alwaysPromptPermissions || tool.riskLevel !== 'low';
-    const permissionHandler = this.resolvePermissionRequestHandler(sessionId);
-    if (
-      !permissionExempt
-      && ruleResult === 'ask'
-      && permissionHandler
-      && shouldPrompt
-    ) {
-      const existingGrant = this.permissionManager.check(toolId, scopePathForHook ?? undefined);
-      if (existingGrant === 'allow_always') {
-        // Previously granted — skip prompt
-      } else {
-        const integrationPreview = isIntegrationToolId(toolId)
-          ? buildIntegrationActionPreview(toolId, args, tool) ?? undefined
-          : undefined;
-        const response = await permissionHandler(
-          toolId,
-          scopePathForHook ?? '*',
-          tool.riskLevel,
-          { args, integrationPreview },
-        );
-        if (response === 'deny') {
-          return { success: false, output: 'Permission denied', error: 'PERMISSION_DENIED' };
-        }
-        if (response === 'allow_always') {
-          // Session "always allow" applies to the whole tool, not just one path.
-          this.permissionManager.grant(toolId, 'allow_always');
-        }
+    const permissionResult = await this.permissionService.requestPermission(
+      this,
+      toolId,
+      args,
+      sessionId,
+      scopePathForHook,
+      tool,
+    );
+
+    if (permissionResult.decision === 'deny') {
+      if (permissionResult.instruction) {
+        return {
+          success: false,
+          output: formatPermissionInstructedToolOutput(permissionResult.instruction),
+          error: permissionResult.error ?? 'PERMISSION_INSTRUCTED',
+        };
       }
+      return {
+        success: false,
+        output: permissionResult.error === 'MODE_RESTRICTED' ? `"${toolId}" is not available.` : 'Permission denied',
+        error: permissionResult.error ?? 'PERMISSION_DENIED',
+      };
+    }
+
+    if (this.turnAborted || options?.signal?.aborted) {
+      return {
+        success: false,
+        output: 'Turn aborted — tool execution stopped.',
+        error: 'TURN_ABORTED',
+      };
     }
 
     // Fire before-tool hook for diff/preview
@@ -368,6 +437,9 @@ export class ToolExecutor {
     }
 
     const abortController = new AbortController();
+    if (options?.signal) {
+      options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+    }
     const onToolOutput = this.onToolOutput;
     const context: ToolExecutionContext = {
       sessionId,
@@ -375,8 +447,42 @@ export class ToolExecutor {
       contextKind: this.sessionContextKind,
       timeout: this.voiceTurnActive ? 22_000 : 30_000,
       voiceTurn: this.voiceTurnActive,
-      mode: this.mode,
+      config: this.runtimeConfig ?? undefined,
+      ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
+      ...(this.inboundSourceThreadId ? { sourceThreadId: this.inboundSourceThreadId } : {}),
+      ...(this.inboundSourceMessageId ? { sourceMessageId: this.inboundSourceMessageId } : {}),
       onOutput: onToolOutput,
+      signal: abortController.signal,
+      registerAttachment: async (opts) => {
+        let buffer: Buffer | undefined;
+        if (opts.buffer) {
+          if (ArrayBuffer.isView(opts.buffer)) {
+            const view = opts.buffer as Uint8Array;
+            buffer = Buffer.from(view.buffer, view.byteOffset, view.byteLength);
+          } else {
+            buffer = Buffer.from(opts.buffer as ArrayBuffer);
+          }
+        }
+        const stored = await getAttachmentService().registerAttachment({
+          sessionId,
+          filename: opts.filename,
+          mimeType: opts.mimeType,
+          source: opts.source ?? 'tool',
+          originalPath: opts.originalPath,
+          dataUrl: opts.dataUrl,
+          buffer,
+        });
+        const turnAttachment: TurnAttachment = {
+          id: stored.id,
+          name: stored.filename,
+          mimeType: stored.mimeType,
+          type: stored.mimeType.startsWith('image/') ? 'image' : 'file',
+          storageId: stored.id,
+          source: stored.source,
+        };
+        this.collectedAttachments.push(turnAttachment);
+        return turnAttachment;
+      },
     };
 
     try {
@@ -404,6 +510,10 @@ export class ToolExecutor {
 
       // Enterprise audit log
       this.policyEngine?.logAudit({ action: 'execute', toolId, args, result, sessionId, duration: elapsed });
+
+      if (options?.signal?.aborted) {
+        return { success: false, output: 'Tool execution cancelled', error: 'ABORTED' };
+      }
 
       return result;
     } catch (error) {

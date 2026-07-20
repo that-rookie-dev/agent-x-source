@@ -7,6 +7,7 @@ export interface WebSocketVoiceTransportOptions {
   sessionId: string;
   mode: VoiceSessionMode;
   userId?: string;
+  engine?: 'stt_llm_tts' | 'realtime_xai';
   events?: VoiceTransportEvents;
 }
 
@@ -15,11 +16,13 @@ export class WebSocketVoiceTransport implements VoiceTransport {
   readonly meta: VoiceTransportSessionMeta;
   private readonly ws: WebSocket;
   private readonly events: VoiceTransportEvents;
+  private readonly engine?: 'stt_llm_tts' | 'realtime_xai';
   private closed = false;
 
   constructor(options: WebSocketVoiceTransportOptions) {
     this.ws = options.ws;
     this.events = options.events ?? {};
+    this.engine = options.engine;
     this.meta = {
       sessionId: options.sessionId,
       transport: 'web',
@@ -29,7 +32,9 @@ export class WebSocketVoiceTransport implements VoiceTransport {
   }
 
   async start(): Promise<void> {
-    this.sendControl({ type: 'session_ready', sessionId: this.meta.sessionId });
+    const payload: Record<string, unknown> = { type: 'session_ready', sessionId: this.meta.sessionId, mode: this.meta.mode };
+    if (this.engine) payload.engine = this.engine;
+    this.sendControl(payload);
   }
 
   async sendAudio(chunk: VoiceTransportAudioChunk): Promise<void> {
@@ -54,7 +59,7 @@ export class WebSocketVoiceTransport implements VoiceTransport {
   }
 
   async stopPlayback(): Promise<void> {
-    this.sendControl({ type: 'playback_stopped', sessionId: this.meta.sessionId });
+    this.sendControl({ type: 'playback_stop', sessionId: this.meta.sessionId });
   }
 
   async close(): Promise<void> {
