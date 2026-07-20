@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { MemoryFabric } from '../src/neural/MemoryFabric.js';
-import { DocumentIngester } from '../src/neural/DocumentIngester.js';
 
 const connectionString = process.env.AGENTX_TEST_PG ?? 'postgresql://agentx:agentx@127.0.0.1:3335/agentx';
 
@@ -115,41 +114,5 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryFabric', () 
     const duplicate = await fabric.findDuplicate(embedding, 0.95, 'semantic');
     expect(duplicate).not.toBeNull();
     expect(duplicate?.id).toBe(node.id);
-  });
-
-  it('ingests a document and extracts semantic entities from chunks', async () => {
-    const generate = async () => JSON.stringify({
-      nodes: [
-        { id: 'e1', label: 'Chicxulub Impact', category: 'semantic', content: 'Asteroid strike 66 million years ago', confidence: 0.9 },
-        { id: 'e2', label: 'K-Pg Extinction', category: 'semantic', content: 'Mass extinction ending dinosaurs', confidence: 0.9 },
-      ],
-      edges: [
-        { sourceNodeId: 'e1', targetNodeId: 'e2', relationshipType: 'CAUSES', weight: 0.95 },
-      ],
-    });
-
-    const ingester = new DocumentIngester(fabric, generate);
-    // Use markdown headings so the chunker splits into multiple units.
-    const sections = Array.from({ length: 10 }, (_, i) => `## Section ${i + 1}\n\nThe Chicxulub impact caused the K-Pg extinction event. The asteroid struck the Yucatan Peninsula and released enormous energy.`);
-    const text = sections.join('\n\n');
-
-    const result = await ingester.ingest({
-      name: 'extinction-doc',
-      kind: 'text',
-      content: text,
-      chunkSize: 500,
-      chunkOverlap: 50,
-      maxEntitiesPerChunk: 10,
-    });
-
-    // Should create at least one chunk node plus extracted entities.
-    expect(result.nodes.length).toBeGreaterThan(1);
-    const labels = result.nodes.map((n) => n.label);
-    expect(labels.some((l) => /Chicxulub/i.test(l))).toBe(true);
-    expect(labels.some((l) => /K-Pg/i.test(l))).toBe(true);
-
-    // Should have edges between chunk nodes and extracted entities, plus semantic edges.
-    expect(result.edges.length).toBeGreaterThan(0);
-    expect(result.edges.some((e) => e.relationshipType === 'CAUSES')).toBe(true);
   });
 });

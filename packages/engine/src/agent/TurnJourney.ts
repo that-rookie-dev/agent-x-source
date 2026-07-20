@@ -8,7 +8,7 @@
 
 import { getLogger } from '@agentx/shared';
 import { getRAGEngineInstance } from '../commands/builtin/rag_index.js';
-import { getKnowledgeBaseManager } from '../knowledge/global-manager.js';
+import { getKnowledgeBaseService } from '../knowledge-base/global-manager.js';
 
 const logger = getLogger();
 
@@ -68,11 +68,10 @@ export interface TurnJourneyResult {
 
 const WEB_TOOLS = new Set(['web_search', 'deep_web_search', 'web_fetch', 'web_scrape']);
 const MEMORY_TOOLS = new Set([
-  'knowledge_search',
-  'memory_fabric_search',
-  'memory_search',
+  'knowledge_base_search',
+  'cortex_memory_search',
   'memory_recall',
-  'rag_search',
+  'codebase_search',
 ]);
 
 function summarizeIntegrations(toolIds: string[]): string[] {
@@ -99,7 +98,7 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
   const hits: TurnJourneyRagHit[] = [];
 
   const kbStart = Date.now();
-  const kb = getKnowledgeBaseManager();
+  const kb = getKnowledgeBaseService();
   if (kb) {
     try {
       const kbResults = await withPrefetchTimeout(
@@ -185,7 +184,7 @@ function buildJourneyBlock(opts: {
   const integrations = summarizeIntegrations(opts.toolIds);
   const webTools = listPresent(opts.toolIds, [...WEB_TOOLS]);
   const memoryTools = listPresent(opts.toolIds, [...MEMORY_TOOLS]);
-  const hasKnowledgeSearch = opts.toolIds.includes('knowledge_search');
+  const hasKnowledgeSearch = opts.toolIds.includes('knowledge_base_search');
 
   if (opts.voiceTurn || opts.compact) {
     const integLine =
@@ -195,7 +194,7 @@ function buildJourneyBlock(opts: {
     return [
       '[TURN_JOURNEY]',
       'Default silent research order (user did not need to request tools):',
-      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_search.`,
+      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_base_search.`,
       `2. INTEGRATIONS — ${integLine} Use matching integration__* tools when the ask involves those apps.`,
       `3. WEB — ${webTools.length > 0 ? webTools.join(', ') : 'unavailable'} only if local+MCP cannot answer or facts may be stale.`,
       '4. MODEL — brief answer from trained knowledge last; say when unsure.',
@@ -218,8 +217,8 @@ function buildJourneyBlock(opts: {
     '',
     'STAGE 2 — DEEPER LOCAL RETRIEVAL (tools, only if needed)',
     hasKnowledgeSearch
-      ? '- Call knowledge_search with a more precise query when excerpts look like indexes/metadata or miss the answer.'
-      : '- knowledge_search unavailable.',
+      ? '- Call knowledge_base_search with a more precise query when excerpts look like indexes/metadata or miss the answer.'
+      : '- knowledge_base_search unavailable.',
     memoryTools.length > 0
       ? `- Also available: ${memoryTools.join(', ')} for prior chat/memory facts.`
       : '- No extra memory tools in this turn.',
@@ -274,7 +273,9 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
   stages.push({
     id: 'deeper_retrieval',
     status: 'ready',
-    detail: toolIds.includes('knowledge_search') ? 'knowledge_search available' : 'limited retrieval tools',
+    detail: toolIds.includes('knowledge_base_search')
+      ? 'knowledge_base_search available'
+      : 'limited retrieval tools',
   });
   stages.push({
     id: 'integrations',

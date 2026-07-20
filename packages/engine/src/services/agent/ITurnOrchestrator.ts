@@ -97,7 +97,6 @@ export interface TurnOrchestratorHost {
     timeout: number,
     background?: boolean,
   ): Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>;
-  ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void>;
   reinforceMemoryContext(): Promise<void>;
   tagCrewPrivateAssistant(msg: Message): Message;
   prepareTurnContext(currentUserMessage: string): { block: string };

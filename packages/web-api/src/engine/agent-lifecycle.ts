@@ -2,6 +2,7 @@ import {
   Agent,
   applyWebSearchConfigFromAgentConfig,
   buildCrewPrivateIdentityPrompt,
+  getPersonaStore,
   SessionLogger,
   getLogCollector,
   Gateway,
@@ -19,6 +20,7 @@ import {
   isChannelSessionId,
   isCrewVoiceSessionId,
   parseChannelBindingFromSessionId,
+  crewParticipationMode,
 } from '@agentx/shared';
 import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
@@ -132,13 +134,10 @@ export function createAgent(
     } catch { /* best effort */ }
   };
 
-  // Load persona config from DB (brain/secret-sauce storage)
+  // Load persona from JSON file store
   let persona: any = null;
   try {
-    const store = eng.sessionManager.getStorageAdapter();
-    if (store && typeof store.getPersona === 'function') {
-      persona = store.getPersona();
-    }
+    persona = getPersonaStore().get();
   } catch { /* best effort */ }
 
   const activeModelId = cfg.provider.activeModel || (session as { modelId?: string }).modelId || '';
@@ -246,13 +245,13 @@ export function createAgent(
     agent.tokens.setUsed(smTracker.tokensUsed);
   }
 
-  (agent.sauce as { crew: CrewManager }).crew = eng.crewManager;
-  agent.sauce.crew.refresh();
+  agent.setCrewManager(eng.crewManager);
+  agent.crew.refresh();
 
   if (crewPrivateHost) {
     agent.addCrewMember(crewPrivateHost);
     agent.setCrewEnabled(crewPrivateHost.id, true);
-  } else {
+  } else if (crewParticipationMode(session.contextKind ?? 'agent_x', session.id) !== 'none') {
     const sessionCrewStates = eng.sessionManager.loadCrewStates(session.id);
     for (const state of sessionCrewStates) {
       if (!state.enabled) continue;

@@ -109,16 +109,11 @@ export { systemInfo, systemDiskSpace, systemEnv, systemWhich, systemPorts, syste
 export { browserOpen, browserScreenshot, browserClick, browserEval } from './tools/index.js';
 export { agentXConfigSchema } from './config/ConfigSchema.js';
 export * from './config/paths.js';
-export { SecretSauceManager, CrewManager, SoulManager, MemoryManager, DiaryManager, IdentityManager } from './secret-sauce/index.js';
-export { ExperienceEngine } from './neural/ExperienceEngine.js';
+export { CrewManager } from './crew/CrewManager.js';
+export type { CrewHostSnapshot } from './crew/CrewManager.js';
+export { PersonaStore, getPersonaStore, setPersonaStore, DEFAULT_PERSONA } from './persona/PersonaStore.js';
 export { TurnFeedbackService } from './feedback/index.js';
 export type { TurnFeedbackStore } from './feedback/index.js';
-export { EmotionEngine } from './neural/EmotionEngine.js';
-export { GrowthEngine } from './neural/GrowthEngine.js';
-export type { GrowthState } from './neural/GrowthEngine.js';
-export type { EmotionalState } from './neural/EmotionEngine.js';
-export { createPgNeuralDb } from './neural/NeuralDbAdapter.js';
-export type { NeuralDb, NeuralStatement } from './neural/NeuralDbAdapter.js';
 export { MemoryFabric, DEFAULT_EMBEDDING_DIMENSION, setMemoryFabricInstance, getMemoryFabricInstance } from './neural/MemoryFabric.js';
 export type { MemoryNode, MemoryEdge, MemoryNodeInput, MemoryEdgeInput, MemorySource, ContextAssemblyResult, MemoryNodeCategory, MemoryEdgeType, GraphWalkResult } from './neural/MemoryFabric.js';
 export { MemoryExtractor, createLocalLLMExtractor } from './neural/MemoryExtractor.js';
@@ -131,8 +126,6 @@ export { segmentText } from './neural/SemanticSegmenter.js';
 export type { ContentType, SegmentOptions } from './neural/SemanticSegmenter.js';
 export { assembleGraph } from './neural/GraphAssembler.js';
 export type { TopologyMetrics, AssembleOptions, AssembledGraph } from './neural/GraphAssembler.js';
-export { StructuredMemoryPipeline } from './neural/StructuredMemoryPipeline.js';
-export type { PipelineInput, StructuredPipelineResult } from './neural/StructuredMemoryPipeline.js';
 export { deterministicNodeId, normalizeForHash } from './neural/DeterministicId.js';
 export { MemoryService as MemoryIngestionService } from './neural/MemoryService.js';
 export type { IngestInput, IngestResult } from './neural/MemoryService.js';
@@ -141,8 +134,6 @@ export type { MemoryServiceOptions } from './services/memory/MemoryService.js';
 export { MemoryCacheService } from './services/memory/MemoryCacheService.js';
 export type { MemoryCacheServiceOptions } from './services/memory/MemoryCacheService.js';
 export type { IMemoryService, MemoryContextState, AssembleContextOptions, ChatTurnIngestOptions, SearchOptions } from './services/memory/IMemoryService.js';
-export { DocumentIngester } from './neural/DocumentIngester.js';
-export type { DocumentIngestInput, DocumentIngestResult, IngestProgressEvent, IngestProgressFn } from './neural/DocumentIngester.js';
 export { RagDocument } from './neural/RagDocument.js';
 export type { Chunk, RagDocumentMetadata, RagDocumentOptions } from './neural/RagDocument.js';
 export { parsePdf } from './neural/PdfParser.js';
@@ -156,10 +147,6 @@ export { MODEL_CATALOG, getModelById, getModelsByTier, getCompatibleModels, getR
 export type { ModelOption, ModelCapability } from './neural/ModelCatalog.js';
 export { UnifiedLocalModelProvider, createUnifiedModelProvider } from './neural/UnifiedLocalModelProvider.js';
 export type { UnifiedModelConfig } from './neural/UnifiedLocalModelProvider.js';
-export { MemoryPipeline } from './neural/MemoryPipeline.js';
-export type { PipelineOptions, PipelineResult, DistillFn } from './neural/MemoryPipeline.js';
-export { WebCrawler } from './neural/WebCrawler.js';
-export type { CrawlOptions, CrawlResult } from './neural/WebCrawler.js';
 export { extractArticle } from './neural/ReadabilityExtractor.js';
 export type { ExtractedArticle } from './neural/ReadabilityExtractor.js';
 export { MemoryMigrationRunner } from './neural/MemoryMigrationRunner.js';
@@ -167,10 +154,8 @@ export type { Migration } from './neural/MemoryMigrationRunner.js';
 export { setDeepSearchStageResult } from './search/pipeline.js';
 export { LocalEmbeddingProvider } from './neural/LocalEmbeddingProvider.js';
 export { OnnxEmbeddingProvider, setDefaultEmbeddingCacheDir, EMBEDDING_DIMENSION, setEmbedderInstance, getEmbedderInstance } from './neural/OnnxEmbeddingProvider.js';
-export { CommunitySummarizer } from './neural/CommunitySummarizer.js';
-export type { CommunitySummarizerOptions, SummarizationResult } from './neural/CommunitySummarizer.js';
-export { GraphRagRetriever } from './neural/GraphRagRetriever.js';
-export type { GraphRagRetrievalOptions, GraphRagResult } from './neural/GraphRagRetriever.js';
+export { vectorMemoryPrefetch } from './neural/VectorMemoryPrefetch.js';
+export type { VectorMemoryPrefetchOptions, VectorMemoryPrefetchResult } from './neural/VectorMemoryPrefetch.js';
 export { UserChatMemoryIngester, USER_PROFILE_TAG, shouldExtractUserChatMemory } from './neural/UserChatMemoryIngester.js';
 export type { UserChatMemoryFact } from './neural/UserChatMemoryIngester.js';
 export { ChatTurnMemoryIngester, CHAT_MEMORY_TAG } from './neural/ChatTurnMemoryIngester.js';
@@ -181,8 +166,6 @@ export type { NodeCreatedEvent, SynapseConnectedEvent, NeuronActivatedEvent, Bra
 export { BrainEventStreamer, getGlobalBrainEventStreamer, setGlobalBrainEventStreamer } from './neural/BrainEventStreamer.js';
 export type { BridgeGenerationOptions, BridgeResult } from './neural/CrossClusterBridgeGenerator.js';
 export { CrossClusterBridgeGenerator } from './neural/CrossClusterBridgeGenerator.js';
-export type { IngestionPipelineOptions, IngestionResult } from './neural/NeuralBrainIngestionPipeline.js';
-export { NeuralBrainIngestionPipeline } from './neural/NeuralBrainIngestionPipeline.js';
 export type { CleanupOptions, CleanupResult } from './neural/TestDataCleaner.js';
 export { TestDataCleaner } from './neural/TestDataCleaner.js';
 export type { DividerCleanupOptions, DividerCleanupResult } from './neural/DividerNodeCleaner.js';
@@ -200,9 +183,6 @@ export { PiiRedactor } from './neural/PiiRedactor.js';
 export type { PiiRedactionResult, PiiRedactorOptions } from './neural/PiiRedactor.js';
 export { SecureVault } from './neural/SecureVault.js';
 export type { VaultEntry, KeyProvider } from './neural/SecureVault.js';
-export { IngestionQueue } from './neural/IngestionQueue.js';
-export type { IngestionJob, IngestionJobInput, ClaimedJob, JobKind, JobStatus, StageDetail, IngestionEvent } from './neural/IngestionQueue.js';
-export { IngestionWorker } from './neural/IngestionWorker.js';
 export { BrainBackup } from './neural/BrainBackup.js';
 export type { BrainBackupResult, BrainRestoreResult, BrainBackupOptions, BrainRestoreOptions } from './neural/BrainBackup.js';
 export { locatePostgresBinaries } from './neural/PostgresBinaryLocator.js';
@@ -292,8 +272,9 @@ export { DefaultTelemetryBus } from './telemetry/index.js';
 export type { TelemetryBus, TelemetryEvent, TelemetryConfig } from '@agentx/shared';
 
 // Phase 0: Storage adapter
-export { PostgresStorageAdapter, SessionPermissionStore } from './storage/index.js';
+export { PostgresStorageAdapter, SessionPermissionStore, ensureDestinationSchema, transferPostgresStorage } from './storage/index.js';
 export type { PostgresConfig } from './storage/PostgresStorageAdapter.js';
+export type { StorageTransferResult } from './storage/pg-storage-transfer.js';
 export type { StorageAdapter, StorableSession, StorableMessage, StorableTokenLog, StorablePermission } from '@agentx/shared';
 
 // Phase 2: Plugin system
@@ -465,8 +446,16 @@ export { SystemMetricsService, getSystemMetricsService, resetSystemMetricsServic
 export type { SystemMetricsSnapshot } from './system/SystemMetricsService.js';
 export { WeatherService, getWeatherService, resetWeatherService } from './system/WeatherService.js';
 export type { WeatherResponse, WeatherConditions } from './system/WeatherService.js';
-export { KnowledgeBaseManager } from './knowledge/index.js';
 export {
-  getKnowledgeBaseManager,
-  setKnowledgeBaseManager,
-} from './knowledge/index.js';
+  KnowledgeBaseService,
+  KnowledgeBaseSourceStore,
+  DocumentIngestPipeline,
+  searchKnowledgeBaseDocuments,
+  getKnowledgeBaseService,
+  setKnowledgeBaseService,
+} from './knowledge-base/index.js';
+export type {
+  KnowledgeBaseServiceOptions,
+  KnowledgeBaseStatusListener,
+  DocumentIngestPipelineOptions,
+} from './knowledge-base/index.js';

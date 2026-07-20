@@ -11,7 +11,7 @@ import type {
   VoiceSessionMode,
 } from '@agentx/shared';
 import { getAgentFilesDir, getLogger, isCrewVoiceSessionId } from '@agentx/shared';
-import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCrewPrivateIdentityPrompt } from '@agentx/engine';
+import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCrewPrivateIdentityPrompt, getPersonaStore } from '@agentx/engine';
 import type { VoiceEngineSession, VoiceEngineState } from './types.js';
 import { getEngine } from '../../engine.js';
 import { persistMessageDirect } from '../../ws.js';
@@ -681,8 +681,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
 
   private getPersona() {
     try {
-      const store = getEngine().sessionManager.getStorageAdapter();
-      return store?.getPersona?.() ?? null;
+      return getPersonaStore().get();
     } catch {
       return null;
     }

@@ -7,7 +7,7 @@
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { isLocalModelSupported, isNeuralBrainSupported } from '@agentx/shared';
+import { isLocalModelSupported, resolveNeuralCortexEmbeddingTier } from '@agentx/shared';
 
 const execAsync = promisify(exec);
 
@@ -37,8 +37,9 @@ export class SystemCapabilityDetector {
     return isLocalModelSupported(os.totalmem() / (1024 ** 3));
   }
 
-  static isNeuralBrainSupported(): boolean {
-    return isNeuralBrainSupported(os.totalmem() / (1024 ** 3));
+  static isCortexBgeTier(): boolean {
+    const ramGb = os.totalmem() / (1024 ** 3);
+    return resolveNeuralCortexEmbeddingTier(ramGb) === 'bge-m3';
   }
 
   static async detect(): Promise<SystemCapabilities> {

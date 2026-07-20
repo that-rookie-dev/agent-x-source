@@ -44,7 +44,7 @@ function log(message) {
 }
 
 function removeExtensionStaging(workDir) {
-  for (const name of ['age-install', 'pgvector-install']) {
+  for (const name of ['pgvector-install']) {
     const target = join(workDir, name);
     if (existsSync(target)) {
       rmSync(target, { recursive: true, force: true });

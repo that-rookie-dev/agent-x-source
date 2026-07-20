@@ -22,7 +22,6 @@ vi.mock('../src/engine.js', () => ({
   clearEngine: vi.fn(),
   getOrCreateAgent: vi.fn(),
   ensureChannelAgent: vi.fn(),
-  getVitals: vi.fn(),
   getAutonomyStatus: vi.fn(),
   applyRuntimeSettings: vi.fn(),
   setEngineDEK: vi.fn(),

@@ -50,9 +50,6 @@ const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
   { id: 'knowledge-base', icon: <LibraryBooksIcon sx={{ fontSize: 16 }} />, label: 'Knowledge Base' },
   { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
   { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
-  // Hidden until wired — see source/MILESTONE.md
-  // { id: 'soul', icon: AutoAwesomeIcon, label: 'Soul' },
-  // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
   // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
 ];
 

@@ -1,5 +1,5 @@
 import type { Agent } from '@agentx/engine';
-import { applyWebSearchConfigFromAgentConfig, isWebSearchAvailableForChat } from '@agentx/engine';
+import { applyWebSearchConfigFromAgentConfig, getPersonaStore, isWebSearchAvailableForChat } from '@agentx/engine';
 import type { AgentPersonaConfig, AgentXConfig, ClientSituation, Message, StorageAdapter, StorableMessage, TurnAttachment } from '@agentx/shared';
 import { normalizeClientSituation } from '@agentx/shared';
 import { getEngine } from './engine.js';
@@ -91,10 +91,7 @@ YOUR RESPONSIBILITIES:
 
 export function refreshAgentPersona(agent: Agent): void {
   try {
-    const eng = getEngine();
-    const store = eng.sessionManager.getStorageAdapter();
-    if (!store?.getPersona) return;
-    const persona = store.getPersona();
+    const persona = getPersonaStore().get();
     const current = agent.getPersona();
     if (JSON.stringify(persona) === JSON.stringify(current)) return;
     agent.applyPersona(persona);
@@ -463,15 +460,6 @@ export function recordTurnFeedback(input: {
         agent?.recordCrewFeedback?.(input.crewId, input.rating === 'positive');
       } catch { /* best-effort */ }
     }
-    try {
-      agent?.recordTrial?.(input.sessionId, {
-        category: 'user_feedback',
-        action: input.turnSummary || 'assistant_turn',
-        result: input.rating === 'positive' ? 'success' : 'failure',
-        reward: input.rating === 'positive' ? 1 : -1,
-        metadata: { messageId: input.messageId, crewId: input.crewId, contextKind: input.contextKind },
-      });
-    } catch { /* best-effort neural sync */ }
   }
 
   try {

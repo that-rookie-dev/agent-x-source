@@ -8,7 +8,7 @@ import type {
   StorableTokenLog,
   RecordMeta,
 } from '@agentx/shared';
-import type { SessionEvent, Crew, CrewCreateInput, AgentPersonaConfig, SessionListKpis, Session } from '@agentx/shared';
+import type { SessionEvent, Crew, CrewCreateInput, SessionListKpis, Session } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { normalizeSessionUpdates } from '../session/session-field-utils.js';
 import { estimateTokensFromMessages } from '../session/session-token-utils.js';
@@ -118,7 +118,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
   private lazyHydrate: boolean;
   private onProgress?: (line: string) => void;
   private hydratedSessions = new Set<string>();
-  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], persona: null, checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map(), voiceRealtime: new Map() };
+  private cache: CacheState = { sessions: new Map(), childSessions: new Map(), messages: new Map(), parts: new Map(), crews: [], checkpoints: new Map(), crewStates: new Map(), sessionEvents: new Map(), tokenLogs: new Map(), crewFeedback: new Map(), turnFeedback: new Map(), resumeState: new Map(), permissionRules: new Map(), taskSnapshots: new Map(), voiceRealtime: new Map() };
 
   constructor(config: PostgresConfig) {
     const poolConfig = {
@@ -211,18 +211,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     await this.migrate();
   }
 
-  /** Seed default persona if none exists. Idempotent. */
-  async seedDefaultPersona(): Promise<{ created: boolean }> {
-    const id = '00000000-0000-0000-0000-000000000001';
-    const { rows } = await this.pool.query('SELECT 1 AS ok FROM agent_persona WHERE id = $1', [id]);
-    if (rows.length > 0) return { created: false };
-    await this.pool.query(
-      `INSERT INTO agent_persona (id, name, description, communication_style, decision_making, domain_context, traits)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, 'Agent-X', 'A sophisticated AI assistant with British precision and unwavering loyalty. Expert in data analysis, system management, and predictive modeling.', 'formal', 'balanced', 'Intelligent system management, data analysis, predictive modeling, and personal assistance with a focus on precision, security, and real-time situational awareness.', JSON.stringify(['Loyal', 'Precise', 'Analytical', 'Proactive', 'Witty', 'Calm under pressure'])]
-    );
-    return { created: true };
-  }
 
   private crewFromRow(row: Record<string, unknown>): Crew {
     return crewFromRowImpl(row);
@@ -353,7 +341,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
       pool: this.pool,
       progress: (line) => this.progress(line),
       crewFromRow: (row) => this.crewFromRow(row),
-      seedDefaultPersona: () => this.seedDefaultPersona(),
       hydrateEssentialCache: () => this.hydrateEssentialCache(),
       hydrateCache: () => this.hydrateCache(),
       lazyHydrate: this.lazyHydrate,
@@ -1000,29 +987,6 @@ export class PostgresStorageAdapter implements StorageAdapter {
     void this.flushWriteQueue().catch((error) => {
       logger.error('PG_CREW_FLUSH', error, { op: 'deleteCrew', id });
     });
-  }
-
-  // ─── Agent Persona ────────────────────────────────────────────
-
-  getPersona(): AgentPersonaConfig | null {
-    return this.cache.persona;
-  }
-
-  setPersona(persona: AgentPersonaConfig): void {
-    this.cache.persona = { ...persona };
-    this.write(
-      `INSERT INTO agent_persona (id,name,description,communication_style,decision_making,domain_context,traits)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT(id) DO UPDATE SET
-         name = EXCLUDED.name,
-         description = EXCLUDED.description,
-         communication_style = EXCLUDED.communication_style,
-         decision_making = EXCLUDED.decision_making,
-         domain_context = EXCLUDED.domain_context,
-         traits = EXCLUDED.traits,
-         updated_at = NOW()`,
-      ['00000000-0000-0000-0000-000000000001', persona.name, persona.description, persona.communicationStyle, persona.decisionMaking, persona.domainContext, JSON.stringify(persona.traits)]
-    );
   }
 
   // ─── DB Info ───────────────────────────────────────────────────

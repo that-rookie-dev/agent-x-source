@@ -22,19 +22,18 @@ import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutoma
 import { registerMarkdownRoutes } from './markdown-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { createApiService } from './services/ApiService.js';
-import { getKnowledgeBaseManager } from './services/knowledge-base.js';
-import { memoryRouter } from './memory-api.js';
+import { getKnowledgeBaseService } from './services/knowledge-base.js';
+import { neuralCortexRouter } from './routes/neural-cortex/index.js';
 import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import localModelRouter from './local-model-api.js';
-import embeddingModelRouter from './embedding-model-api.js';
 import modelBenchmarkRouter from './model-benchmark-api.js';
 import voiceRouter from './voice-api.js';
 import { router as jobsRouter } from './routes/jobs.js';
 import { router as healthRouter } from './routes/health.js';
 import { router as metricsRouter } from './routes/metrics.js';
 import { router as legacyRouter } from './routes/legacy.js';
-import { router as knowledgeRouter } from './routes/knowledge.js';
-import { DATA_DIR, SESSIONS_DIR, UPLOADS_DIR, UI_DIST, NEURON_DIST } from './api-helpers.js';
+import { router as knowledgeBaseRouter } from './routes/knowledge-base.js';
+import { DATA_DIR, SESSIONS_DIR, UPLOADS_DIR, UI_DIST } from './api-helpers.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
 const HOST = process.env['AGENTX_HOST'] ?? '127.0.0.1';
@@ -82,9 +81,6 @@ try {
 
 if (!existsSync(UI_DIST)) {
   startupErrors.push(`UI dist directory not found at ${UI_DIST}. The web UI will not be served. Set AGENTX_UI_DIR or build the web-ui package.`);
-}
-if (!existsSync(NEURON_DIST)) {
-  startupErrors.push(`Neuron dist directory not found at ${NEURON_DIST}. The brain visualization will not be served. Set AGENTX_NEURON_DIR or build the web-neuron package.`);
 }
 
 if (PORT < 1 || PORT > 65535) {
@@ -159,9 +155,8 @@ app.use((_req, res, next) => {
 });
 
 // Existing service routers
-app.use('/api', memoryRouter);
+app.use('/api', neuralCortexRouter());
 app.use('/api', localModelRouter);
-app.use('/api', embeddingModelRouter);
 app.use('/api', modelBenchmarkRouter);
 app.use('/api', voiceRouter);
 app.use('/api', integrationsRouter);
@@ -173,7 +168,7 @@ app.use('/', healthRouter({ api }));
 app.use('/api/jobs', jobsRouter({ api }));
 app.use('/', metricsRouter({ api }));
 app.use('/', legacyRouter({ api }));
-app.use('/api', knowledgeRouter({ api }));
+app.use('/api', knowledgeBaseRouter({ api }));
 
 // Global error handler
 app.use(errorHandler);
@@ -256,7 +251,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       getLogger().warn('STARTUP', `Agent-X overview bridge init failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     try {
-      const kb = await getKnowledgeBaseManager();
+      const kb = await getKnowledgeBaseService();
       if (kb) {
         getLogger().info('STARTUP', 'Knowledge base manager initialized');
       } else {

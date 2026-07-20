@@ -14,7 +14,7 @@ import { MigrationUpgrade } from '../components/MigrationUpgrade';
 import { useVoiceOptional } from '../components/voice/VoiceProvider';
 import { useLocationPermission } from '../hooks/useLocationPermission';
 import { usePageVisible } from '../hooks/usePageVisible';
-import { webuiActive, agent, crewCatalog, crews, clientSituation as clientSituationApi, type AgentVitals, type CatalogSeedStatusResponse, type Crew } from '../api';
+import { webuiActive, crewCatalog, crews, clientSituation as clientSituationApi, type CatalogSeedStatusResponse, type Crew } from '../api';
 import type { HealthStatus } from '../api';
 
 function computeTotalCrewCatalogCount(
@@ -80,7 +80,6 @@ export function DockingStation() {
   const [checking, setChecking] = useState(true);
   const [visibleLines, setVisibleLines] = useState(0);
   const [lines, setLines] = useState<ReturnType<typeof buildTerminalLines>>([]);
-  const [vitals, setVitals] = useState<AgentVitals | null>(null);
   const [catalogSeed, setCatalogSeed] = useState<CatalogSeedStatusResponse | null>(null);
   const [rosterCrews, setRosterCrews] = useState<Crew[]>([]);
   const introStartedRef = useRef(false);
@@ -148,14 +147,7 @@ export function DockingStation() {
     };
   }, [serverOnline, catalogSeed?.status, pageVisible]);
 
-  useEffect(() => {
-    if (!pageVisible) return;
-    agent.vitals().then(setVitals).catch(() => {});
-    const interval = setInterval(() => { agent.vitals().then(setVitals).catch(() => {}); }, 60000);
-    return () => clearInterval(interval);
-  }, [pageVisible]);
-
-  // Sync the app launch location/timezone to the server so channel agents (Telegram, Slack, etc.)
+  // Sync the app launch location/timezone to the server
   // use the same context as the desktop/web UI instead of stale or inferred location.
   useEffect(() => {
     if (!serverOnline || !location.clientSituation) return;
@@ -439,60 +431,6 @@ export function DockingStation() {
       </Box>
       </Box>
 
-      {vitals && vitals.status !== 'uninitialized' && (
-        <Box sx={{ px: 2, pb: 2, flexShrink: 0 }}>
-          <Box sx={{
-            py: 1.5,
-            px: 2,
-            bgcolor: colors.bg.secondary,
-            borderRadius: '6px',
-            border: `1px solid ${colors.border.default}`,
-          }}>
-            <Box sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0,
-              flexWrap: 'nowrap',
-              overflow: 'hidden',
-            }}>
-              {([
-                { label: 'Age', value: `${vitals.ageDays}d` },
-                { label: 'Level', value: vitals.level, color: colors.accent.blue },
-                { label: 'Wisdom', value: `${Math.round(vitals.wisdomScore)}` },
-                { label: 'Experiences', value: String(vitals.totalExperiences) },
-                { label: 'Memories', value: String(vitals.memories.total) },
-                {
-                  label: 'Mood',
-                  value: vitals.currentMood,
-                  color:
-                    vitals.currentMood === 'enthusiastic' || vitals.currentMood === 'confident' ? colors.accent.green
-                      : vitals.currentMood === 'frustrated' || vitals.currentMood === 'anxious' ? colors.accent.orange
-                        : colors.text.secondary,
-                },
-              ] as Array<{ label: string; value: string; color?: string }>).map((chip, index) => (
-                <Box key={chip.label} sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                  {index > 0 && (
-                    <Typography
-                      component="span"
-                      sx={{
-                        color: colors.border.strong,
-                        fontFamily: "'JetBrains Mono', monospace",
-                        fontSize: '0.62rem',
-                        mx: 1.25,
-                        userSelect: 'none',
-                      }}
-                    >
-                      |
-                    </Typography>
-                  )}
-                  <VitalChip label={chip.label} value={chip.value} color={chip.color} />
-                </Box>
-              ))}
-            </Box>
-          </Box>
-        </Box>
-      )}
-
       <Footer />
     </Box>
     </MigrationUpgrade>
@@ -562,20 +500,4 @@ function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return `${h}h ${m}m`;
-}
-
-function VitalChip({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-      <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '0.5px' }}>
-        {label}
-      </Typography>
-      <Typography sx={{
-        fontFamily: "'JetBrains Mono', monospace", fontSize: '0.62rem', fontWeight: 700,
-        color: color || colors.text.primary,
-      }}>
-        {value}
-      </Typography>
-    </Box>
-  );
 }

@@ -6,6 +6,8 @@ export interface UseKnowledgeBaseReturn {
   sources: KnowledgeSource[];
   loading: boolean;
   error: string | null;
+  /** Latest human-readable ingest status line per source (from WS). */
+  ingestDetails: Record<string, string>;
   refresh: () => Promise<void>;
   getSource: (id: string) => Promise<KnowledgeSource | null>;
   upload: (file: File, sessionId?: string) => Promise<KnowledgeSource>;
@@ -23,6 +25,7 @@ export function useKnowledgeBase(sessionId?: string): UseKnowledgeBaseReturn {
   const [error, setError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [ingestDetails, setIngestDetails] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async (opts?: { silent?: boolean }) => {
     try {
@@ -126,7 +129,13 @@ export function useKnowledgeBase(sessionId?: string): UseKnowledgeBaseReturn {
     };
 
     const handleEvent = (event: KnowledgeSourceEvent) => {
-      if (event.type === 'knowledge_source_status') {
+      if (event.type === 'knowledge_base_source_status') {
+        if (event.detail) {
+          setIngestDetails((prev) => {
+            if (prev[event.sourceId] === event.detail) return prev;
+            return { ...prev, [event.sourceId]: event.detail! };
+          });
+        }
         patchSource(
           event.sourceId,
           {
@@ -141,14 +150,24 @@ export function useKnowledgeBase(sessionId?: string): UseKnowledgeBaseReturn {
           },
           { refreshIfMissing: true },
         );
-      } else if (event.type === 'knowledge_source_ready') {
+      } else if (event.type === 'knowledge_base_source_ready') {
+        setIngestDetails((prev) => {
+          const line = 'Intel package indexed and online.';
+          if (prev[event.sourceId] === line) return prev;
+          return { ...prev, [event.sourceId]: line };
+        });
         void refresh({ silent: true });
         patchSource(event.sourceId, {
           status: 'ready',
           progress: 100,
           error: undefined,
         });
-      } else if (event.type === 'knowledge_source_failed') {
+      } else if (event.type === 'knowledge_base_source_failed') {
+        setIngestDetails((prev) => {
+          const line = event.error || 'Ingest failed.';
+          if (prev[event.sourceId] === line) return prev;
+          return { ...prev, [event.sourceId]: line };
+        });
         patchSource(
           event.sourceId,
           { status: 'failed', error: event.error },
@@ -165,6 +184,7 @@ export function useKnowledgeBase(sessionId?: string): UseKnowledgeBaseReturn {
     sources,
     loading,
     error,
+    ingestDetails,
     refresh,
     getSource,
     upload,

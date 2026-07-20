@@ -8,6 +8,7 @@ export * from './channel-context-link.js';
 export * from './channel-integration-overlap.js';
 export * from './resume-turn.js';
 export * from './memory-fabric-scope.js';
+export * from './crew-session-policy.js';
 export * from './paths.js';
 export * from './tokens.js';
 export * from './model-limits.js';

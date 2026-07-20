@@ -42,7 +42,7 @@ import { useGlobalError } from '../components/ErrorBand';
 import { LocalModelStep } from '../components/LocalModelStep';
 import type { ActiveDownload } from '../components/DownloadIndicator';
 import type { ProviderInfo, ModelInfo, AgentXConfig, BenchmarkRunResult } from '../api';
-import { useLocalModelSupported, useNeuralBrainSupported, useSystemCapabilities } from '../hooks/useSystemCapabilities';
+import { useLocalModelSupported, useSystemCapabilities } from '../hooks/useSystemCapabilities';
 import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/ModelBenchmarkRunner';
 import { WizardVoiceStep } from '../components/setup/WizardVoiceStep';
 import { WizardNeuralStep } from '../components/setup/WizardNeuralStep';
@@ -139,11 +139,9 @@ export function SetupWizard() {
   const { setConfig, setAuthState, setView } = useApp();
   const navigate = useNavigate();
   const localModelSupported = useLocalModelSupported();
-  const neuralBrainSupported = useNeuralBrainSupported();
   const systemCaps = useSystemCapabilities();
   const steps = useMemo(() => ALL_STEPS.filter((s) => {
     if (s === 'Local Model' && !localModelSupported) return false;
-    // Neural Core is always shown — low-RAM systems get a warning + opt-in.
     return true;
   }), [localModelSupported]);
   const [step, setStep] = useState(0);
@@ -151,7 +149,6 @@ export function SetupWizard() {
   const isStepSupported = useCallback((stepIndex: number) => {
     const label = ALL_STEPS[stepIndex];
     if (label === 'Local Model' && !localModelSupported) return false;
-    // Neural Core is always shown — low-RAM systems get a warning + opt-in.
     return stepIndex >= 0 && stepIndex < ALL_STEPS.length;
   }, [localModelSupported]);
 
@@ -246,8 +243,6 @@ export function SetupWizard() {
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
-  // Track the explicit enable/disable decision from the Neural Core step.
-  const [neuralBrainEnabled, setNeuralBrainEnabled] = useState(neuralBrainSupported);
 
   const resetPgTest = () => {
     setPgTestResult(null);
@@ -597,7 +592,6 @@ export function SetupWizard() {
       if (!localModelSupported) {
         setupPatch.localModel = { enabled: false };
       }
-      setupPatch.neuralBrain = neuralBrainEnabled;
       await config.completeSetup(callsign.trim());
       await config.update(setupPatch);
       // Save the agent persona chosen in the wizard.
@@ -800,18 +794,18 @@ export function SetupWizard() {
                 {pgTestResult && (() => {
                   const extensionChecks: DbExtensionCheck[] = pgTestResult.checks?.length
                     ? pgTestResult.checks
-                    : pgTestResult.ok
+                    : pgTestResult.ok && pgTestResult.vectorAvailable !== undefined
                       ? [{
-                          id: 'age',
-                          label: 'Apache AGE',
-                          status: (pgTestResult.ageAvailable ? 'ok' : 'warn') as DbExtensionCheck['status'],
-                          message: pgTestResult.ageAvailable
-                            ? 'Apache AGE graph extension is available.'
-                            : (pgTestResult.ageError ?? 'Apache AGE is not available on this server.'),
+                          id: 'pgvector',
+                          label: 'pgvector',
+                          status: (pgTestResult.vectorAvailable ? 'ok' : 'fail') as DbExtensionCheck['status'],
+                          message: pgTestResult.vectorAvailable
+                            ? 'pgvector extension is installed.'
+                            : (pgTestResult.vectorError ?? 'pgvector is required for neural memory.'),
                         }]
                       : [];
-                  const neuralCoreCheck = pgTestResult.ok && !neuralBrainSupported
-                    ? { status: 'warn' as const, label: 'Neural Core (this Mac)', message: 'Requires 16 GB+ RAM for stable operation. You can opt in later in the wizard, but performance may be affected.' }
+                  const neuralCoreCheck = pgTestResult.ok && systemCaps?.cortexDegraded
+                    ? { status: 'ok' as const, label: 'Neural Core', message: 'Online and ready. A more capable host will unlock the agent\'s full potential.' }
                     : null;
                   const detailRows = [
                     ...extensionChecks.map((check) => ({
@@ -1131,9 +1125,8 @@ export function SetupWizard() {
 
               {step === 6 && (
                 <WizardNeuralStep
-                  neuralBrainSupported={neuralBrainSupported}
                   totalMemoryGB={systemCaps?.totalMemoryGB}
-                  onComplete={(enabled) => { setNeuralBrainEnabled(enabled); next(); }}
+                  onComplete={next}
                 />
               )}
 
@@ -1370,7 +1363,9 @@ export function SetupWizard() {
                     {localModelSupported && (
                       <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
                     )}
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Neural Core: {neuralBrainEnabled ? 'Embedding models enabled' : 'Skipped'}</Typography>
+                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>
+                      Neural Core: Online
+                    </Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>

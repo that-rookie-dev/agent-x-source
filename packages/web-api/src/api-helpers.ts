@@ -17,7 +17,6 @@ export const SESSIONS_DIR = join(DATA_DIR, 'sessions');
 export const UPLOADS_DIR = join(DATA_DIR, 'uploads');
 
 export const UI_DIST = process.env['AGENTX_UI_DIR'] || join(__dirname, '..', '..', 'web-ui', 'dist');
-export const NEURON_DIST = process.env['AGENTX_NEURON_DIR'] || join(__dirname, '..', '..', 'web-neuron', 'dist');
 
 export function getSessionDir(sessionId: string): string {
   return join(SESSIONS_DIR, sessionId);

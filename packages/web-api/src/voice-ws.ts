@@ -1,7 +1,7 @@
 import type { Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { VoiceService, WebSocketVoiceTransport, mergeVoiceConfig } from '@agentx/engine';
+import { VoiceService, WebSocketVoiceTransport, mergeVoiceConfig, getPersonaStore } from '@agentx/engine';
 import { XaiRealtimeEngine } from './voice/engines/XaiRealtimeEngine.js';
 import type { VoiceEngineSession } from './voice/engines/types.js';
 import { VoiceStreamSpeakPipeline, VoiceTurnTimingTracker } from './voice-turn-tts.js';
@@ -163,7 +163,7 @@ function buildPermissionSpokenPrompt(tool: string, riskLevel: string, argsSummar
     : '';
   let agentName = 'Agent-X';
   try {
-    const persona = getEngine().storageAdapter.getPersona?.();
+    const persona = getPersonaStore().get();
     if (persona?.name) agentName = persona.name;
   } catch { /* ignore */ }
   return `${agentName} wants to ${action}.${riskNote} Say allow, always, or deny.`;

@@ -75,9 +75,6 @@ export interface AgentXConfig extends Record<string, unknown> {
   /** Run shell commands in Docker sandbox for isolation (default: false) */
   useSandbox?: boolean;
 
-  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
-  neuralBrain?: boolean;
-
   /** Optional PostgreSQL connection config. */
   postgres?: {
     connectionString?: string;
@@ -114,14 +111,9 @@ export interface LocalModelConfig {
 }
 
 export interface FeatureRoutingConfig {
-  memoryDistillation?: 'cloud' | 'local';
   memoryExtraction?: 'cloud' | 'local';
   memoryConsolidation?: 'cloud' | 'local';
   embeddings?: 'cloud' | 'local';
-  /** GraphRAG entity/relation extraction. Defaults to memoryDistillation's value. */
-  graphRagExtraction?: 'cloud' | 'local';
-  /** GraphRAG community summarization. Defaults to graphRagExtraction's value. */
-  graphRagSummarization?: 'cloud' | 'local';
 }
 
 export interface ProviderSettings {

@@ -5,7 +5,6 @@ import {
   getCacheDir as _getCacheDir,
   getConfigPath as _getConfigPath,
   getDbPath as _getDbPath,
-  getSecretSauceDir as _getSecretSauceDir,
   getLogDir as _getLogDir,
 } from '@agentx/shared';
 
@@ -15,7 +14,6 @@ export const getDataDir = _getDataDir;
 export const getCacheDir = _getCacheDir;
 export const getConfigPath = _getConfigPath;
 export const getDbPath = _getDbPath;
-export const getSecretSauceDir = _getSecretSauceDir;
 export const getLogDir = _getLogDir;
 
 // Engine-specific paths (not in shared)

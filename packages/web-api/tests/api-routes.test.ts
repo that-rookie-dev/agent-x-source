@@ -4,41 +4,17 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 const mockFabric = {
-  createNode: vi.fn(),
-  bindEdge: vi.fn(),
-  fireNeuron: vi.fn(),
-  getNode: vi.fn(),
-  graphWalk: vi.fn(),
-  getGraphSnapshot: vi.fn(),
   seedSystemInitNode: vi.fn(),
   migrate: vi.fn(),
-  getScorecards: vi.fn(),
-  wipeBenchmark: vi.fn(),
-  cleanupDividerNodes: vi.fn(),
-  stageWebPayload: vi.fn(),
+  getNodesBySource: vi.fn(),
   reEmbedAll: vi.fn(),
-  getGraphLayout: vi.fn(),
-  getGraphLayoutEpoch: vi.fn(),
-  getViewport: vi.fn(),
-  listSources: vi.fn(),
-  getSourceNodes: vi.fn(),
-  pruneNodes: vi.fn(),
-  createSource: vi.fn(),
   pool: {},
 };
 
-const mockMemoryService = {
-  getFabric: vi.fn(() => mockFabric),
-  assembleContextResult: vi.fn(),
-  search: vi.fn(),
-  setVault: vi.fn(),
-};
-
 vi.mock('@agentx/engine', () => ({
-  MemoryService: vi.fn(function (this: any) { return mockMemoryService; }),
+  MemoryService: vi.fn(),
   MemoryFabric: vi.fn(),
   CognitiveBenchmark: vi.fn(),
-  IngestionQueue: vi.fn(),
   isUrlSafeForFetch: vi.fn(() => true),
   SystemCapabilityDetector: {
     detect: vi.fn(),
@@ -55,9 +31,12 @@ vi.mock('@agentx/engine', () => ({
   benchmarkArtifactBasename: vi.fn((p: string, m: string) => `${p}-${m}`),
   importMcpConfig: vi.fn(),
   parseMcpImportConfig: vi.fn((body: unknown) => body),
-  MemoryMigrationRunner: vi.fn(() => ({ detectAge: vi.fn(() => ({ available: true, error: null })) })),
+  MemoryMigrationRunner: vi.fn(function MemoryMigrationRunner(this: unknown) {
+    return {};
+  }),
   SynapticPlasticity: vi.fn(),
   MemoryConsolidator: vi.fn(),
+  OnnxEmbeddingProvider: vi.fn(),
 }));
 
 vi.mock('@huggingface/transformers', () => ({ pipeline: vi.fn(), env: { allowLocalModels: false } }));
@@ -67,8 +46,8 @@ vi.mock('@agentx/shared', () => ({
     info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
   })),
   getDataDir: vi.fn(() => '/tmp/agentx-test'),
-  isNeuralBrainSupported: vi.fn(() => true),
   isChannelCoveredMcpIntegration: vi.fn(() => false),
+  resolveNeuralCortexEmbeddingTier: vi.fn(() => 'minilm'),
 }));
 
 vi.mock('../src/engine.js', () => ({
@@ -77,30 +56,24 @@ vi.mock('../src/engine.js', () => ({
   isStorageDeferred: vi.fn(() => false),
 }));
 
-vi.mock('../src/ws.js', () => ({
-  broadcastBrainActivity: vi.fn(),
-  broadcast: vi.fn(),
+vi.mock('../src/memory/shared.js', () => ({
+  getFabric: vi.fn(() => mockFabric),
+  handleFabricUnavailable: vi.fn((res: { status: (n: number) => { json: (b: unknown) => void } }) => {
+    res.status(503).json({ error: 'Memory fabric unavailable: PostgreSQL pool not connected' });
+  }),
 }));
-
-vi.mock('../src/ingestion-worker-ref.js', () => ({ getIngestionWorker: vi.fn(() => null) }));
-vi.mock('../src/ingestion-governor.js', () => ({
-  refreshIngestionRagSourceCount: vi.fn(),
-  evaluateIngestionWorker: vi.fn(),
-}));
-vi.mock('../src/distillation-generator.js', () => ({ buildDistillationGenerator: vi.fn() }));
 
 import { getEngine } from '../src/engine.js';
-import { memoryRouter } from '../src/memory-api.js';
+import { getFabric } from '../src/memory/shared.js';
+import { neuralCortexRouter } from '../src/routes/neural-cortex/index.js';
 import localModelRouter from '../src/local-model-api.js';
-import embeddingModelRouter from '../src/embedding-model-api.js';
 import modelBenchmarkRouter from '../src/model-benchmark-api.js';
 import { integrationsRouter } from '../src/integrations-api.js';
 
 const app = express();
 app.use(express.json());
-app.use('/api', memoryRouter);
+app.use('/api', neuralCortexRouter());
 app.use('/api', localModelRouter);
-app.use('/api', embeddingModelRouter);
 app.use('/api', modelBenchmarkRouter);
 app.use('/api', integrationsRouter);
 
@@ -149,101 +122,59 @@ function mockEngineState(opts: { pgPool?: unknown; integrationHub?: unknown } = 
 beforeEach(() => {
   vi.clearAllMocks();
   mockEngineState();
+  (getFabric as any).mockReturnValue(mockFabric);
 });
 
-describe('memory-api routes', () => {
-  it('returns 503 when fabric is unavailable (no pgPool)', async () => {
-    mockEngineState({ pgPool: null });
-    const res = await fetch(`${baseUrl}/api/memory/nodes`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ label: 'n', category: 'episodic', content: 'c' }),
-    });
+describe('neural-cortex-api routes', () => {
+  it('returns 503 when fabric is unavailable', async () => {
+    (getFabric as any).mockReturnValue(null);
+    const res = await fetch(`${baseUrl}/api/neural-cortex/storage-status`);
     expect(res.status).toBe(503);
   });
 
-  it('POST /memory/nodes creates a node and broadcasts', async () => {
-    mockFabric.createNode.mockResolvedValue({ id: 'n1', label: 'n', category: 'episodic', content: 'c' });
-    const res = await fetch(`${baseUrl}/api/memory/nodes`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ label: 'n', category: 'episodic', content: 'c' }),
-    });
+  it('GET /neural-cortex/storage-status returns storage info', async () => {
+    mockFabric.migrate.mockResolvedValue({ applied: 0, currentVersion: 21 });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/storage-status`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.id).toBe('n1');
-    expect(mockFabric.createNode).toHaveBeenCalledOnce();
+    expect(body.postgres).toBe(true);
+    expect(body.schemaVersion).toBe(21);
   });
 
-  it('GET /memory/nodes/:id returns the node', async () => {
-    mockFabric.getNode.mockResolvedValue({ id: 'n1', label: 'n' });
-    const res = await fetch(`${baseUrl}/api/memory/nodes/n1`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.id).toBe('n1');
-  });
-
-  it('GET /memory/nodes/:id returns 404 when not found', async () => {
-    mockFabric.getNode.mockResolvedValue(null);
-    const res = await fetch(`${baseUrl}/api/memory/nodes/missing`);
-    expect(res.status).toBe(404);
-  });
-
-  it('POST /memory/neurons/:id/fire fires the neuron', async () => {
-    mockFabric.fireNeuron.mockResolvedValue(undefined);
-    const res = await fetch(`${baseUrl}/api/memory/neurons/n1/fire`, { method: 'POST' });
+  it('POST /neural-cortex/system-init seeds system node', async () => {
+    mockFabric.seedSystemInitNode.mockResolvedValue({ nodeId: 'sys1', created: true });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/system-init`, { method: 'POST' });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
-    expect(mockFabric.fireNeuron).toHaveBeenCalledWith('n1');
+    expect(body.nodeId).toBe('sys1');
   });
 
-  it('POST /memory/search returns search results', async () => {
-    mockMemoryService.search.mockResolvedValue([{ id: 'n1', score: 0.9 }]);
-    const res = await fetch(`${baseUrl}/api/memory/search`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ embedding: [0.1, 0.2], limit: 5 }),
-    });
+  it('GET /neural-cortex/sources/:id/nodes lists nodes', async () => {
+    mockFabric.getNodesBySource.mockResolvedValue({ nodes: [{ id: 'n1' }], total: 1 });
+    const res = await fetch(`${baseUrl}/api/neural-cortex/sources/src1/nodes`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toHaveLength(1);
+    expect(body.nodes).toHaveLength(1);
+  });
+});
+
+describe('embedding routes (neural-cortex)', () => {
+  it('GET /neural-cortex/embeddings/status returns model status', async () => {
+    const res = await fetch(`${baseUrl}/api/neural-cortex/embeddings/status`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.models).toBeDefined();
+    expect(body.allDownloaded).toBeDefined();
+    expect(body.cortexReady).toBeDefined();
+    expect(body.cortexDegraded).toBeDefined();
   });
 
-  it('POST /memory/context assembles context', async () => {
-    mockMemoryService.assembleContextResult.mockResolvedValue({ nodes: [], edges: [] });
-    const res = await fetch(`${baseUrl}/api/memory/context`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: 'test', sessionId: 's1' }),
-    });
+  it('DELETE /neural-cortex/embeddings purges models', async () => {
+    const res = await fetch(`${baseUrl}/api/neural-cortex/embeddings`, { method: 'DELETE' });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.nodes).toEqual([]);
-  });
-
-  it('GET /memory/graph returns graph snapshot', async () => {
-    mockFabric.getGraphSnapshot.mockResolvedValue({ nodes: [], edges: [] });
-    const res = await fetch(`${baseUrl}/api/memory/graph`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.nodes).toEqual([]);
-  });
-
-  it('POST /memory/benchmark/scorecards returns scorecards', async () => {
-    mockFabric.getScorecards.mockResolvedValue([{ id: 'sc1' }]);
-    const res = await fetch(`${baseUrl}/api/memory/benchmark/scorecards`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.scorecards).toHaveLength(1);
-  });
-
-  it('POST /memory/wipe-benchmark wipes and broadcasts', async () => {
-    mockFabric.wipeBenchmark.mockResolvedValue({ deletedNodes: 5 });
-    const res = await fetch(`${baseUrl}/api/memory/wipe-benchmark`, { method: 'POST' });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.deletedNodes).toBe(5);
+    expect(body.ok).toBe(true);
   });
 });
 
@@ -291,23 +222,6 @@ describe('local-model-api routes', () => {
       body: JSON.stringify({ modelId: 'unknown' }),
     });
     expect(res.status).toBe(404);
-  });
-});
-
-describe('embedding-model-api routes', () => {
-  it('GET /embedding-models/status returns model status', async () => {
-    const res = await fetch(`${baseUrl}/api/embedding-models/status`);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.models).toBeDefined();
-    expect(body.allDownloaded).toBeDefined();
-  });
-
-  it('POST /embedding-models/disable-neural-brain returns ok', async () => {
-    const res = await fetch(`${baseUrl}/api/embedding-models/disable-neural-brain`, { method: 'POST' });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.ok).toBe(true);
   });
 });
 

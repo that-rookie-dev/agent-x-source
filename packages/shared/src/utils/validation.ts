@@ -150,12 +150,9 @@ export const voiceConfigSchema = z.object({
 }).optional();
 
 export const featureRoutingConfigSchema = z.object({
-  memoryDistillation: z.enum(['cloud', 'local']).optional(),
   memoryExtraction: z.enum(['cloud', 'local']).optional(),
   memoryConsolidation: z.enum(['cloud', 'local']).optional(),
   embeddings: z.enum(['cloud', 'local']).optional(),
-  graphRagExtraction: z.enum(['cloud', 'local']).optional(),
-  graphRagSummarization: z.enum(['cloud', 'local']).optional(),
 }).optional();
 
 export const webSearchPaidProviderSchema = z.object({
@@ -248,7 +245,6 @@ export const agentXConfigSchema = z.object({
   maxRetries: z.number().int().min(0).max(10).optional(),
   maxOutputTokens: z.number().int().min(256).max(32768).optional(),
   useSandbox: z.boolean().optional(),
-  neuralBrain: z.boolean().optional(),
   permissions: z.record(z.enum(['allow', 'deny', 'ask'])).optional(),
   agents: z.record(z.object({
     model: z.string().optional(),

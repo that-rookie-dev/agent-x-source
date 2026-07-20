@@ -15,7 +15,6 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BuildIcon from '@mui/icons-material/Build';
 import ModelIcon from '@mui/icons-material/Psychology';
 import BrainIcon from '@mui/icons-material/Memory';
-import HubIcon from '@mui/icons-material/Hub';
 import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import KeyboardVoiceIcon from '@mui/icons-material/KeyboardVoice';
@@ -46,11 +45,10 @@ import { VoiceTab, mergeVoiceConfig } from './settings/VoiceTab';
 import { notifyVoiceConfigUpdated } from '../voice/support';
 import { ProvidersPanel } from './ProvidersPanel';
 import { useLocalModelSupported } from '../hooks/useSystemCapabilities';
-import { NeuralTab } from './settings/NeuralTab';
 import { KnowledgeTab } from './settings/KnowledgeTab';
 import { PermissionsTab } from './settings/PermissionsTab';
 
-type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'neural' | 'knowledge' | 'channels' | 'runtime' | 'voice' | 'permissions';
+type SettingsTab = 'appearance' | 'general' | 'persona' | 'models' | 'tools' | 'persistence' | 'local-model' | 'knowledge' | 'channels' | 'runtime' | 'voice' | 'permissions';
 
 const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }> = [
   { id: 'models', label: 'Models', icon: <ModelIcon sx={{ fontSize: 14 }} /> },
@@ -58,7 +56,6 @@ const ALL_TABS: Array<{ id: SettingsTab; label: string; icon: React.ReactNode }>
   { id: 'general', label: 'Profile', icon: <PersonIcon sx={{ fontSize: 14 }} /> },
   { id: 'persona', label: 'Persona', icon: <SmartToyIcon sx={{ fontSize: 14 }} /> },
   { id: 'local-model', label: 'Local', icon: <BrainIcon sx={{ fontSize: 14 }} /> },
-  { id: 'neural', label: 'Neural', icon: <HubIcon sx={{ fontSize: 14 }} /> },
   { id: 'knowledge', label: 'Knowledge', icon: <LibraryBooksIcon sx={{ fontSize: 14 }} /> },
   { id: 'voice', label: 'Voice', icon: <KeyboardVoiceIcon sx={{ fontSize: 14 }} /> },
   { id: 'channels', label: 'Channels', icon: <NotificationsIcon sx={{ fontSize: 14 }} /> },
@@ -206,7 +203,6 @@ export function SettingsPanel() {
         )}
         {activeTab === 'models' && <ProvidersPanel />}
         {activeTab === 'local-model' && <LocalModelTab />}
-        {activeTab === 'neural' && <NeuralTab />}
         {activeTab === 'knowledge' && <KnowledgeTab />}
         {activeTab === 'voice' && (
           <VoiceTab

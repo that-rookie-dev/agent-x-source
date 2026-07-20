@@ -190,7 +190,7 @@ export async function computeLouvainLayout(ctx: LayoutContext): Promise<{ epoch:
 
 /**
  * Get all distinct community IDs with their member counts.
- * Used by the CommunitySummarizer to decide which communities need summarization.
+ * Used by community summarization batch jobs to decide which communities need summarization.
  */
 export async function getCommunities(ctx: LayoutContext): Promise<{ communityId: string; memberCount: number }[]> {
   const { rows } = await ctx.pool.query<{ communityId: string; memberCount: number }>(

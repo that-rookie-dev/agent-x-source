@@ -1,11 +1,12 @@
 import type { CrewMatchCandidate, CrewSuggestionEvaluation } from '@agentx/shared';
-import { explicitCrewRequest, prefersCrewRosterFirst } from '@agentx/shared';
+import { explicitCrewRequest, prefersCrewRosterFirst, crewParticipationMode } from '@agentx/shared';
 import { getCrewSuggestionService } from './get-crew-store.js';
 import type { CrewKeywordExpandFn } from './crew-keyword-expander.js';
 
 export interface CrewRosterHintInput {
   message: string;
   sessionId: string;
+  contextKind?: import('@agentx/shared').SessionContextKind;
   store: unknown;
   priorUserMessages?: string[];
   /** User skipped/dismissed the crew suggestion modal — do not re-prompt. */
@@ -59,6 +60,7 @@ export function buildCrewRosterHintFromEvaluation(
 
 /** Evaluate catalog + roster and return a turn instruction block, or null. */
 export async function buildCrewRosterHintBlock(input: CrewRosterHintInput): Promise<string | null> {
+  if (crewParticipationMode(input.contextKind, input.sessionId) === 'none') return null;
   if (input.crewSuggestionResolved) return null;
   // Skip evaluation entirely when the user hasn't requested suggestions and there's no explicit crew request.
   if (!input.crewSuggestionRequested && !explicitCrewRequest(input.message) && !prefersCrewRosterFirst(input.message)) return null;

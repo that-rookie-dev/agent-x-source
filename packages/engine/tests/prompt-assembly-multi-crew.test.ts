@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMultiCrewSection } from '../src/secret-sauce/prompt-assembly/sections.js';
+import { createMultiCrewSection } from '../src/prompt/assembly/sections.js';
 
 describe('createMultiCrewSection', () => {
   const ctx = {

@@ -276,9 +276,9 @@ pnpm --filter @agentx/web-api run build
 pnpm --filter @agentx/web-ui run build
 pnpm --filter @agentx/web-neuron run build
 
-# ── 6b. Build and install PostgreSQL extensions (pgvector + Apache AGE) ──────
-echo ">>> Building PostgreSQL extensions (pgvector + AGE)..."
-pnpm --filter @agentx/runtime run setup:extensions || echo "WARNING: Extension build failed — app will fall back to relational CTE graph engine."
+# ── 6b. Build and install PostgreSQL extension (pgvector) ──────
+echo ">>> Building PostgreSQL extension (pgvector)..."
+pnpm --filter @agentx/runtime run setup:extensions || echo "WARNING: pgvector extension build failed."
 
 # ── 7. Typecheck all packages (after declarations are available) ─────────────
 echo ">>> Typechecking all packages..."

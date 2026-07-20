@@ -6,6 +6,7 @@ import {
   resolveEffectiveMaxOutputTokens,
   estimatePromptTokens,
   ContextBudgetExceededError,
+  deniesAutonomousCrewTools,
 } from '@agentx/shared';
 import { streamText, stepCountIs } from 'ai';
 import { ConcurrencyLimiter } from '../../concurrency/ConcurrencyLimiter.js';
@@ -126,16 +127,10 @@ export class TurnOrchestrator implements ITurnOrchestrator {
         this.host.toolLedger.record({ name: toolId, success, output, elapsed, path });
         this.host.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
         this.host.turnState.touch();
-        // Ingest web search / fetch results into the neural brain for future RAG retrieval.
-        // This ensures knowledge discovered via web tools is persisted and searchable
-        // in subsequent turns — not lost after the current conversation.
-        if (success && WEB_SEARCH_TOOLS.has(toolId) && output && output.length > 50) {
-          this.host.ingestWebSearchResult(toolId, args, output).catch(() => {});
-        }
       },
     );
 
-    if (this.host.options.promptProfile === 'crew_private') {
+    if (this.host.options.promptProfile === 'crew_private' || deniesAutonomousCrewTools(this.host.options.contextKind, sessionId)) {
       const denyCrewOrchestration = new Set(['spawn_crew_workers', 'delegate_to_crew', 'crew_response']);
       for (const key of Object.keys(tools)) {
         if (denyCrewOrchestration.has(key)) delete tools[key];

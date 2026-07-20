@@ -4,7 +4,7 @@ import type {
   StorableMessage,
   StorableTokenLog,
 } from '@agentx/shared';
-import type { SessionEvent, Crew, AgentPersonaConfig } from '@agentx/shared';
+import type { SessionEvent, Crew } from '@agentx/shared';
 
 export function getEnvValue(name: string): string | undefined {
   return process.env[name] ?? process.env[`AGENTX_${name}`];
@@ -31,7 +31,6 @@ export interface CacheState {
   messages: Map<string, StorableMessage[]>;
   parts: Map<string, Array<Record<string, unknown>>>;
   crews: Crew[];
-  persona: AgentPersonaConfig | null;
   checkpoints: Map<string, Array<{ id: string; session_id: string; label: string; messages: string; created_at: string }>>;
   crewStates: Map<string, Array<Record<string, unknown>>>;
   sessionEvents: Map<string, SessionEvent[]>;

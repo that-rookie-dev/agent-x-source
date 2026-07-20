@@ -42,7 +42,6 @@ describe('ConfigSchema', () => {
         ],
       },
       featureRouting: {
-        memoryDistillation: 'local',
         memoryExtraction: 'local',
         memoryConsolidation: 'local',
       },

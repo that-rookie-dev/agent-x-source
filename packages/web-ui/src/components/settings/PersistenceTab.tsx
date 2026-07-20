@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -18,9 +18,8 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import HelpIcon from '@mui/icons-material/Help';
-import ToggleButton from '@mui/material/ToggleButton';
-import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import { settings, factoryReset, setAuthToken, type DbStatus } from '../../api';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import { settings, factoryReset, setAuthToken, type DbStatus, type DbProvisionStatus } from '../../api';
 import { useApp } from '../../store/AppContext';
 import { clearAgentxClientStorage } from '../../utils/client-storage';
 import { invalidateApiCache, invalidateCoreSessionCache } from '../../perf/api-cache';
@@ -33,19 +32,23 @@ import {
   settingsBtnDangerSx,
   settingsDialogPaperSx,
   settingsDialogTitleSx,
-  settingsToggleGroupSx,
   settingsStatusBadgeSx,
 } from '../../styles/settings-theme';
 import { SettingsCard } from './SettingsCard';
 import { SettingsSectionHeader } from './SettingsSectionHeader';
 
 import { alphaColor } from '../../theme';
+
+type PgBackend = 'embedded-postgres' | 'postgres';
+
+function backendLabel(backend: PgBackend | undefined): string {
+  return backend === 'embedded-postgres' ? 'Embedded PostgreSQL' : 'Cloud PostgreSQL';
+}
+
 export function PersistenceTab() {
   const { initialize } = useApp();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [migrating, setMigrating] = useState(false);
-  const [migrateResult, setMigrateResult] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [clearConfirm, setClearConfirm] = useState('');
@@ -55,32 +58,42 @@ export function PersistenceTab() {
   const [resetConfirm, setResetConfirm] = useState('');
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
-  const [provisionMode, setProvisionMode] = useState<'embedded' | 'cloud'>('embedded');
-  const [provisionStatus, setProvisionStatus] = useState<{
-    loading: boolean;
-    postgres?: boolean;
-    schemaVersion?: number;
-    migrationsApplied?: number;
-    ageAvailable?: boolean;
-    ageError?: string | null;
-    timestamp?: string;
-  }>({ loading: true });
+  const [provisionStatus, setProvisionStatus] = useState<DbProvisionStatus | { loading: true }>({ loading: true });
+
+  const [migrateOpen, setMigrateOpen] = useState(false);
+  const [migrateConnStr, setMigrateConnStr] = useState('');
+  const [migrateTesting, setMigrateTesting] = useState(false);
+  const [migrateTestOk, setMigrateTestOk] = useState(false);
+  const [migrateTestError, setMigrateTestError] = useState<string | null>(null);
+  const [migrating, setMigrating] = useState(false);
+  const [migrateLogs, setMigrateLogs] = useState<string[]>([]);
+  const [migrateComplete, setMigrateComplete] = useState(false);
+  const [migrateError, setMigrateError] = useState<string | null>(null);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const migrateLogRef = useRef<HTMLPreElement>(null);
+
+  const ps = 'loading' in provisionStatus ? null : provisionStatus;
+  const currentBackend: PgBackend = dbStatus?.postgresBackend ?? ps?.backend ?? 'embedded-postgres';
+  const targetBackend: PgBackend = currentBackend === 'embedded-postgres' ? 'postgres' : 'embedded-postgres';
+  const migrateButtonLabel = currentBackend === 'embedded-postgres' ? 'Migrate to Cloud PG' : 'Migrate to Embedded PG';
 
   const loadProvisionStatus = useCallback(async () => {
     setProvisionStatus({ loading: true });
     try {
       const s = await settings.db.provisionStatus();
-      setProvisionStatus({
-        loading: false,
-        postgres: s.postgres,
-        schemaVersion: s.schemaVersion,
-        migrationsApplied: s.migrationsApplied,
-        ageAvailable: s.age.available,
-        ageError: s.age.error,
-        timestamp: s.timestamp,
-      });
+      setProvisionStatus(s);
     } catch (e) {
-      setProvisionStatus({ loading: false, postgres: false, ageAvailable: false, ageError: e instanceof Error ? e.message : 'Status check failed' });
+      setProvisionStatus({
+        postgres: false,
+        backend: 'embedded-postgres',
+        vectorAvailable: false,
+        vectorError: e instanceof Error ? e.message : 'Status check failed',
+        schemaVersion: 0,
+        migrationsApplied: 0,
+        migrationsUpToDate: false,
+        pendingMigrations: 0,
+        timestamp: new Date().toISOString(),
+      });
     }
   }, []);
 
@@ -95,16 +108,100 @@ export function PersistenceTab() {
 
   useEffect(() => { load(); loadProvisionStatus(); }, [load, loadProvisionStatus]);
 
-  const handleMigrate = async () => {
-    setMigrating(true); setMigrateResult(null);
+  useEffect(() => {
+    if (migrateLogRef.current) {
+      migrateLogRef.current.scrollTop = migrateLogRef.current.scrollHeight;
+    }
+  }, [migrateLogs]);
+
+  const resetMigrateDialog = () => {
+    setMigrateConnStr('');
+    setMigrateTesting(false);
+    setMigrateTestOk(false);
+    setMigrateTestError(null);
+    setMigrating(false);
+    setMigrateLogs([]);
+    setMigrateComplete(false);
+    setMigrateError(null);
+    setRestartRequired(false);
+  };
+
+  const openMigrateDialog = () => {
+    resetMigrateDialog();
+    setMigrateOpen(true);
+  };
+
+  const handleTestDestination = async () => {
+    if (!migrateConnStr.trim()) {
+      setMigrateTestError('Enter a connection string');
+      setMigrateTestOk(false);
+      return;
+    }
+    setMigrateTesting(true);
+    setMigrateTestError(null);
+    setMigrateTestOk(false);
     try {
-      const r = await settings.db.migrate();
-      setMigrateResult(r.ok && r.migrated
-        ? `Migrated ${Object.entries(r.migrated).filter(([,v]) => v > 0).length} tables in ${r.durationMs}ms.`
-        : 'Migration failed: ' + (r.error || 'unknown'));
+      const r = await settings.db.test(migrateConnStr.trim());
+      if (!r.ok) {
+        setMigrateTestError(r.error || 'Connection test failed');
+        return;
+      }
+      setMigrateTestOk(true);
+    } catch (e) {
+      setMigrateTestError(e instanceof Error ? e.message : 'Connection test failed');
+    } finally {
+      setMigrateTesting(false);
+    }
+  };
+
+  const handleStorageTransfer = async () => {
+    if (targetBackend === 'postgres' && !migrateTestOk) {
+      setMigrateError('Test the cloud connection before migrating.');
+      return;
+    }
+
+    setMigrating(true);
+    setMigrateError(null);
+    setMigrateLogs([]);
+    setMigrateComplete(false);
+    setRestartRequired(false);
+
+    try {
+      const result = await settings.db.transfer(
+        {
+          targetBackend,
+          ...(targetBackend === 'postgres' ? { connectionString: migrateConnStr.trim() } : {}),
+        },
+        (ev) => {
+          if (ev.type === 'log' && ev.line) {
+            setMigrateLogs((prev) => [...prev, ev.line]);
+          } else if (ev.type === 'error') {
+            setMigrateError(ev.error);
+          } else if (ev.type === 'complete') {
+            setMigrateComplete(true);
+            setRestartRequired(!!ev.restartRequired);
+          }
+        },
+      );
+
+      if (!result.ok) {
+        setMigrateError(result.error || 'Migration failed');
+        return;
+      }
+
+      setMigrateComplete(true);
+      setRestartRequired(!!result.restartRequired);
       await load();
-    } catch (e) { setMigrateResult(e instanceof Error ? e.message : 'Migration failed'); }
-    finally { setMigrating(false); }
+      await loadProvisionStatus();
+    } catch (e) {
+      setMigrateError(e instanceof Error ? e.message : 'Migration failed');
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  const handleRestartApp = () => {
+    window.location.reload();
   };
 
   const handleClear = async () => {
@@ -153,18 +250,19 @@ export function PersistenceTab() {
   }
 
   const fs = dbStatus?.fileStorage;
+  const statusLoading = 'loading' in provisionStatus && provisionStatus.loading;
 
   return (
     <Box>
       <SettingsSectionHeader
         icon={<StorageIcon sx={{ fontSize: 16 }} />}
         title="Storage"
-        subtitle={dbStatus?.connected ? `PostgreSQL · ${dbStatus.stats.dbSizeFormatted || '—'}` : 'Disconnected'}
+        subtitle={dbStatus?.connected ? `${backendLabel(currentBackend)} · ${dbStatus.stats.dbSizeFormatted || '—'}` : 'Disconnected'}
       />
 
       <SettingsCard title="Active Backend">
-        <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
-          <Box sx={settingsStatusBadgeSx('active')}>PostgreSQL</Box>
+        <Box sx={{ display: 'flex', gap: 1, mb: 1.5, flexWrap: 'wrap' }}>
+          <Box sx={settingsStatusBadgeSx('active')}>{backendLabel(currentBackend)}</Box>
           <Box sx={settingsStatusBadgeSx(dbStatus?.connected ? 'active' : 'warn')}>
             {dbStatus?.connected ? 'Connected' : 'Disconnected'}
           </Box>
@@ -179,32 +277,23 @@ export function PersistenceTab() {
         subtitle="Database extensions and schema health"
       >
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -0.5 }}>
-          <Button onClick={loadProvisionStatus} disabled={provisionStatus.loading} size="small" sx={settingsBtnGhostSx}>
-            {provisionStatus.loading ? <CircularProgress size={12} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
+          <Button onClick={loadProvisionStatus} disabled={statusLoading} size="small" sx={settingsBtnGhostSx}>
+            {statusLoading ? <CircularProgress size={12} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
           </Button>
         </Box>
 
-        <ToggleButtonGroup value={provisionMode} exclusive size="small" fullWidth
-          onChange={(_, v) => v && setProvisionMode(v)} sx={{ mb: 1.5, ...settingsToggleGroupSx }}>
-          <ToggleButton value="embedded">Embedded Local</ToggleButton>
-          <ToggleButton value="cloud">External / Cloud</ToggleButton>
-        </ToggleButtonGroup>
-
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
           <TelemetryRow label="PostgreSQL connection" status={dbStatus?.connected ? 'ok' : 'fail'} />
-          <TelemetryRow label="pgvector extension" status={provisionStatus.loading ? 'pending' : (provisionStatus.postgres ? 'ok' : 'fail')} />
-          <TelemetryRow label="Schema migrations" status={provisionStatus.loading ? 'pending' : ((provisionStatus.migrationsApplied ?? 0) > 0 ? 'ok' : (provisionStatus.schemaVersion && provisionStatus.schemaVersion > 0 ? 'ok' : 'fail'))} />
-          <TelemetryRow label="Apache AGE graph" status={provisionStatus.loading ? 'pending' : (provisionStatus.ageAvailable ? 'ok' : 'warn')} />
+          <TelemetryRow
+            label="pgvector extension"
+            status={statusLoading ? 'pending' : (ps?.vectorAvailable ? 'ok' : 'fail')}
+          />
+          <TelemetryRow
+            label="Schema migrations"
+            status={statusLoading ? 'pending' : (ps?.migrationsUpToDate ? 'ok' : (ps?.schemaVersion && ps.schemaVersion > 0 ? 'warn' : 'fail'))}
+            detail={ps && !ps.migrationsUpToDate && ps.pendingMigrations > 0 ? `${ps.pendingMigrations} pending` : undefined}
+          />
         </Box>
-
-        {provisionMode === 'cloud' && !provisionStatus.ageAvailable && !provisionStatus.loading && (
-          <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mt: 1.5, fontSize: '0.65rem', bgcolor: `${alphaColor(settingsTheme.accent.amber, '12')}`, border: `1px solid ${alphaColor(settingsTheme.accent.amber, '33')}`, ...settingsMonoSx }}>
-            Apache AGE is optional on cloud PostgreSQL. Agent-X uses a built-in SQL graph fallback — sessions, crews, and chat still work.
-            For full graph performance use Embedded PostgreSQL (16 GB+ RAM) or self-host AGE from{' '}
-            <a href="https://age.apache.org/" target="_blank" rel="noreferrer">age.apache.org</a>.
-            Most managed providers (RDS, Neon, Supabase) do not ship AGE.
-          </Alert>
-        )}
       </SettingsCard>
 
       <SettingsCard title="Database Stats">
@@ -224,15 +313,20 @@ export function PersistenceTab() {
           <StatItem label="Messages" value={String(dbStatus?.stats.tables?.['messages'] ?? 0)} />
           <StatItem label="Memories" value={String(dbStatus?.stats.tables?.['crew_memories'] ?? 0)} />
         </Box>
+
         <Box sx={{ mt: 1.5 }}>
-          <Button variant="outlined" onClick={handleMigrate} disabled={migrating} sx={settingsBtnGhostSx}>
-            {migrating ? <CircularProgress size={14} /> : 'Run Schema Migration'}
+          <Button
+            variant="outlined"
+            startIcon={<SwapHorizIcon sx={{ fontSize: 14 }} />}
+            onClick={openMigrateDialog}
+            disabled={!dbStatus?.connected || migrating}
+            sx={settingsBtnGhostSx}
+          >
+            {migrateButtonLabel}
           </Button>
-          {migrateResult && (
-            <Typography sx={{ fontSize: '0.6rem', color: migrateResult.includes('failed') ? settingsTheme.accent.alert : settingsTheme.accent.signal, mt: 1, ...settingsMonoSx }}>
-              {migrateResult}
-            </Typography>
-          )}
+          <Typography sx={{ ...settingsHelperSx, mt: 1, color: settingsTheme.text.dim }}>
+            Copies all domain data to the other backend with schema updates and upsert. Existing rows on the destination are merged, not replaced.
+          </Typography>
         </Box>
       </SettingsCard>
 
@@ -241,7 +335,7 @@ export function PersistenceTab() {
           <FilePathRow label="Config" path={fs?.config.path ?? '~/.config/agentx'} size={fs?.config.sizeFormatted ?? '—'}
             desc="Provider configs, plugin registry, ACP settings, crew registry" />
           <FilePathRow label="Data" path={fs?.data.path ?? '~/.local/share/agentx'} size={fs?.data.sizeFormatted ?? '—'}
-            desc="Session files, secret sauce (soul, memories, diary, identity)" />
+            desc="Session files, persona.json, crews.json, markdown documents" />
           <FilePathRow label="Cache" path={fs?.cache.path ?? '~/.cache/agentx'} size={fs?.cache.sizeFormatted ?? '—'}
             desc="Temporary files, content cache, compaction buffers" />
         </Box>
@@ -291,6 +385,127 @@ export function PersistenceTab() {
         </Button>
       </SettingsCard>
 
+      <Dialog
+        open={migrateOpen}
+        onClose={() => !migrating && setMigrateOpen(false)}
+        PaperProps={{ sx: { ...settingsDialogPaperSx, maxWidth: 520 } }}
+      >
+        <DialogTitle sx={settingsDialogTitleSx}>{migrateButtonLabel}</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ ...settingsHelperSx, mb: 2 }}>
+            {targetBackend === 'postgres'
+              ? 'Enter your cloud PostgreSQL credentials. Agent-X will test the connection, then copy all data from embedded storage with upsert.'
+              : 'Agent-X will start bundled embedded PostgreSQL and copy all data from your cloud database into local storage.'}
+          </Typography>
+
+          {targetBackend === 'postgres' && !migrateComplete && (
+            <>
+              <TextField
+                size="small"
+                fullWidth
+                label="Connection string"
+                placeholder="postgresql://user:pass@host:5432/agentx?sslmode=no-verify"
+                value={migrateConnStr}
+                onChange={(e) => { setMigrateConnStr(e.target.value); setMigrateTestOk(false); setMigrateTestError(null); }}
+                disabled={migrating}
+                sx={{ ...settingsTextFieldSx, mb: 1.5 }}
+              />
+              <Box sx={{ display: 'flex', gap: 1, mb: 1.5, alignItems: 'center' }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleTestDestination}
+                  disabled={migrating || migrateTesting || !migrateConnStr.trim()}
+                  sx={settingsBtnGhostSx}
+                >
+                  {migrateTesting ? <CircularProgress size={14} /> : 'Test Connection'}
+                </Button>
+                {migrateTestOk && (
+                  <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.accent.signal, ...settingsMonoSx }}>
+                    Connection OK
+                  </Typography>
+                )}
+              </Box>
+              {migrateTestError && (
+                <Alert severity="error" sx={{ fontSize: '0.65rem', mb: 1.5, ...settingsMonoSx }}>{migrateTestError}</Alert>
+              )}
+            </>
+          )}
+
+          {(migrating || migrateLogs.length > 0) && (
+            <Box sx={{ mb: 1.5 }}>
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.55rem', color: settingsTheme.text.dim, mb: 0.5 }}>
+                MIGRATION LOG
+              </Typography>
+              <Box
+                component="pre"
+                ref={migrateLogRef}
+                sx={{
+                  ...settingsMonoSx,
+                  fontSize: '0.55rem',
+                  maxHeight: 180,
+                  overflow: 'auto',
+                  p: 1,
+                  m: 0,
+                  bgcolor: settingsTheme.bg.hud,
+                  border: `1px solid ${settingsTheme.border.subtle}`,
+                  borderRadius: '4px',
+                  whiteSpace: 'pre-wrap',
+                  color: settingsTheme.text.secondary,
+                }}
+              >
+                {migrateLogs.length === 0 ? 'Starting…' : migrateLogs.join('\n')}
+              </Box>
+            </Box>
+          )}
+
+          {migrateComplete && (
+            <Alert severity="success" sx={{ fontSize: '0.65rem', mb: 1, ...settingsMonoSx }}>
+              Migration complete. Storage configuration has been updated to {backendLabel(targetBackend)}.
+            </Alert>
+          )}
+          {migrateError && (
+            <Alert severity="error" sx={{ fontSize: '0.65rem', mb: 1, ...settingsMonoSx }}>{migrateError}</Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, pb: 2, flexWrap: 'wrap', gap: 1 }}>
+          {!migrateComplete && (
+            <Button onClick={() => setMigrateOpen(false)} disabled={migrating} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>
+              Cancel
+            </Button>
+          )}
+          {!migrateComplete && !migrating && (
+            <Button
+              onClick={handleStorageTransfer}
+              disabled={targetBackend === 'postgres' && !migrateTestOk}
+              sx={settingsBtnGhostSx}
+            >
+              Start Migration
+            </Button>
+          )}
+          {migrating && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CircularProgress size={14} />
+              <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>Migrating…</Typography>
+            </Box>
+          )}
+          {migrateComplete && restartRequired && (
+            <Button
+              variant="outlined"
+              startIcon={<RestartAltIcon sx={{ fontSize: 14 }} />}
+              onClick={handleRestartApp}
+              sx={settingsBtnGhostSx}
+            >
+              Restart App
+            </Button>
+          )}
+          {migrateComplete && (
+            <Button onClick={() => { setMigrateOpen(false); resetMigrateDialog(); }} sx={settingsBtnGhostSx}>
+              Close
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={clearOpen} onClose={() => setClearOpen(false)} PaperProps={{ sx: { ...settingsDialogPaperSx, maxWidth: 420 } }}>
         <DialogTitle sx={settingsDialogTitleSx}>Clear Domain Data</DialogTitle>
         <DialogContent>
@@ -329,12 +544,12 @@ export function PersistenceTab() {
   );
 }
 
-function TelemetryRow({ label, status }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending' }) {
+function TelemetryRow({ label, status, detail }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending'; detail?: string }) {
   const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 14, color: settingsTheme.accent.signal }} />
     : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 14, color: settingsTheme.accent.amber }} />
     : status === 'fail' ? <ErrorIcon sx={{ fontSize: 14, color: settingsTheme.accent.alert }} />
     : <HelpIcon sx={{ fontSize: 14, color: settingsTheme.text.dim }} />;
-  const text = status === 'ok' ? 'OK' : status === 'warn' ? 'Warning' : status === 'fail' ? 'Failed' : 'Checking';
+  const text = status === 'ok' ? 'OK' : status === 'warn' ? (detail ? `Warning · ${detail}` : 'Warning') : status === 'fail' ? 'Failed' : 'Checking';
   const color = status === 'ok' ? settingsTheme.accent.signal : status === 'warn' ? settingsTheme.accent.amber : status === 'fail' ? settingsTheme.accent.alert : settingsTheme.text.dim;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
@@ -368,4 +583,3 @@ function FilePathRow({ label, path, size, desc }: { label: string; path: string;
     </Box>
   );
 }
-

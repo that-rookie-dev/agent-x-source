@@ -7,7 +7,6 @@ export interface RecordMeta {
 import type { SessionContextKind } from './session-context.js';
 import type { Crew, CrewCreateInput } from './crew.js';
 import type { SessionEvent } from './session-events.js';
-import type { AgentPersonaConfig } from './config.js';
 import type { Session } from './session.js';
 import type { TurnFeedbackRecord } from './turn-feedback.js';
 
@@ -203,8 +202,6 @@ export interface StorageAdapter {
    * Call after crew create/update/delete and before shutdown / engine reset.
    */
   flushWrites?(): Promise<void>;
-  getPersona(): AgentPersonaConfig | null;
-  setPersona(persona: AgentPersonaConfig): void;
 
   /** Task snapshot persistence (optional — primarily Postgres-backed). */
   getTaskSnapshot?(sessionId: string): Record<string, unknown> | null;

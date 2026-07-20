@@ -5,9 +5,6 @@
  * dump of the neural database, then AES-256-GCM encrypts it with a PBKDF2 key
  * derived from the user's passphrase. The `.brain` file header stores the
  * salt, IV, and metadata so restore is self-contained.
- *
- * AGE handling: the dump is taken in plain SQL format with `--schema=ag_catalog`
- * included so that AGE graph labels and data are restored correctly.
  */
 import { createCipheriv, createDecipheriv, randomBytes, pbkdf2Sync } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -37,7 +34,7 @@ export interface BrainBackupOptions {
   passphrase: string;
   /** Database name to dump. */
   database?: string;
-  /** Schemas to include. Defaults to public + ag_catalog. */
+  /** Schemas to include. Defaults to public. */
   schemas?: string[];
 }
 
@@ -77,7 +74,7 @@ export class BrainBackup {
   async backup(options: BrainBackupOptions): Promise<BrainBackupResult> {
     const url = new URL(options.connectionString);
     const database = options.database ?? (url.pathname.replace(/^\//, '') || 'agentx');
-    const schemas = options.schemas ?? ['public', 'ag_catalog'];
+    const schemas = options.schemas ?? ['public'];
     const bins = await locatePostgresBinaries();
     const tmpDir = await mkdtemp(join(tmpdir(), 'agentx-brain-'));
     const dumpFile = join(tmpDir, 'dump.sql');

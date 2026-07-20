@@ -16,7 +16,6 @@ export const createDesktopRuntimeOptions = () => ({
 export const resolveRuntimePaths = () => ({
   webApiPath: '/web-api/index.js',
   webUiDir: '/web-ui',
-  webNeuronDir: '/web-neuron',
   pythonPath: 'python3',
   pythonDir: '',
   ffmpegPath: 'ffmpeg',

@@ -713,7 +713,7 @@ export const plugins = {
 
 // ─── Knowledge Base (document ingestion / search) ───
 export interface KnowledgeSourceStatusEvent {
-  type: 'knowledge_source_status';
+  type: 'knowledge_base_source_status';
   sourceId: string;
   status: string;
   progress: number;
@@ -722,17 +722,25 @@ export interface KnowledgeSourceStatusEvent {
   timestamp?: string;
 }
 export interface KnowledgeSourceReadyEvent {
-  type: 'knowledge_source_ready';
+  type: 'knowledge_base_source_ready';
   sourceId: string;
   timestamp?: string;
 }
 export interface KnowledgeSourceFailedEvent {
-  type: 'knowledge_source_failed';
+  type: 'knowledge_base_source_failed';
   sourceId: string;
   error: string;
   timestamp?: string;
 }
 export type KnowledgeSourceEvent = KnowledgeSourceStatusEvent | KnowledgeSourceReadyEvent | KnowledgeSourceFailedEvent;
+
+export interface KnowledgeIngestEvent {
+  id: number;
+  stage: string;
+  detail: string | null;
+  progress: number;
+  createdAt: string;
+}
 
 function knowledgeBaseWsUrl(): string {
   const token = getAuthToken();
@@ -743,10 +751,10 @@ function knowledgeBaseWsUrl(): string {
 
 export const knowledgeBase = {
   /** List knowledge sources, optionally scoped to a session. */
-  list: (sessionId?: string) => request<KnowledgeSourceListResponse>(`/knowledge${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`).then((r) => r.sources),
+  list: (sessionId?: string) => request<KnowledgeSourceListResponse>(`/knowledge-base${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`).then((r) => r.sources),
 
   /** Get a single knowledge source by ID. */
-  get: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge/${encodeURIComponent(id)}`).then((r) => r.source),
+  get: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge-base/${encodeURIComponent(id)}`).then((r) => r.source),
 
   /** Upload a file to the knowledge base. */
   upload: async (file: File, sessionId?: string): Promise<KnowledgeSource> => {
@@ -756,7 +764,7 @@ export const knowledgeBase = {
     const headers: Record<string, string> = {};
     const token = getAuthToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${BASE}/knowledge/upload`, {
+    const res = await fetch(`${BASE}/knowledge-base/upload`, {
       method: 'POST',
       credentials: 'include',
       headers,
@@ -778,7 +786,7 @@ export const knowledgeBase = {
   /** Delete a knowledge source. */
   delete: async (id: string): Promise<void> => {
     const token = getAuthToken();
-    const res = await fetch(`${BASE}/knowledge/${encodeURIComponent(id)}`, {
+    const res = await fetch(`${BASE}/knowledge-base/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       credentials: 'include',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -796,11 +804,15 @@ export const knowledgeBase = {
   },
 
   /** Reprocess a knowledge source. */
-  reprocess: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge/${encodeURIComponent(id)}/reprocess`, { method: 'POST', body: JSON.stringify({}) }).then((r) => r.source),
+  reprocess: (id: string) => request<{ source: KnowledgeSource }>(`/knowledge-base/${encodeURIComponent(id)}/reprocess`, { method: 'POST', body: JSON.stringify({}) }).then((r) => r.source),
+
+  /** Ingest event log for a knowledge source. */
+  events: (id: string) =>
+    request<{ events: KnowledgeIngestEvent[] }>(`/knowledge-base/${encodeURIComponent(id)}/events`).then((r) => r.events),
 
   /** Search the knowledge base. */
   search: (query: string, topK = 5, kind: KnowledgeSearchRequest['kind'] = 'all', sourceId?: string) =>
-    request<{ results: KnowledgeSearchResult[] }>('/knowledge/search', {
+    request<{ results: KnowledgeSearchResult[] }>('/knowledge-base/search', {
       method: 'POST',
       body: JSON.stringify({ query, topK, kind, sourceId }),
     }).then((r) => r.results),
@@ -820,9 +832,9 @@ export const knowledgeBase = {
           try {
             const data = JSON.parse(ev.data) as Record<string, unknown>;
             if (
-              data.type === 'knowledge_source_status' ||
-              data.type === 'knowledge_source_ready' ||
-              data.type === 'knowledge_source_failed'
+              data.type === 'knowledge_base_source_status' ||
+              data.type === 'knowledge_base_source_ready' ||
+              data.type === 'knowledge_base_source_failed'
             ) {
               onEvent(data as unknown as KnowledgeSourceEvent);
             }
@@ -853,10 +865,10 @@ export const knowledgeBase = {
   },
 
   /** Check which optional Python document parsers are installed. */
-  parserStatus: () => request<{ parsers: Array<{ id: string; installed: boolean; version?: string }> }>('/knowledge/parsers/status').then((r) => r.parsers),
+  parserStatus: () => request<{ parsers: Array<{ id: string; installed: boolean; version?: string }> }>('/knowledge-base/parsers/status').then((r) => r.parsers),
 
   /** Install and auto-load an optional parser (marker or docling). */
-  installParser: (id: string) => request<{ success: boolean; message: string; version?: string }>('/knowledge/parsers/install', {
+  installParser: (id: string) => request<{ success: boolean; message: string; version?: string }>('/knowledge-base/parsers/install', {
     method: 'POST',
     body: JSON.stringify({ id }),
   }),
@@ -1025,14 +1037,6 @@ export const markdownDocuments = {
   delete: (id: string) => request<{ ok: boolean }>(`/markdown/${id}`, { method: 'DELETE' }),
 };
 
-// ─── Secret Sauce (Soul / Identity / Diary / Memories / Permission / Crew) ───
-export type SecretSauceFile = 'SOUL' | 'IDENTITY' | 'DIARY' | 'MEMORIES' | 'PERMISSION' | 'CREW';
-export const secretSauce = {
-  list: () => request<{ files: Array<{ file: SecretSauceFile; size: number; exists: boolean }> }>('/secret-sauce').then(r => r.files),
-  get: (file: SecretSauceFile) => request<{ content: string; exists: boolean }>(`/secret-sauce/${file}`),
-  save: (file: SecretSauceFile, content: string) => request<{ ok: boolean; size: number }>(`/secret-sauce/${file}`, { method: 'PUT', body: JSON.stringify({ content }) }),
-};
-
 // ─── Orchestrator ───
 export interface OrchestratorStep { id: string; description: string; status: 'pending' | 'executing' | 'done' | 'failed'; result?: string; dependsOn?: string[]; }
 export interface OrchestratorPlan { id: string; goal: string; steps: OrchestratorStep[]; status: 'created' | 'executing' | 'complete' | 'failed'; }
@@ -1146,8 +1150,6 @@ export interface AgentXConfig {
       tavily?: { enabled: boolean; apiKey?: string };
     };
   };
-  /** Neural brain module enabled (default: true). Set to false if embedding models fail to download. */
-  neuralBrain?: boolean;
   runtime?: {
     cpuBudgetPercent?: number;
     lazyStorageCache?: boolean;
@@ -1646,7 +1648,6 @@ export interface HealthStatus {
     contextWindow: number;
     compactionCount: number;
     bypassPermissions?: boolean;
-    neuralConfidenceAvg: number;
     costHistory?: Array<{ ts: number; cost: number; errors: number }>;
   } | null;
 }
@@ -1655,7 +1656,6 @@ export interface AutonomyStatus {
   available: boolean;
   health?: HealthStatus['agentHealth'];
   circuitBreakers?: Array<{ tool: string; failures: number; blacklisted: boolean; remainingMs: number }>;
-  neural?: { proven: string; caution: string; growth: string };
   memoryDriven?: string;
   escalation?: {
     activeCheckpoints: number;
@@ -1716,7 +1716,7 @@ export const webuiActive = {
 export type DbExtensionCheckStatus = 'ok' | 'warn' | 'fail';
 
 export interface DbExtensionCheck {
-  id: 'pgvector' | 'age';
+  id: 'pgvector';
   label: string;
   status: DbExtensionCheckStatus;
   message: string;
@@ -1732,13 +1732,12 @@ export interface DbConnectionTestResult {
   checks?: DbExtensionCheck[];
   vectorAvailable?: boolean;
   vectorError?: string;
-  ageAvailable?: boolean;
-  ageError?: string;
   extensionsCreated?: boolean;
 }
 
 export interface DbStatus {
   backend: 'postgres';
+  postgresBackend?: 'embedded-postgres' | 'postgres';
   connected: boolean;
   stats: {
     dbSizeBytes: number;
@@ -1918,21 +1917,32 @@ export interface EmbeddingModelProgress {
   error?: string;
 }
 
+export interface NeuralCortexStatus {
+  models: EmbeddingModelStatus[];
+  allDownloaded: boolean;
+  neuralCortexEmbeddingTier?: string;
+  ready?: boolean;
+  activeTier?: string | null;
+  degraded?: boolean;
+  cortexReady?: boolean;
+  cortexDegraded?: boolean;
+}
+
+export const neuralCortex = {
+  status: () => request<NeuralCortexStatus>('/neural-cortex/embeddings/status'),
+};
+
 export const embeddingModels = {
-  status: () =>
-    request<{ models: EmbeddingModelStatus[]; allDownloaded: boolean; neuralBrainSupported: boolean }>('/embedding-models/status'),
+  status: () => request<NeuralCortexStatus>('/neural-cortex/embeddings/status'),
   download: (opts?: { force?: boolean }) =>
-    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/embedding-models/download', {
+    request<{ ok: boolean; message: string; models: Array<{ id: string; displayName: string; approxSizeMB: number }> }>('/neural-cortex/embeddings/download', {
       method: 'POST',
       body: JSON.stringify({ force: opts?.force === true }),
     }),
   purge: () =>
-    request<{ ok: boolean; message: string; freedMB: number }>('/embedding-models', { method: 'DELETE' }),
-  /**
-   * Opens an SSE connection for download progress. Returns a cleanup function.
-   */
-  progressStream: (onProgress: (data: { type: string; models?: EmbeddingModelProgress[]; allComplete?: boolean; hasError?: boolean }) => void): (() => void) => {
-    const url = `${BASE}/embedding-models/progress`;
+    request<{ ok: boolean; message: string; freedMB: number }>('/neural-cortex/embeddings', { method: 'DELETE' }),
+  progressStream: (onProgress: (data: { type: string; models?: EmbeddingModelProgress[]; allComplete?: boolean; hasError?: boolean; tier?: string }) => void): (() => void) => {
+    const url = `${BASE}/neural-cortex/embeddings/progress`;
     const es = new EventSource(url);
     es.onmessage = (ev) => {
       try { onProgress(JSON.parse(ev.data)); } catch {}
@@ -2060,9 +2070,21 @@ export const modelBenchmark = {
 
 export type DbProvisionEvent =
   | { type: 'log'; line: string; ts?: string }
-  | { type: 'status'; phase: string; backend?: string }
-  | { type: 'complete'; ok: boolean; backend?: string }
+  | { type: 'status'; phase: string; backend?: string; targetBackend?: string; sourceBackend?: string }
+  | { type: 'complete'; ok: boolean; backend?: string; targetBackend?: string; tablesCopied?: Record<string, number>; totalRows?: number; restartRequired?: boolean }
   | { type: 'error'; error: string };
+
+export interface DbProvisionStatus {
+  postgres: boolean;
+  backend: 'embedded-postgres' | 'postgres';
+  vectorAvailable: boolean;
+  vectorError?: string | null;
+  schemaVersion: number;
+  migrationsApplied: number;
+  migrationsUpToDate: boolean;
+  pendingMigrations: number;
+  timestamp: string;
+}
 
 export const settings = {
   db: {
@@ -2179,10 +2201,117 @@ export const settings = {
       request<{ ok: boolean }>('/settings/db/clear', { method: 'POST' }),
     clearCache: () =>
       request<{ ok: boolean; freedFormatted: string }>('/settings/db/clear-cache', { method: 'POST' }),
-    provisionStatus: () =>
-      request<{ postgres: boolean; schemaVersion: number; migrationsApplied: number; age: { available: boolean; error?: string | null }; timestamp: string }>('/memory/storage-status'),
+    provisionStatus: () => request<DbProvisionStatus>('/settings/db/provision-status'),
+    transfer: (
+      config: { targetBackend: 'embedded-postgres' | 'postgres'; connectionString?: string },
+      onEvent: (event: DbProvisionEvent) => void,
+      options?: { signal?: AbortSignal },
+    ): Promise<{ ok: boolean; targetBackend?: string; totalRows?: number; restartRequired?: boolean; error?: string }> => {
+      return (async () => {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        let res: Response;
+        try {
+          res = await fetch(`${BASE}/settings/db/transfer`, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify(config),
+            signal: options?.signal,
+          });
+        } catch (e) {
+          if (options?.signal?.aborted || (e instanceof DOMException && e.name === 'AbortError')) {
+            return { ok: false, error: 'Cancelled' };
+          }
+          throw e;
+        }
+        if (res.status === 401) {
+          onUnauthorized?.();
+          return { ok: false, error: 'Unauthorized' };
+        }
+        if (!res.ok || !res.body) {
+          const text = await res.text().catch(() => '');
+          return { ok: false, error: text || `Transfer failed (${res.status})` };
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let result: { ok: boolean; targetBackend?: string; totalRows?: number; restartRequired?: boolean; error?: string } = {
+          ok: false,
+          error: 'Transfer ended unexpectedly',
+        };
+        let eventName = 'message';
+        let dataLines: string[] = [];
+
+        const flush = () => {
+          if (dataLines.length === 0) {
+            eventName = 'message';
+            return;
+          }
+          const raw = dataLines.join('\n');
+          dataLines = [];
+          const name = eventName;
+          eventName = 'message';
+          try {
+            const data = JSON.parse(raw) as Record<string, unknown>;
+            if (name === 'log') {
+              onEvent({ type: 'log', line: String(data.line ?? ''), ts: data.ts as string | undefined });
+            } else if (name === 'status') {
+              onEvent({
+                type: 'status',
+                phase: String(data.phase ?? ''),
+                backend: data.backend as string | undefined,
+                targetBackend: data.targetBackend as string | undefined,
+                sourceBackend: data.sourceBackend as string | undefined,
+              });
+            } else if (name === 'complete') {
+              result = {
+                ok: true,
+                targetBackend: data.targetBackend as string | undefined,
+                totalRows: data.totalRows as number | undefined,
+                restartRequired: data.restartRequired as boolean | undefined,
+              };
+              onEvent({
+                type: 'complete',
+                ok: true,
+                targetBackend: data.targetBackend as string | undefined,
+                tablesCopied: data.tablesCopied as Record<string, number> | undefined,
+                totalRows: data.totalRows as number | undefined,
+                restartRequired: data.restartRequired as boolean | undefined,
+              });
+            } else if (name === 'error') {
+              result = { ok: false, error: String(data.error ?? 'Transfer failed') };
+              onEvent({ type: 'error', error: String(data.error ?? 'Transfer failed') });
+            }
+          } catch { /* ignore malformed */ }
+        };
+
+        while (true) {
+          if (options?.signal?.aborted) {
+            try { await reader.cancel(); } catch { /* ignore */ }
+            return { ok: false, error: 'Cancelled' };
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n');
+          buffer = parts.pop() ?? '';
+          for (const line of parts) {
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trim());
+            } else if (line === '') {
+              flush();
+            }
+          }
+        }
+        flush();
+        return result;
+      })();
+    },
     systemInit: () =>
-      request<{ ok: boolean; nodeId: string }>('/memory/system-init', { method: 'POST' }),
+      request<{ ok: boolean; nodeId: string }>('/neural-cortex/system-init', { method: 'POST' }),
   },
   webSearch: {
     status: () =>
@@ -2467,26 +2596,7 @@ export const integrations = {
     }> }>(`/integrations/audit?limit=${limit}`),
 };
 
-// ─── Agent Vitals ───
-export interface AgentVitals {
-  ageDays: number;
-  birthDate: string | null;
-  level: string;
-  wisdomScore: number;
-  totalExperiences: number;
-  totalInteractions: number;
-  totalCorrections: number;
-  avgConfidence: number;
-  currentMood: string;
-  moodIntensity: number;
-  memories: { total: number; categories: Record<string, number> };
-  diaryEntries: number;
-  brainSizeFormatted: string;
-  nextMilestoneAt: number | null;
-  capabilities: string[];
-  status: string;
-}
-
+// ─── Agent diagnostics ───
 export interface SubAgentTaskInfo {
   id: string;
   parentSessionId?: string;
@@ -2531,7 +2641,6 @@ export interface Weather {
 }
 
 export const agent = {
-  vitals: () => request<AgentVitals>('/agent/vitals'),
   autonomyStatus: () => request<AutonomyStatus>('/agent/autonomy-status'),
   resetCircuitBreaker: (tool?: string) =>
     request<{ ok: boolean }>('/agent/circuit-breaker/reset', { method: 'POST', body: JSON.stringify(tool ? { tool } : {}) }),

@@ -39,10 +39,6 @@ vi.mock('../src/engine.js', () => ({
   setEngineDEK: vi.fn(),
 }));
 
-vi.mock('../src/ingestion-worker-ref.js', () => ({
-  refreshIngestionWorkerGenerator: vi.fn(),
-}));
-
 import {
   extractSessionTokenFromCookie,
   authMiddleware,

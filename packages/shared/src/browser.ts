@@ -151,14 +151,14 @@ export type { DeriveMarkdownTitleInput } from './utils/markdown-title.js';
 export { explicitCrewRequest, prefersCrewRosterFirst, isWorkforceOrSpecialistNeed } from './utils/crew-roster-intent.js';
 
 export {
-  NEURAL_BRAIN_MIN_RAM_GB,
+  NEURAL_CORTEX_BGE_MIN_RAM_GB,
   LOCAL_MODEL_MIN_RAM_GB,
   VOICE_WARMUP_MIN_RAM_GB,
   getSystemMemoryGB,
-  isNeuralBrainSupported,
   isLocalModelSupported,
   isVoiceWarmupSupported,
   buildPublicSystemCapabilities,
+  resolveNeuralCortexEmbeddingTier,
 } from './utils/system-capabilities.js';
 export type { PublicSystemCapabilities } from './utils/system-capabilities.js';
 
@@ -208,6 +208,13 @@ export {
   resolveMemoryFabricWriteSessionId,
   resolveMemoryFabricSearchSessionFilter,
 } from './utils/memory-fabric-scope.js';
+
+export {
+  crewParticipationMode,
+  allowsCrewInvolvement,
+  deniesAutonomousCrewTools,
+} from './utils/crew-session-policy.js';
+export type { CrewParticipationMode, CrewInvolvementVia } from './utils/crew-session-policy.js';
 
 export {
   generateAxId,

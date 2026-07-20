@@ -38,12 +38,12 @@ import {
   type IJobQueue,
   type ServiceContext,
   getSubAgentServiceInstance,
+  getPersonaStore,
 } from '@agentx/engine';
 import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding, ClientSituation } from '@agentx/shared';
-import { resolveRuntimeSettings, getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
+import { resolveRuntimeSettings, getDataDir, getLogger } from '@agentx/shared';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import os from 'node:os';
 // Pool type resolved via PostgresStorageAdapter's return type to avoid pg type resolution issues
 import { DeferredStorageAdapter } from '../deferred-storage.js';
 import { ensureChannelAgent } from './channels.js';
@@ -111,18 +111,6 @@ function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   }
 }
 
-/** Disable neural brain on machines below the RAM threshold (saves memory and background work). */
-function applyLowRamFeatureDefaults(configManager: ConfigManager): void {
-  const ramGb = os.totalmem() / (1024 ** 3);
-  if (isNeuralBrainSupported(ramGb)) return;
-  try {
-    const cfg = configManager.load();
-    if (cfg.neuralBrain === false) return;
-    configManager.save({ ...cfg, neuralBrain: false });
-    getLogger().info('SYSTEM', `Neural brain auto-disabled — ${ramGb.toFixed(1)} GB RAM (requires 16 GB+)`);
-  } catch { /* config not ready yet */ }
-}
-
 export function applyRuntimeSettings(config: AgentXConfig | null): void {
   const resolved = resolveRuntimeSettings(config?.runtime);
   configureBackgroundTaskPool(resolved.backgroundConcurrency);
@@ -164,8 +152,6 @@ export function getEngine(): EngineState {
   syncLocalModelConfig(configManager);
   applyRuntimeSettings(loadedConfig);
 
-  applyLowRamFeatureDefaults(configManager);
-
   const toolkit = createDefaultToolkit(process.cwd());
   const pluginRegistry = new PluginRegistry();
   const integrationHub = new IntegrationHub({
@@ -203,6 +189,7 @@ export function getEngine(): EngineState {
     ?? loadedConfig?.postgres?.connectionString;
 
   const brainDbExists = existsSync(join(getDataDir(), 'brain_db'));
+  getPersonaStore().load();
   const storageDeferred = !resolvedFromConfig
     && !pluginBackend
     && !brainDbExists

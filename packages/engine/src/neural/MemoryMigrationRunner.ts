@@ -20,13 +20,6 @@ export const MIGRATIONS: Migration[] = [
     name: 'baseline_neural_schema',
     sql: `
       CREATE EXTENSION IF NOT EXISTS vector;
-      -- AGE is optional; the engine falls back to recursive CTEs when unavailable.
-      DO $$
-      BEGIN
-        CREATE EXTENSION IF NOT EXISTS age;
-      EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'AGE extension not available, continuing without graph support: %', SQLERRM;
-      END$$;
 
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -125,25 +118,6 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_web_staging_status ON web_staging(status);
       CREATE INDEX IF NOT EXISTS idx_benchmark_scorecards_model ON benchmark_scorecards(model);
       CREATE INDEX IF NOT EXISTS idx_benchmark_scorecards_finished_at ON benchmark_scorecards(finished_at);
-    `,
-  },
-  {
-    version: 2,
-    name: 'age_graph',
-    sql: `
-      SET search_path = ag_catalog, public;
-      DO $$
-      BEGIN
-        IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'age') THEN
-          PERFORM * FROM ag_catalog.ag_graph WHERE name = 'memory_graph';
-          IF NOT FOUND THEN
-            PERFORM ag_catalog.create_graph('memory_graph');
-          END IF;
-        END IF;
-      EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'AGE graph setup skipped: %', SQLERRM;
-      END$$;
-      SET search_path = public;
     `,
   },
   {
@@ -401,6 +375,76 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 17,
+    name: 'drop_ingestion_job_tables',
+    sql: `
+      DROP TABLE IF EXISTS ingestion_events CASCADE;
+      DROP TABLE IF EXISTS ingestion_jobs CASCADE;
+    `,
+  },
+  {
+    version: 18,
+    name: 'drop_legacy_neural_engine_tables',
+    sql: `
+      DROP TABLE IF EXISTS agent_experiences CASCADE;
+      DROP TABLE IF EXISTS agent_growth_state CASCADE;
+      DROP TABLE IF EXISTS agent_emotions CASCADE;
+      DROP TABLE IF EXISTS agent_emotional_state CASCADE;
+      DROP TABLE IF EXISTS agent_memories CASCADE;
+      DROP TABLE IF EXISTS agent_diary CASCADE;
+      DROP TABLE IF EXISTS agent_identity CASCADE;
+    `,
+  },
+  {
+    version: 19,
+    name: 'drop_agent_persona_table',
+    sql: `
+      DROP TABLE IF EXISTS agent_persona CASCADE;
+    `,
+  },
+  {
+    version: 20,
+    name: 'knowledge_base_on_memory_sources',
+    sql: `
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'kb.document.upload';
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS session_id TEXT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS storage_id TEXT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS progress INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS error TEXT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS summary TEXT;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS chunk_count INTEGER;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS page_count INTEGER;
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE memory_sources ADD COLUMN IF NOT EXISTS embedding_tier TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_memory_sources_status ON memory_sources(status);
+      CREATE INDEX IF NOT EXISTS idx_memory_sources_session_id ON memory_sources(session_id);
+      CREATE INDEX IF NOT EXISTS idx_memory_sources_storage_id ON memory_sources(storage_id);
+
+      CREATE TABLE IF NOT EXISTS knowledge_base_ingest_events (
+        id BIGSERIAL PRIMARY KEY,
+        source_id UUID NOT NULL REFERENCES memory_sources(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL,
+        detail TEXT,
+        progress INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_kb_ingest_events_source ON knowledge_base_ingest_events(source_id, id);
+    `,
+  },
+  {
+    version: 21,
+    name: 'drop_legacy_knowledge_tables',
+    sql: `
+      DROP TABLE IF EXISTS knowledge_chunk_vectors CASCADE;
+      DROP TABLE IF EXISTS knowledge_source_status_events CASCADE;
+      DROP TABLE IF EXISTS knowledge_pages CASCADE;
+      DROP TABLE IF EXISTS knowledge_chunks CASCADE;
+      DROP TABLE IF EXISTS knowledge_sources CASCADE;
+    `,
+  },
 ];
 
 export class MemoryMigrationRunner {
@@ -442,19 +486,6 @@ export class MemoryMigrationRunner {
       throw e;
     } finally {
       client.release();
-    }
-  }
-
-  async detectAge(): Promise<{ available: boolean; error?: string }> {
-    try {
-      const { rows } = await this.pool.query(`
-        SELECT EXISTS (
-          SELECT 1 FROM pg_extension WHERE extname = 'age'
-        ) AS available
-      `);
-      return { available: rows[0]?.available === true };
-    } catch (e) {
-      return { available: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
 }

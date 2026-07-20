@@ -1,8 +1,5 @@
 /**
- * Shared helpers for memory API route modules.
- *
- * Provides singleton accessors for MemoryService / MemoryFabric used by
- * neural-brain routes and Agent-facing memory fabric APIs.
+ * Shared helpers for Neural Cortex / memory fabric API routes.
  */
 import type { Response } from 'express';
 import { MemoryFabric, MemoryService } from '@agentx/engine';

@@ -4,6 +4,7 @@ import {
   getBuiltinPlugin,
   getActiveTelegramBridge,
   resolveTelegramOutboundChatId,
+  getPersonaStore,
 } from '@agentx/engine';
 import type { AgentXConfig, NotificationChannelsConfig, TelegramDiscoveredChat } from '@agentx/shared';
 import { parseAllowedUserIds } from '@agentx/shared';
@@ -380,7 +381,7 @@ export async function sendTelegramGreeting(overrides?: {
   syncChannelSuperSessionContext(eng, 'telegram');
 
   const nonce = randomUUID().slice(0, 8);
-  const persona = eng.storageAdapter.getPersona?.();
+  const persona = getPersonaStore().get();
   const agentName = persona?.name ?? 'Agent-X';
   let greeting: string;
   try {

@@ -8,7 +8,8 @@ import * as shell from './shell.js';
 import { getRAGEngineInstance } from '../../commands/builtin/rag_index.js';
 import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
 import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
-import { getKnowledgeBaseManager } from '../../knowledge/global-manager.js';
+import { knowledgeBaseSearch } from './knowledge-base-search.js';
+import { cortexMemorySearch } from './cortex-memory-search.js';
 import { USER_PROFILE_TAG } from '../../neural/UserChatMemoryIngester.js';
 import { CHAT_MEMORY_TAG } from '../../neural/ChatTurnMemoryIngester.js';
 
@@ -245,159 +246,10 @@ export async function ragSearch(args: Record<string, unknown>, _context: ToolExe
   }
 }
 
-/**
- * Semantic search over Knowledge Base uploads (PDFs, docs, etc.).
- * Prefer this over grepping the raw PDF when the user asks about uploaded documents.
- */
-export async function knowledgeSearch(args: Record<string, unknown>, _context: ToolExecutionContext): Promise<ToolResult> {
-  const query = (args['query'] as string) ?? '';
-  if (!query.trim()) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
+/** @deprecated Use knowledgeBaseSearch */
+export const knowledgeSearch = knowledgeBaseSearch;
 
-  const kb = getKnowledgeBaseManager();
-  if (!kb) {
-    return {
-      success: false,
-      output: 'Knowledge base unavailable. Upload documents via Knowledge Base first.',
-      error: 'KB_UNAVAILABLE',
-    };
-  }
+/** @deprecated Use cortexMemorySearch */
+export const memoryFabricSearch = cortexMemorySearch;
 
-  const topK = typeof args['limit'] === 'number' ? Math.min(Math.max(1, args['limit']), 20) : 8;
-  const sourceId = typeof args['sourceId'] === 'string' ? args['sourceId'] : undefined;
-  try {
-    const results = await kb.search(query, topK, sourceId);
-    if (results.length === 0) {
-      return { success: true, output: 'No knowledge-base matches. Confirm the document finished indexing (READY).' };
-    }
-    const lines = results.map((r, i) => {
-      const page = r.metadata?.pageNumber != null ? ` p.${r.metadata.pageNumber}` : '';
-      const title = r.sourceName || r.sourceId || 'source';
-      const snippet = r.content.slice(0, 900).replace(/\n+/g, '\n');
-      return `[${i + 1}] ${r.kind.toUpperCase()} · ${title}${page} · ${(r.score * 100).toFixed(1)}%\n${snippet}${r.content.length > 900 ? '…' : ''}`;
-    });
-    return {
-      success: true,
-      output: `Knowledge base matches (${results.length}):\n\n${lines.join('\n\n')}`,
-      metadata: { count: results.length },
-    };
-  } catch (e) {
-    return {
-      success: false,
-      output: `Knowledge search failed: ${e instanceof Error ? e.message : String(e)}`,
-      error: 'KB_ERROR',
-    };
-  }
-}
-
-/**
- * Semantic search over Memory Fabric chat/profile memory.
- * Falls back to Knowledge Base when fabric is unavailable (uploaded PDFs live there).
- */
-export async function memoryFabricSearch(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
-  const query = (args['query'] as string) ?? '';
-  if (!query) return { success: false, output: 'query is required', error: 'INVALID_ARGS' };
-
-  const fabric = getMemoryFabricInstance();
-  const embedder = getEmbedderInstance();
-  if (!fabric || !embedder) {
-    // Uploaded PDFs are in Knowledge Base, not the old RAG Studio fabric.
-    return knowledgeSearch(args, context);
-  }
-
-  const topK = (args['limit'] as number) ?? 8;
-  const includeChunks = (args['includeChunks'] as boolean) ?? true;
-  const sessionFilter = resolveMemoryFabricSearchSessionFilter(context.sessionId, context.contextKind);
-  const isSuper = sessionFilter === null;
-  try {
-    const embedding = await embedder.embed(query);
-
-    const [chatMemories, profileMemories] = await Promise.all([
-      fabric.vectorSearch(embedding, { limit: topK, tag: CHAT_MEMORY_TAG, sessionId: sessionFilter }),
-      isSuper
-        ? fabric.vectorSearch(embedding, { limit: Math.max(3, Math.floor(topK / 2)), tag: USER_PROFILE_TAG, sessionId: null })
-        : Promise.resolve([]),
-    ]);
-
-    // Pass 1: Vector search for direct semantic matches (scoped to session when not super).
-    const vectorResults = await fabric.vectorSearch(embedding, {
-      limit: topK * 2,
-      ...(isSuper ? {} : { sessionId: sessionFilter }),
-    });
-
-    // Pass 2: Community summaries for high-level context (super sessions only).
-    const communityResults = isSuper
-      ? await fabric.searchCommunitySummaries(embedding, 3).catch(() => [])
-      : [];
-
-    // Filter: prefer semantic/entity nodes, include chunks only if requested.
-    const seen = new Set<string>();
-    const entities = vectorResults.filter((n) => {
-      if (n.category === 'source_doc' && !includeChunks) return false;
-      if (seen.has(n.id)) return false;
-      seen.add(n.id);
-      return true;
-    });
-
-    // Graph walk from top entity seeds for related context.
-    const seedIds = entities.slice(0, 3).map((n) => n.id).filter((id): id is string => !!id);
-    let graphNodes: typeof vectorResults = [];
-    if (seedIds.length > 0) {
-      try {
-        const walk = await fabric.graphWalk({ startNodeIds: seedIds, maxDepth: 1 });
-        const newIds = walk.nodeIds.filter((id) => !seen.has(id)).slice(0, topK);
-        if (newIds.length > 0) {
-          const sessionClause = isSuper
-            ? ''
-            : ` AND session_id = $2`;
-          const params: unknown[] = isSuper ? [newIds] : [newIds, sessionFilter];
-          const { rows } = await fabric.getPool().query(
-            `SELECT id, label, category, content, source_id AS "sourceId"
-             FROM memory_nodes WHERE id = ANY($1::uuid[]) AND status = 'active'${sessionClause}`,
-            params,
-          );
-          graphNodes = rows;
-          for (const r of rows) seen.add(r.id);
-        }
-      } catch { /* best-effort */ }
-    }
-
-    // Format results.
-    const fmtNode = (n: { category?: string; label?: string; content?: string; sourceId?: string }, i: number): string => {
-      const cat = n.category ?? '?';
-      const label = n.label ?? '';
-      const content = (n.content ?? '').replace(/\n+/g, ' ').slice(0, 400);
-      const src = n.sourceId ? ` [src:${n.sourceId.slice(0, 8)}]` : '';
-      return `[${i + 1}] (${cat}) ${label}${src}\n${content}${content.length >= 400 ? '…' : ''}`;
-    };
-
-    const parts: string[] = [];
-    if (chatMemories.length > 0) {
-      parts.push('=== PAST CONVERSATIONS ===');
-      chatMemories.forEach((n, i) => parts.push(fmtNode(n, i)));
-    }
-    if (profileMemories.length > 0) {
-      parts.push('\n=== USER PROFILE MEMORIES ===');
-      profileMemories.forEach((n, i) => parts.push(fmtNode(n, i)));
-    }
-    if (communityResults.length > 0) {
-      parts.push('=== COMMUNITY SUMMARIES ===');
-      communityResults.forEach((n, i) => parts.push(fmtNode(n, i)));
-    }
-    if (entities.length > 0) {
-      parts.push('\n=== SEMANTIC MATCHES ===');
-      entities.slice(0, topK).forEach((n, i) => parts.push(fmtNode(n, i)));
-    }
-    if (graphNodes.length > 0) {
-      parts.push('\n=== RELATED (GRAPH WALK) ===');
-      graphNodes.forEach((n, i) => parts.push(fmtNode(n, i)));
-    }
-
-    if (parts.length === 0) {
-      return { success: true, output: 'No matching memories or documents found. Chat turns are embedded automatically after each conversation; upload files via RAG Studio for document search.', metadata: { count: 0 } };
-    }
-
-    return { success: true, output: parts.join('\n\n'), metadata: { count: entities.length + graphNodes.length + chatMemories.length + profileMemories.length } };
-  } catch (e) {
-    return { success: false, output: `Memory fabric search failed: ${e instanceof Error ? e.message : String(e)}`, error: 'FABRIC_ERROR' };
-  }
-}
+export { knowledgeBaseSearch, cortexMemorySearch };

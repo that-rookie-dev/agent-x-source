@@ -13,7 +13,6 @@ import express from 'express';
 import { authManager } from '@agentx/shared';
 import type { AuthSession } from '@agentx/shared';
 import { setEngineDEK, getEngine } from './engine.js';
-import { refreshIngestionWorkerGenerator } from './ingestion-worker-ref.js';
 
 function useSecureCookies(req?: Request): boolean {
   if (process.env['AGENTX_SECURE_COOKIES'] === 'true') return true;
@@ -190,8 +189,6 @@ export function createAuthRouter(): Router {
       const session = authManager.validateSession(token);
       if (session) {
         setEngineDEK(session.dek);
-        // Rebuild the ingestion worker's LLM generator now that the DEK is available
-        void refreshIngestionWorkerGenerator();
       }
 
       // Set secure session cookie
@@ -229,8 +226,6 @@ export function createAuthRouter(): Router {
       const session = authManager.validateSession(token);
       if (session) {
         setEngineDEK(session.dek);
-        // Rebuild the ingestion worker's LLM generator now that the DEK is available
-        void refreshIngestionWorkerGenerator();
       }
 
       // Set secure session cookie

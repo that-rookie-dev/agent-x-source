@@ -32,8 +32,6 @@ function createMockStorageAdapter(): StorageAdapter {
     createCrew: (input: any) => ({ id: 'c1', ...input }),
     updateCrew: () => null,
     deleteCrew: () => {},
-    getPersona: () => null,
-    setPersona: () => {},
     clearAll: () => sessions.clear(),
     close: () => sessions.clear(),
   };

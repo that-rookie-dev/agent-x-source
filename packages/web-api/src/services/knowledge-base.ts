@@ -1,26 +1,30 @@
-import { KnowledgeBaseManager, setKnowledgeBaseManager } from '@agentx/engine';
-import { getDataDir, getLogger } from '@agentx/shared';
-import { getEngine, awaitEngineStorageReady } from '../engine.js';
 import {
-  broadcastKnowledgeSourceFailed,
-  broadcastKnowledgeSourceReady,
-  broadcastKnowledgeSourceStatus,
+  KnowledgeBaseService,
+  setKnowledgeBaseService,
+} from '@agentx/engine';
+import { getLogger } from '@agentx/shared';
+import { getEngine, awaitEngineStorageReady } from '../engine.js';
+import { getFabric } from '../memory/shared.js';
+import {
+  broadcastKnowledgeBaseSourceFailed,
+  broadcastKnowledgeBaseSourceReady,
+  broadcastKnowledgeBaseSourceStatus,
 } from '../ws.js';
 
-let manager: KnowledgeBaseManager | null = null;
-let bootstrapPromise: Promise<KnowledgeBaseManager | null> | null = null;
+let service: KnowledgeBaseService | null = null;
+let bootstrapPromise: Promise<KnowledgeBaseService | null> | null = null;
 
-function wireStatusBroadcasts(m: KnowledgeBaseManager): void {
-  m.onStatusChange((sourceId, status, progress, detail, error) => {
+function wireStatusBroadcasts(svc: KnowledgeBaseService): void {
+  svc.onStatusChange((sourceId, status, progress, detail, error) => {
     if (status === 'ready') {
-      broadcastKnowledgeSourceReady({ sourceId });
+      broadcastKnowledgeBaseSourceReady({ sourceId });
       return;
     }
     if (status === 'failed') {
-      broadcastKnowledgeSourceFailed({ sourceId, error: error ?? 'failed' });
+      broadcastKnowledgeBaseSourceFailed({ sourceId, error: error ?? 'failed' });
       return;
     }
-    broadcastKnowledgeSourceStatus({
+    broadcastKnowledgeBaseSourceStatus({
       sourceId,
       status,
       progress,
@@ -30,25 +34,25 @@ function wireStatusBroadcasts(m: KnowledgeBaseManager): void {
   });
 }
 
-export async function getKnowledgeBaseManager(): Promise<KnowledgeBaseManager | null> {
-  if (manager) return manager;
+export async function getKnowledgeBaseService(): Promise<KnowledgeBaseService | null> {
+  if (service) return service;
   if (bootstrapPromise) return bootstrapPromise;
 
   await awaitEngineStorageReady();
   const pool = getEngine().pgPool;
-  if (!pool) {
+  const fabric = getFabric();
+  if (!pool || !fabric) {
     return null;
   }
 
-  const m = new KnowledgeBaseManager({ pool, dataDir: getDataDir() });
-  bootstrapPromise = m
-    .bootstrap()
+  const svc = new KnowledgeBaseService({ pool, fabric });
+  bootstrapPromise = Promise.resolve()
     .then(() => {
-      wireStatusBroadcasts(m);
-      manager = m;
-      setKnowledgeBaseManager(m);
-      getLogger().info('KNOWLEDGE_BASE', 'Knowledge base manager bootstrapped');
-      return m;
+      wireStatusBroadcasts(svc);
+      service = svc;
+      setKnowledgeBaseService(svc);
+      getLogger().info('KNOWLEDGE_BASE', 'Knowledge base service bootstrapped (Neural Cortex backend)');
+      return svc;
     })
     .catch((err) => {
       getLogger().error(

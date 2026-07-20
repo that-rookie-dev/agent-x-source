@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { resolve } from 'node:path';
 import { mkdirSync, readFileSync } from 'node:fs';
-import { VOICE_ASSET_CATALOG, mergeVoiceConfig, registerAliasAssets, loadVoiceModelsManifest } from '@agentx/engine';
+import { VOICE_ASSET_CATALOG, mergeVoiceConfig, registerAliasAssets, loadVoiceModelsManifest, getPersonaStore } from '@agentx/engine';
 import type { VoiceConfig } from '@agentx/shared';
 import { getEngine } from '../engine.js';
 import {
@@ -246,7 +246,7 @@ function createVoiceRoutesRouter(): Router {
       const engine = getEngine();
       const config = engine.configManager.load();
       const callsign = String(req.body?.callsign ?? '').trim();
-      const persona = engine.storageAdapter.getPersona?.();
+      const persona = getPersonaStore().get();
       const agentName = persona?.name ?? 'Agent-X';
       const { createAiSdkModel } = await import('@agentx/engine');
       const { generateText } = await import('ai');
@@ -263,7 +263,7 @@ function createVoiceRoutesRouter(): Router {
     } catch {
       // Fallback greetings if LLM is not available
       const engine = getEngine();
-      const persona = engine.storageAdapter.getPersona?.();
+      const persona = getPersonaStore().get();
       const agentName = persona?.name ?? 'Agent-X';
       const callsign = String(req.body?.callsign ?? '').trim();
       const fallbacks = callsign

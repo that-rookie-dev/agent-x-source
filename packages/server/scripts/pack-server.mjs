@@ -82,7 +82,7 @@ function syncServerExtensions(suffix, stagingNodeModules, packPlatform) {
     );
   }
 
-  // When materialize copied a tree that already includes pgvector/AGE, donor === staging.
+  // When materialize copied a tree that already includes pgvector, donor === staging.
   let sameTree = false;
   try {
     sameTree = realpathSync(donorNative) === realpathSync(stagingNative);
@@ -178,7 +178,6 @@ mkdirSync(resourcesDir, { recursive: true });
 
 const webApiDist = join(workspaceRoot, 'packages', 'web-api', 'dist');
 const webUiDist = join(workspaceRoot, 'packages', 'web-ui', 'dist');
-const webNeuronDist = join(workspaceRoot, 'packages', 'web-neuron', 'dist');
 const pythonDir = join(workspaceRoot, 'packages', 'runtime', 'python');
 const ffmpegDir = join(workspaceRoot, 'packages', 'runtime', 'ffmpeg');
 const redisDir = join(workspaceRoot, 'packages', 'runtime', 'redis');
@@ -187,7 +186,6 @@ const daemonJs = join(serverRoot, 'dist', 'daemon.js');
 for (const [label, src, dest] of [
   ['web-api', webApiDist, join(resourcesDir, 'web-api')],
   ['web-ui', webUiDist, join(resourcesDir, 'web-ui')],
-  ['web-neuron', webNeuronDist, join(resourcesDir, 'web-neuron')],
 ]) {
   if (!existsSync(src)) {
     throw new Error(`Missing ${label} build at ${src}. Run pnpm run build:deps first.`);

@@ -15,7 +15,7 @@ import type {
   ClientSituation,
   StorageAdapter,
 } from '@agentx/shared';
-import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult, parseChannelBindingFromSessionId } from '@agentx/shared';
+import { FailoverReason, generateMessageId, getLogger, type ChannelKind, getConfigDir, formatClientSituationBlock, isMessagingChannel, formatQuestionnaireForMessagingChannel, shouldUseQuestionnaireClarification, type PermissionHandlerResult, parseChannelBindingFromSessionId, allowsCrewInvolvement, crewParticipationMode, deniesAutonomousCrewTools } from '@agentx/shared';
 import { Scope } from '../concurrency/Scope.js';
 import { getAttachmentService } from '../attachments/index.js';
 import { join, resolve, normalize } from 'node:path';
@@ -47,19 +47,13 @@ import {
 import { buildCrewSuggestionSearchQuery } from './crew-auto-compose.js';
 import { scoreMatchCandidates, type RawMatchRow } from '../crew/CrewMatchService.js';
 import { setToolRegistryInstance } from '../commands/builtin/tools.js';
-import { SecretSauceManager } from '../secret-sauce/index.js';
-import { MemoryExtractor } from '../secret-sauce/MemoryExtractor.js';
-import { ExperienceEngine } from '../neural/ExperienceEngine.js';
-import type { ExperienceTrial } from '../neural/ExperienceEngine.js';
-import { GrowthEngine } from '../neural/GrowthEngine.js';
-import { createPgNeuralDb } from '../neural/NeuralDbAdapter.js';
+import { CrewManager } from '../crew/CrewManager.js';
 import { MemoryFabric, setMemoryFabricInstance, getMemoryFabricInstance } from '../neural/MemoryFabric.js';
 import { OnnxEmbeddingProvider, setEmbedderInstance, getEmbedderInstance } from '../neural/OnnxEmbeddingProvider.js';
-import { GraphRagRetriever } from '../neural/GraphRagRetriever.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import type { EmbeddingProvider } from '@agentx/shared';
-import { PromptAssembly, type SourceSnapshot, buildClarificationPolicyInstruction, type SectionContext } from '../secret-sauce/prompt-assembly/index.js';
+import { PromptAssembly, type SourceSnapshot, buildClarificationPolicyInstruction, type SectionContext } from '../prompt/assembly/index.js';
 import { registerChannelPermissionBridge } from '../channels/channel-permission-bridge.js';
 
 import {
@@ -99,11 +93,8 @@ import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
 import {
-  assessCrewNeed,
-  buildRoutingTaskForActiveCrew,
   crewDelegationMatchesTask,
   isGeneralKnowledgeQuery,
-  shouldBypassActiveCrewRouting,
 } from './crew-auto-compose.js';
 import { CrewMissionOrchestrator, type CrewMissionOptions, type CrewMissionResult } from './CrewMissionOrchestrator.js';
 import { setCrewMissionDeps } from '../tools/builtin/spawn-crew-workers.js';
@@ -143,7 +134,7 @@ import {
   type WebSearchTurnPolicy,
 } from '../search/web-search-policy.js';
 import { SessionRunner } from '../session/SessionRunner.js';
-import { getLoadingSteps, generateDiff, modelMessageContentToText as modelMessageContentToTextHelper, estimateToolSchemaChars as estimateToolSchemaCharsHelper, toFriendlyError as toFriendlyErrorHelper, detectTaskType as detectTaskTypeHelper, checkConnectivity as checkConnectivityHelper, buildIdentityBlock as buildIdentityBlockHelper, simpleComplete as simpleCompleteHelper, endSession as endSessionHelper, runSummarization as runSummarizationHelper, getHealth as getHealthHelper, initializeDiagnosticsAsync as initializeDiagnosticsAsyncHelper, research as researchHelper, compactContext as compactContextHelper, tagCrewPrivateAssistant as tagCrewPrivateAssistantHelper, buildLinkedContextPromptBlock as buildLinkedContextPromptBlockHelper, getProviderCredentials as getProviderCredentialsHelper, getUserTimezone as getUserTimezoneHelper, getUtcOffset as getUtcOffsetHelper, type ConnectivityContext, type IdentityContext, type SimpleCompleteContext, type SessionLifecycleContext, type HealthContext, type DiagnosticsContext, type ResearchContext, type CompactContext, type CrewPrivateContext, type LinkedContextContext, type ProviderCredentialsContext, type TimezoneContext } from './agent-helpers.js';
+import { getLoadingSteps, generateDiff, modelMessageContentToText as modelMessageContentToTextHelper, estimateToolSchemaChars as estimateToolSchemaCharsHelper, toFriendlyError as toFriendlyErrorHelper, detectTaskType as detectTaskTypeHelper, checkConnectivity as checkConnectivityHelper, buildIdentityBlock as buildIdentityBlockHelper, simpleComplete as simpleCompleteHelper, endSession as endSessionHelper, getHealth as getHealthHelper, initializeDiagnosticsAsync as initializeDiagnosticsAsyncHelper, research as researchHelper, compactContext as compactContextHelper, tagCrewPrivateAssistant as tagCrewPrivateAssistantHelper, buildLinkedContextPromptBlock as buildLinkedContextPromptBlockHelper, getProviderCredentials as getProviderCredentialsHelper, getUserTimezone as getUserTimezoneHelper, getUtcOffset as getUtcOffsetHelper, type ConnectivityContext, type SimpleCompleteContext, type SessionLifecycleContext, type HealthContext, type DiagnosticsContext, type ResearchContext, type CompactContext, type CrewPrivateContext, type LinkedContextContext, type ProviderCredentialsContext, type TimezoneContext } from './agent-helpers.js';
 
 import {
   superviseCrewMission as superviseCrewMissionHelper,
@@ -191,11 +182,9 @@ import {
 } from './agent-model.js';
 import {
   extractMemories as extractMemoriesHelper,
-  ingestWebSearchResult as ingestWebSearchResultHelper,
   reformulateQuery as reformulateQueryHelper,
   buildMemoryContext as buildMemoryContextHelper,
   type MemoryExtractionContext,
-  type WebIngestContext,
   type ReformulateQueryContext,
   type MemoryContextContext,
 } from './agent-memory.js';
@@ -277,9 +266,13 @@ export class Agent {
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   public todoManager: TodoManager;
-  private _secretSauce: SecretSauceManager | null = null;
-  private get secretSauce(): SecretSauceManager { if (!this._secretSauce) { this._secretSauce = new SecretSauceManager(); } return this._secretSauce; }
-  private memoryExtractor: MemoryExtractor | null = null;
+  private _crewManager: CrewManager | null = null;
+  private get crewManager(): CrewManager {
+    if (!this._crewManager) {
+      this._crewManager = new CrewManager();
+    }
+    return this._crewManager;
+  }
   private userChatMemoryIngester: UserChatMemoryIngester | null = null;
   private chatTurnMemoryIngester: ChatTurnMemoryIngester | null = null;
   private errorShield: ErrorShield;
@@ -324,11 +317,8 @@ export class Agent {
   private _skillGenerator: SkillGenerator | null = null;
   private _skillRegistry: SkillRegistry | null = null;
 
-  // ─── Neural Engines (lazy-init)
-  private _experienceEngine: ExperienceEngine | null = null;
-  private _growthEngine: GrowthEngine | null = null;
+  // ─── Neural memory (lazy-init)
   private _turnFeedbackService: TurnFeedbackService | null = null;
-  private _neuralDb: any = null;
   private _pgPool: any = null;
   private _memoryFabric: MemoryFabric | null = null;
   private _memoryEmbedder: EmbeddingProvider | null = null;
@@ -607,10 +597,6 @@ export class Agent {
     this.crewOrchestrator.recordFeedback(crewId, positive);
   }
 
-  recordTrial(sessionId: string, trial: ExperienceTrial): void {
-    this.experienceEngine.recordTrial(sessionId, trial);
-  }
-
   private clarificationSource(): ClarificationSource | undefined {
     if (this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost) {
       return {
@@ -861,9 +847,6 @@ export class Agent {
     this.config = options.config;
     this.missionContextProvider = options.missionContextProvider;
     this.persona = options.persona ?? null;
-    if (this.persona) {
-      this.secretSauce.identity.seedFromPersona(this.persona);
-    }
     this.sessionId = options.sessionId;
     this.sessionPermissionStore = new SessionPermissionStore(this.sessionId);
     this.scopePath = normalize(resolve(options.scopePath!));
@@ -1007,7 +990,7 @@ export class Agent {
     this.todoManager = new TodoManager(this.eventBus);
     registerSessionTodoManager(this.sessionId, this.todoManager);
     setIndexerEventBus(this.eventBus);
-    // secretSauce is lazy — created on first access via getter
+    // crewManager is lazy — created on first access via getter
     this.errorShield = new ErrorShield();
 
     // Set up tools - use provided or create defaults
@@ -1221,11 +1204,6 @@ export class Agent {
 
     // Configure sub-agents with provider so they can make real LLM calls
     this.subAgents.configure(this.provider, this.config, initGen.baseline);
-
-    // Trigger periodic summarization in the background if stale
-    if (this.secretSauce.summarizer.needsSummarization()) {
-      void this.runSummarization();
-    }
   }
 
   get events(): AgentEventBus {
@@ -1270,31 +1248,12 @@ export class Agent {
     return this.toolRegistry?.list().length ?? 165;
   }
 
-  // ─── Neural Engine Accessors
-  private get experienceEngine(): ExperienceEngine {
-    if (!this._experienceEngine) { const db = this.getNeuralDb(); this._experienceEngine = new ExperienceEngine(db); }
-    return this._experienceEngine;
-  }
-  private get growthEngine(): GrowthEngine {
-    if (!this._growthEngine) { const db = this.getNeuralDb(); this._growthEngine = new GrowthEngine(db); }
-    return this._growthEngine;
-  }
-
+  // ─── Turn feedback
   get turnFeedbackService(): TurnFeedbackService {
     if (!this._turnFeedbackService) {
       this._turnFeedbackService = new TurnFeedbackService(() => this.getPersistStore());
     }
     return this._turnFeedbackService;
-  }
-
-  private getNeuralDb(): any {
-    if (!this._neuralDb) {
-      try {
-        if (this._pgPool) { this._neuralDb = createPgNeuralDb(this._pgPool); }
-        else { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
-      } catch { this._neuralDb = { prepare: () => ({ run: () => ({ changes: 0 }), get: () => null, all: () => [] }) }; }
-    }
-    return this._neuralDb;
   }
 
   private get memoryFabric(): MemoryFabric | null {
@@ -1318,24 +1277,6 @@ export class Agent {
   }
 
   private _memoryContextNodeIds: string[] = [];
-
-  /** Tools whose results should be ingested into the neural brain for future RAG retrieval. */
-  private static readonly WEB_SEARCH_TOOLS = new Set([
-    'web_search', 'deep_web_search', 'web_fetch', 'web_scrape',
-  ]);
-  private _graphRagRetriever: GraphRagRetriever | null = null;
-
-  private get graphRagRetriever(): GraphRagRetriever | null {
-    // Neural brain can be disabled if embedding models failed to download.
-    if (this.config.neuralBrain === false) return null;
-    const fabric = this.memoryFabric;
-    const embedder = this.memoryEmbedder;
-    if (!fabric || !embedder) return null;
-    if (!this._graphRagRetriever) {
-      this._graphRagRetriever = new GraphRagRetriever(fabric, embedder);
-    }
-    return this._graphRagRetriever;
-  }
 
   private usesCompactContext(): boolean {
     return isCompactContextProfile(
@@ -1361,12 +1302,10 @@ export class Agent {
   private async buildMemoryContext(): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
     return buildMemoryContextHelper(
       {
-        graphRagRetriever: this.graphRagRetriever,
         messages: this.messages,
         reformulateQuery: (q) => this.reformulateQuery(q),
         sessionId: this.sessionId,
         options: this.options,
-        config: this.config,
         memoryFabric: this.memoryFabric,
         memoryEmbedder: this.memoryEmbedder,
         usesCompactContext: () => this.usesCompactContext(),
@@ -1399,26 +1338,6 @@ export class Agent {
     await Promise.all(this._memoryContextNodeIds.map((id) => fabric.reinforce(id).catch(() => {})));
   }
 
-  /**
-   * Ingest web search / fetch tool results into the neural brain so discovered
-   * knowledge is persisted for future RAG retrieval across all agents and crew.
-   * Uses the shared MemoryService via the engine's neural brain pipeline.
-   */
-  private async ingestWebSearchResult(toolId: string, args: Record<string, unknown> | undefined, output: string): Promise<void> {
-    return ingestWebSearchResultHelper(
-      {
-        config: this.config,
-        provider: this.provider,
-        _pgPool: this._pgPool,
-        sessionId: this.sessionId,
-        options: this.options,
-      } as WebIngestContext,
-      toolId,
-      args,
-      output,
-    );
-  }
-
   // ─── Health + Checkpoint
   getHealth(): any {
     return getHealthHelper({
@@ -1426,7 +1345,6 @@ export class Agent {
       tokenTracker: this.tokenTracker,
       toolExecutor: this.toolExecutor,
       _responseTimes: this._responseTimes,
-      _experienceEngine: this._experienceEngine,
       subAgents: this.subAgents,
       _sessionStartTime: this._sessionStartTime,
       _llmCallCount: this._llmCallCount,
@@ -1517,8 +1435,12 @@ export class Agent {
     return this.taskManager;
   }
 
-  get sauce(): SecretSauceManager {
-    return this.secretSauce; // lazy getter creates on first access
+  setCrewManager(crewManager: CrewManager): void {
+    this._crewManager = crewManager;
+  }
+
+  get crew(): CrewManager {
+    return this.crewManager;
   }
 
   get treeOfThoughtsCapability(): TreeOfThoughts {
@@ -1922,7 +1844,13 @@ export class Agent {
         : searchInstr;
     }
 
-    if (!options?.retry && !this.options.channelSession && this.options.promptProfile !== 'crew_private' && !options?.delegateCrewIds?.length) {
+    if (
+      !options?.retry
+      && !this.options.channelSession
+      && this.options.promptProfile !== 'crew_private'
+      && !options?.delegateCrewIds?.length
+      && crewParticipationMode(this.options.contextKind, this.sessionId) === 'explicit_only'
+    ) {
       try {
         const priorUserMessages = this.messages
           .filter((m) => m.role === 'user')
@@ -1932,6 +1860,7 @@ export class Agent {
         const rosterHint = await buildCrewRosterHintBlock({
           message: cleanContent,
           sessionId: this.sessionId,
+          contextKind: this.options.contextKind,
           store,
           priorUserMessages,
           crewSuggestionResolved: options?.crewSuggestionResolved,
@@ -2054,24 +1983,6 @@ export class Agent {
 
     // Build a natural-language context summary for crew routing (passed to crew LLM calls)
     const classificationContext = `[Classified as "${decision.messageClass}" (confidence: ${decision.confidence}) — ${decision.reasoning}]`;
-    const priorUserMessages = this.messages
-      .filter((m) => m.role === 'user')
-      .map((m) => (typeof m.content === 'string' ? m.content : ''))
-      .slice(0, -1);
-
-    // ─── RESUME CREW INTAKE after session restore (questionnaire already answered) ───
-    if (options?.resumeCrewIntake && this.crewOrchestrator) {
-      const { originalUserText, intakeAnswer, delegateCrewIds } = options.resumeCrewIntake;
-      const delegatedMembers = this.crewOrchestrator.getMembers().filter((m) =>
-        delegateCrewIds.includes(m.crew.id) && m.crew.enabled !== false,
-      );
-      if (delegatedMembers.length > 0) {
-        const missionTask = intakeAnswer.trim()
-          ? `${originalUserText}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
-          : originalUserText;
-        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
-      }
-    }
 
     getLogger().info('CLASSIFY', `class=${decision.messageClass} conf=${decision.confidence} msg="${cleanContent.slice(0, 60)}"`);
 
@@ -2084,8 +1995,26 @@ export class Agent {
       reasoning: decision.reasoning,
     });
 
-    // ─── @MENTION ROUTING — direct crew invocation (Agent-X sessions only) ───
+    // ─── CREW ROUTING — gated by session policy (super-session = Agent-X only) ───
     if (this.options.promptProfile !== 'crew_private') {
+    const crewCtx = { contextKind: this.options.contextKind, sessionId: this.sessionId };
+
+    // ─── RESUME CREW INTAKE after session restore (questionnaire already answered) ───
+    if (options?.resumeCrewIntake && this.crewOrchestrator && allowsCrewInvolvement('resume_intake', crewCtx.contextKind, crewCtx.sessionId)) {
+      const { originalUserText, intakeAnswer, delegateCrewIds } = options.resumeCrewIntake;
+      const delegatedMembers = this.crewOrchestrator.getMembers().filter((m) =>
+        delegateCrewIds.includes(m.crew.id) && m.crew.enabled !== false,
+      );
+      if (delegatedMembers.length > 0) {
+        const missionTask = intakeAnswer.trim()
+          ? `${originalUserText}\n\n[User clarified their request]\n${intakeAnswer.trim()}`
+          : originalUserText;
+        return await this.executeCrewMission(delegatedMembers, missionTask, startTime, classificationContext);
+      }
+    }
+
+    // ─── @MENTION ROUTING — user explicitly invoked crew ───
+    if (allowsCrewInvolvement('mention', crewCtx.contextKind, crewCtx.sessionId)) {
     const mentionedCrewIds = this.detectAtMentions(cleanContent);
     if (mentionedCrewIds.length > 0 && this.crewOrchestrator) {
       const members = this.crewOrchestrator.getMembers();
@@ -2096,9 +2025,10 @@ export class Agent {
         return await this.executeCrewMission(mentionedMembers, cleanContent, startTime, classificationContext);
       }
     }
+    }
 
     // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
-    if (this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
+    if (allowsCrewInvolvement('delegate_picker', crewCtx.contextKind, crewCtx.sessionId) && this.pendingDelegateCrewIds?.length && this.crewOrchestrator) {
       const delegateIds = this.pendingDelegateCrewIds;
       this.pendingDelegateCrewIds = null;
       const members = this.crewOrchestrator.getMembers();
@@ -2136,24 +2066,6 @@ export class Agent {
         recoverable: true,
       });
     }
-
-    // ─── ACTIVE CREW CONTINUATION — route follow-ups to deployed specialists ───
-    const activeCrew = this.getActiveCrewMembers();
-    if (activeCrew.length > 0 && this.crewOrchestrator) {
-      const bypassActiveCrew = shouldBypassActiveCrewRouting(cleanContent, {
-        crewSuggestionResolved: options?.crewSuggestionResolved,
-        hasDelegateCrewIds: Boolean(options?.delegateCrewIds?.length),
-      }, priorUserMessages);
-
-      if (!bypassActiveCrew) {
-        const routingTask = buildRoutingTaskForActiveCrew(cleanContent, priorUserMessages);
-        const assessment = assessCrewNeed(routingTask, activeCrew);
-
-        if (assessment.shouldRoute && assessment.members.length > 0) {
-          return await this.executeCrewMission(assessment.members, routingTask, startTime, classificationContext);
-        }
-      }
-    }
     }
 
     // ─── Fast-reply → minimal LLM call, no tools (greetings / thanks / small talk) ───
@@ -2168,7 +2080,7 @@ export class Agent {
           fastPrompt = buildCrewPrivateFastReplyPrompt(crewHost);
         } else {
           let identityBlock = '';
-          try { identityBlock = this.secretSauce?.identity?.getMergedIdentity?.(this.persona)?.name ?? ''; } catch { /* test env */ }
+          try { identityBlock = this.persona?.name ?? ''; } catch { /* test env */ }
           fastPrompt = this.decisionEngine.buildFastReplyPrompt(identityBlock);
           const callsign = this.config.user?.callsign;
           userNote = callsign ? `\nThe user's name is "${callsign}".` : '';
@@ -2546,16 +2458,10 @@ export class Agent {
         this.toolLedger.record({ name: toolId, success, output, elapsed, path });
         this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
         this.turnState.touch();
-        // Ingest web search / fetch results into the neural brain for future RAG retrieval.
-        // This ensures knowledge discovered via web tools is persisted and searchable
-        // in subsequent turns — not lost after the current conversation.
-        if (success && Agent.WEB_SEARCH_TOOLS.has(toolId) && output && output.length > 50) {
-          this.ingestWebSearchResult(toolId, args, output).catch(() => {});
-        }
       },
     );
 
-    if (this.options.promptProfile === 'crew_private') {
+    if (this.options.promptProfile === 'crew_private' || deniesAutonomousCrewTools(this.options.contextKind, this.sessionId)) {
       const denyCrewOrchestration = new Set(['spawn_crew_workers', 'delegate_to_crew', 'crew_response']);
       for (const key of Object.keys(tools)) {
         if (denyCrewOrchestration.has(key)) delete tools[key];
@@ -2906,9 +2812,6 @@ export class Agent {
       {
         config: this.config,
         provider: this.provider,
-        memoryExtractor: this.memoryExtractor,
-        setMemoryExtractor: (e) => { this.memoryExtractor = e; },
-        secretSauce: this.secretSauce,
         memoryFabric: this.memoryFabric,
         memoryEmbedder: this.memoryEmbedder,
         chatTurnMemoryIngester: this.chatTurnMemoryIngester,
@@ -2933,13 +2836,10 @@ export class Agent {
   }
 
   private buildIdentityBlock(): string {
-    return buildIdentityBlockHelper(
-      {
-        secretSauce: this.secretSauce,
-        persona: this.persona,
-        options: this.options,
-      } as IdentityContext,
-    );
+    return buildIdentityBlockHelper({
+      persona: this.persona,
+      options: this.options,
+    });
   }
 
   setClientSituation(situation: ClientSituation | null): void {
@@ -2948,9 +2848,6 @@ export class Agent {
 
   applyPersona(persona: AgentPersonaConfig | null): void {
     this.persona = persona;
-    if (persona) {
-      this.secretSauce.identity.seedFromPersona(persona);
-    }
     this.rebuildSystemPrompt();
   }
 
@@ -2981,15 +2878,14 @@ export class Agent {
         getContextSummary: () => this.contextTracker.getContextSummary(),
         getRecentHistory: () => this.contextTracker.getRecentHistory(),
       } : null,
-      soulManager: { buildContext: () => this.secretSauce.soul.buildContext() },
       personaName: this.persona?.name || 'Agent-X',
-      experienceEngine: { getProvenContext: () => this.experienceEngine.getProvenContext(), getCautionContext: () => this.experienceEngine.getCautionContext() },
-      growthEngine: { getGrowthContext: () => this.growthEngine.getGrowthContext() },
       turnFeedbackService: { buildPromptContext: () => this.turnFeedbackService.buildPromptContext(this.sessionId) },
       memoryContext: { getContext: () => this.buildMemoryContext() },
       getPersona: () => this.persona,
       getClientSituation: () => this.clientSituation,
       linkedContextBlock: () => this.buildLinkedContextPromptBlock(),
+      contextKind: this.options.contextKind,
+      sessionId: this.sessionId,
     };
   }
 
@@ -3252,27 +3148,14 @@ export class Agent {
     return result as Message;
   }
 
-  /**
-   * End the session — records diary entry and updates identity.
-   */
+  /** End the session — clear ephemeral turn context. */
   endSession(): void {
     endSessionHelper(this._sessionLifecycleCtx());
-  }
-
-  /**
-   * Run background summarization of memories and diary.
-   * Non-blocking — failures are silently ignored.
-   */
-  private async runSummarization(): Promise<void> {
-    return runSummarizationHelper(this._sessionLifecycleCtx());
   }
 
   private _sessionLifecycleCtx(): SessionLifecycleContext {
     return {
       contextTracker: this.contextTracker,
-      secretSauce: this.secretSauce,
-      messages: this.messages,
-      simpleComplete: (prompt) => this.simpleComplete(prompt),
     };
   }
 
@@ -3320,11 +3203,7 @@ export class Agent {
   get specialistRegistryInstance(): SpecialistRegistry { return this.specialistRegistry; }
   get skillGeneratorInstance(): SkillGenerator | null { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
-  /** Exposed for vitals/diagnostics — returns the experience engine if initialized. */
-  get experienceEngineInstance(): ExperienceEngine | null { return this._experienceEngine; }
-  /** Exposed for vitals/diagnostics — returns the growth engine if initialized. */
-  get growthEngineInstance(): GrowthEngine | null { return this._growthEngine; }
-  /** Exposed for vitals/diagnostics — returns the pending checkpoint if any. */
+  /** Exposed for diagnostics — returns the pending checkpoint if any. */
   get pendingCheckpoint(): { resolve: (action: unknown) => void; reject: (err: Error) => void; checkpointId: string } | null { return this._pendingCheckpoint; }
 
   // Store the last compaction summary for iterative updates
@@ -3691,6 +3570,7 @@ export class Agent {
 
   /** Crew members enabled for this session (used for auto-compose and spawn tools). */
   getActiveCrewMembers(): CrewMember[] {
+    if (crewParticipationMode(this.options.contextKind, this.sessionId) === 'none') return [];
     const members = this.crewOrchestrator?.getMembers().filter((m) =>
       m.active !== false && m.crew.enabled !== false,
     ) ?? [];
@@ -3705,9 +3585,13 @@ export class Agent {
   }
 
   setCrewEnabled(crewId: string, enabled: boolean): void {
+    if (enabled && crewParticipationMode(this.options.contextKind, this.sessionId) === 'none') {
+      getLogger().warn('CREW', `Ignoring crew enable on crew-free session ${this.sessionId}`);
+      return;
+    }
     if (enabled) {
       this.enabledCrewSessionIds.add(crewId);
-      const crew = this.secretSauce.crew.get(crewId);
+      const crew = this.crewManager.get(crewId);
       if (crew && this.crewOrchestrator) {
         this.crewOrchestrator.addMember(crew);
       }
@@ -3842,7 +3726,7 @@ export class Agent {
       const store = this.getPersistStore();
       const catalogStore = (store?.getCrewCatalogStore?.() as CrewCatalogRecruitStore | null) ?? null;
       missionMembers = await ensureCrewMembersOnRoster(
-        this.secretSauce.crew,
+        this.crewManager,
         members,
         catalogStore,
         this,

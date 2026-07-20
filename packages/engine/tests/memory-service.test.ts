@@ -120,17 +120,6 @@ describe.runIf(await isPgAvailable() && await hasPgVector())('MemoryService', ()
     expect(context.semantic).toContain('TypeScript');
   });
 
-  it('ingests a document and returns source nodes', async () => {
-    const result = await service.ingestDocument({
-      name: 'test-doc',
-      kind: 'text',
-      content: 'Agent-X runs locally. It uses PostgreSQL and pgvector.',
-      sessionId: 'doc-session',
-    });
-    expect(result.nodes.length).toBeGreaterThan(0);
-    expect(result.sourceNodeId).toBeTruthy();
-  });
-
   it('reinforces the last context node ids', async () => {
     await service.ingest({
       text: 'Reinforcement target',

@@ -253,43 +253,6 @@ describe('Gap 3 — Doom Loop + Circuit Breaker coexistence', () => {
 });
 
 // ─────────────────────────────────────────────
-// Gap 1: Neural Section types
-// ─────────────────────────────────────────────
-describe('Gap 1 — Neural Section key', () => {
-  it('NeuralSection should be exportable from prompt-assembly index', async () => {
-    const mod = await import('../src/secret-sauce/prompt-assembly/index.js');
-    expect(typeof mod.createNeuralSection).toBe('function');
-  });
-
-  it('NeuralSection renders empty when no engines wired', async () => {
-    const mod = await import('../src/secret-sauce/prompt-assembly/index.js');
-    const section = mod.createNeuralSection({
-      getProviderId: () => 'openai',
-      getModelId: () => 'gpt-4',
-      buildIdentityBlock: () => 'Agent-X',
-      scopePath: '/tmp',
-      telegramConnected: false,
-      userCallsign: undefined,
-      getUserTimezone: () => 'UTC',
-      getUtcOffset: () => '+00:00',
-      crewOrchestrator: null,
-      enabledCrewSessionIds: new Set(),
-      reflectionLoop: null,
-      skillGenerator: null,
-      skillRegistry: null,
-      contextTracker: null,
-      soulManager: { buildContext: () => '' },
-      personaName: 'Agent-X',
-      experienceEngine: null,
-      growthEngine: null,
-    } as any);
-    const loaded = await section.load();
-    expect(loaded).toBeNull();
-    expect(section.render(loaded)).toBe('');
-  });
-});
-
-// ─────────────────────────────────────────────
 // Gap 3 + 4: EnhancedToolExecutor batch execution with circuit breaker
 // ─────────────────────────────────────────────
 describe('Gap 3 — EnhancedToolExecutor batch with CB check', () => {

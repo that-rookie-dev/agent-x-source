@@ -18,7 +18,6 @@ export interface MigrationContext {
   pool: Pool;
   progress: (line: string) => void;
   crewFromRow: (row: Record<string, unknown>) => Crew;
-  seedDefaultPersona: () => Promise<{ created: boolean }>;
   hydrateEssentialCache: () => Promise<void>;
   hydrateCache: () => Promise<void>;
   lazyHydrate: boolean;
@@ -134,10 +133,6 @@ export async function doConnect(ctx: MigrationContext): Promise<void> {
     const client = await ctx.pool.connect();
     client.release();
     await migrate(ctx);
-    ctx.progress('Checking default agent persona…');
-    const persona = await ctx.seedDefaultPersona();
-    if (persona.created) ctx.progress('Default persona created.');
-    else ctx.progress('Default persona found.');
     if (ctx.lazyHydrate) {
       ctx.progress('Loading session metadata cache…');
       await ctx.hydrateEssentialCache();

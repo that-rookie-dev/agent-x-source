@@ -7,7 +7,6 @@
     ["get", "/api/agent/turn-state"],
     ["get", "/api/chat/turn/:turnId"],
     ["get", "/api/agent/state"],
-    ["get", "/api/agent/vitals"],
     ["get", "/api/agent/autonomy-status"],
     ["post", "/api/agent/circuit-breaker/reset"]
   ]

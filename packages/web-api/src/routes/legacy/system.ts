@@ -11,12 +11,9 @@ import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolveRuntimeSettings, getLogger, normalizeClientSituation } from '@agentx/shared';
 import type { AgentXConfig } from '@agentx/shared';
 import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
-import { setIngestionAppVisible, getIngestionGovernorState } from '../../ingestion-governor.js';
 import { redactConfigForClient, mergeConfigPreservingSecrets, REDACTED_SECRET } from '../../config-redaction.js';
-import { mergeVoiceConfig } from '@agentx/engine';
-import { refreshIngestionWorkerGenerator } from '../../ingestion-worker-ref.js';
+import { mergeVoiceConfig, getBackgroundTaskPool, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, getLogCollector } from '@agentx/engine';
 import { applyChannelsConfig } from '../../channels-sync.js';
-import { getBackgroundTaskPool, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, getLogCollector } from '@agentx/engine';
 import { validateProviderConfig, AVAILABLE_PROVIDERS } from './providers.js';
 import { validateConfig, DATA_DIR, pathExists } from './shared.js';
 
@@ -28,14 +25,8 @@ export function createSystemRouter(): Router {
     res.json(buildPublicSystemCapabilities(os.totalmem()));
   });
 
-  r.post('/api/system/app-visibility', (req, res) => {
-    const visible = req.body?.visible === true;
-    setIngestionAppVisible(visible);
-    res.json({ ok: true, ...getIngestionGovernorState() });
-  });
-
-  r.get('/api/system/ingestion-governor', (_req, res) => {
-    res.json(getIngestionGovernorState());
+  r.post('/api/system/app-visibility', (_req, res) => {
+    res.json({ ok: true });
   });
 
   // ───── Setup / Config ─────
@@ -190,8 +181,6 @@ export function createSystemRouter(): Router {
       void applyChannelsConfig(merged).catch((e: unknown) => {
         getLogger().warn('CHANNELS', `Failed to apply channel config: ${e instanceof Error ? e.message : String(e)}`);
       });
-      // Rebuild the ingestion worker's LLM generator in case provider config changed
-      void refreshIngestionWorkerGenerator();
       res.json({ ok: true });
       } catch (err) {
       getLogger().error('PUT_API_CONFIG', err instanceof Error ? err : String(err));

@@ -3,7 +3,7 @@
  *
  * A single node/edge store for all Agent-X memory: knowledge, episodic sessions,
  * tools, personas, and web data. Uses PostgreSQL + pgvector for semantic search
- * and recursive CTEs for graph traversal (AGE optional).
+ * and recursive CTEs for graph traversal.
  */
 import { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
@@ -12,7 +12,6 @@ import { PiiRedactor } from './PiiRedactor.js';
 import { SecureVault } from './SecureVault.js';
 import {
   graphWalk as graphWalkImpl,
-  runGraphWalkParityTest as runGraphWalkParityTestImpl,
   walkGraph as walkGraphImpl,
 } from './fabric-graph-walk.js';
 import {
@@ -26,13 +25,6 @@ import {
   getNodesInCommunities as getNodesInCommunitiesImpl,
   getViewport as getViewportImpl,
 } from './fabric-layout.js';
-import {
-  stageWebPayload as stageWebPayloadImpl,
-  getPendingWebStaging as getPendingWebStagingImpl,
-  markWebStagingDistilled as markWebStagingDistilledImpl,
-  markWebStagingDone as markWebStagingDoneImpl,
-  cleanupExpiredWebStaging as cleanupExpiredWebStagingImpl,
-} from './fabric-web-staging.js';
 import {
   createNode as createNodeImpl,
   bindEdge as bindEdgeImpl,
@@ -212,7 +204,7 @@ export function setMemoryFabricInstance(fabric: MemoryFabric | null): void {
   _fabricInstance = fabric;
 }
 
-/** Get the global MemoryFabric singleton (used by tools like memory_fabric_search). */
+/** Get the global MemoryFabric singleton (used by cortex memory tools). */
 export function getMemoryFabricInstance(): MemoryFabric | null {
   return _fabricInstance;
 }
@@ -289,22 +281,19 @@ export class MemoryFabric {
     return this.vault?.list(options) ?? [];
   }
 
-  async migrate(): Promise<{ applied: number; currentVersion: number; ageAvailable: boolean }> {
+  async migrate(): Promise<{ applied: number; currentVersion: number }> {
     const runner = new MemoryMigrationRunner(this.pool);
     const { applied, currentVersion } = await runner.ensureSchema();
-    const { available: ageAvailable } = await runner.detectAge();
-    return { applied, currentVersion, ageAvailable };
+    return { applied, currentVersion };
   }
 
   /**
    * Comprehensive self-healing pass:
    * - re-run versioned migrations,
-   * - ensure required extensions (vector, age) exist,
-   * - ensure AGE graph exists (with relational fallback on failure),
    * - verify every required table and recreate missing indexes.
    * Safe to call on every startup and periodic health pass.
    */
-  async heal(onProgress?: (line: string) => void): Promise<{ schemaRepaired: boolean; ageAvailable: boolean; ageError?: string }> {
+  async heal(onProgress?: (line: string) => void): Promise<{ schemaRepaired: boolean }> {
     const runner = new MemoryMigrationRunner(this.pool);
     const { applied, currentVersion } = await runner.ensureSchema();
     if (onProgress) {
@@ -314,65 +303,14 @@ export class MemoryFabric {
         onProgress(`Applied ${applied} neural memory migration(s) — now at v${currentVersion}.`);
       }
     }
-    let { available: ageAvailable, error: ageError } = await runner.detectAge();
 
-    // If AGE is available as an extension but not installed yet (e.g. the database
-    // was migrated before AGE was built), create it now. This makes the migration
-    // idempotent with respect to AGE availability.
-    if (!ageAvailable && !ageError) {
-      try {
-        const { rows } = await this.pool.query<{ available: boolean }>(
-          `SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'age') AS available`
-        );
-        if (rows[0]?.available) {
-          await this.pool.query('CREATE EXTENSION IF NOT EXISTS age');
-          const { available } = await runner.detectAge();
-          ageAvailable = available;
-        }
-      } catch (installErr) {
-        ageError = installErr instanceof Error ? installErr.message : String(installErr);
-        getLogger().warn('MEMORY_FABRIC_HEAL', `AGE extension install failed: ${ageError}`);
-      }
-    }
-
-    if (onProgress) {
-      if (ageAvailable) {
-        onProgress('Apache AGE graph extension found.');
-      } else if (ageError) {
-        onProgress(`Apache AGE not available (optional): ${ageError}`);
-      } else {
-        onProgress('Apache AGE not installed (optional — SQL graph fallback active).');
-      }
-    }
-
-    let graphRepaired = false;
-    if (ageAvailable) {
-      try {
-        await this.pool.query('SET search_path = ag_catalog, public');
-        await this.pool.query(`
-          DO $$
-          BEGIN
-            PERFORM * FROM ag_catalog.ag_graph WHERE name = 'memory_graph';
-            IF NOT FOUND THEN
-              PERFORM ag_catalog.create_graph('memory_graph');
-            END IF;
-          END$$;
-        `);
-        await this.pool.query('SET search_path = public');
-        graphRepaired = true;
-        onProgress?.('AGE memory graph verified.');
-      } catch (graphErr) {
-        getLogger().warn('MEMORY_FABRIC_HEAL', `AGE graph repair failed: ${graphErr instanceof Error ? graphErr.message : graphErr}`);
-        await this.pool.query('SET search_path = public').catch(() => {});
-      }
-    }
     const missingIndexes = await this.verifyIndexes();
     if (missingIndexes.length > 0) {
-      getLogger().warn('MEMORY_FABRIC_HEAL', `Rebuilding missing indexes: ${missingIndexes.join(', ')}`);
+      getLogger().warn('CORTEX_FABRIC_HEAL', `Rebuilding missing indexes: ${missingIndexes.join(', ')}`);
       onProgress?.(`Rebuilding ${missingIndexes.length} missing neural memory index(es)…`);
     }
-    const schemaRepaired = applied > 0 || graphRepaired || missingIndexes.length > 0;
-    return { schemaRepaired, ageAvailable, ageError };
+    const schemaRepaired = applied > 0 || missingIndexes.length > 0;
+    return { schemaRepaired };
   }
 
   private async verifyIndexes(): Promise<string[]> {
@@ -389,8 +327,6 @@ export class MemoryFabric {
       'idx_memory_edges_source',
       'idx_memory_edges_target',
       'idx_memory_edges_type',
-      'idx_web_staging_domain',
-      'idx_web_staging_status',
       'idx_benchmark_scorecards_model',
       'idx_benchmark_scorecards_finished_at',
     ];
@@ -475,17 +411,6 @@ export class MemoryFabric {
     return graphWalkImpl({ pool: this.pool }, options);
   }
 
-  /**
-   * Dual-path parity test: compare Apache AGE Cypher traversal against the
-   * relational recursive-CTE implementation for the same start nodes.
-   * Returns a mismatch report; empty diffs mean the paths agree.
-   */
-  async runGraphWalkParityTest(
-    options: GraphWalkOptions,
-  ): Promise<{ ageAvailable: boolean; ageResult: GraphWalkResult; cteResult: GraphWalkResult; nodeDiff: string[]; edgeDiff: string[]; passed: boolean }> {
-    return runGraphWalkParityTestImpl({ pool: this.pool }, options);
-  }
-
   async assembleContext(
     sessionId: string,
     embedding: number[],
@@ -524,10 +449,7 @@ export class MemoryFabric {
     return findDuplicateImpl(this.searchCtx(), embedding, threshold, category);
   }
 
-  /**
-   * Graph walk using Apache AGE when available, otherwise a recursive CTE.
-   * Returns reachable nodes and the traversed edges.
-   */
+  /** Graph walk over memory_edges using a recursive SQL CTE. */
   async walkGraph(options: GraphWalkOptions): Promise<GraphWalkResult> {
     return walkGraphImpl({ pool: this.pool }, options);
   }
@@ -588,7 +510,7 @@ export class MemoryFabric {
 
   /**
    * Get all distinct community IDs with their member counts.
-   * Used by the CommunitySummarizer to decide which communities need summarization.
+   * Used by community summarization batch jobs to decide which communities need summarization.
    */
   async getCommunities(): Promise<{ communityId: string; memberCount: number }[]> {
     return getCommunitiesImpl({ pool: this.pool, getGraphSnapshot: (o) => this.getGraphSnapshot(o), getNodeCount: () => this.getNodeCount() });
@@ -629,26 +551,6 @@ export class MemoryFabric {
       `SELECT COUNT(*)::int AS count FROM memory_nodes WHERE status = 'active'`
     );
     return rows[0]?.count ?? 0;
-  }
-
-  async stageWebPayload(url: string, domain: string, kind: string, rawPayload: unknown, sourceId?: string, ttlDays = 7): Promise<string> {
-    return stageWebPayloadImpl({ pool: this.pool }, url, domain, kind, rawPayload, sourceId, ttlDays);
-  }
-
-  async getPendingWebStaging(limit = 10): Promise<Array<{ id: string; url: string; domain: string; kind: string; rawPayload: unknown }>> {
-    return getPendingWebStagingImpl({ pool: this.pool }, limit);
-  }
-
-  async markWebStagingDistilled(id: string, distilledContent: string): Promise<void> {
-    return markWebStagingDistilledImpl({ pool: this.pool }, id, distilledContent);
-  }
-
-  async markWebStagingDone(id: string): Promise<void> {
-    return markWebStagingDoneImpl({ pool: this.pool }, id);
-  }
-
-  async cleanupExpiredWebStaging(): Promise<{ deleted: number }> {
-    return cleanupExpiredWebStagingImpl({ pool: this.pool });
   }
 
   /**

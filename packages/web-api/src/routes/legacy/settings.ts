@@ -19,6 +19,7 @@ import {
   resetCatalogSeedInflight,
   runMigrations,
   MIGRATION_FILES,
+  transferPostgresStorage,
   type MigrationResult,
 } from '@agentx/engine';
 import { REDACTED_SECRET } from '../../config-redaction.js';
@@ -39,6 +40,77 @@ function formatSize(bytes: number): string {
 
 const DB_STATUS_CACHE_MS = 60_000;
 let dbStatusCache: { at: number; data: Record<string, unknown> } | null = null;
+
+function invalidateDbStatusCache(): void {
+  dbStatusCache = null;
+}
+
+function getPostgresBackend(eng: ReturnType<typeof getEngine>): 'embedded-postgres' | 'postgres' {
+  try {
+    const cfg = eng.pluginRegistry.getConfig('postgresql');
+    const b = cfg['backend'];
+    if (b === 'embedded-postgres' || b === 'postgres') return b;
+  } catch { /* fall through */ }
+  if (process.env['AGENTX_EMBEDDED_PG_ENABLED'] === '1') return 'embedded-postgres';
+  return 'postgres';
+}
+
+async function buildProvisionStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
+  const store = eng.sessionManager?.getStorageAdapter();
+  const pgConnected = !!(store && typeof store.isConnected === 'function' && store.isConnected());
+  const backend = getPostgresBackend(eng);
+  const pool = store?.getPool?.() ?? eng.pgPool;
+
+  let vectorAvailable = false;
+  let vectorError: string | null = null;
+  let schemaVersion = 0;
+  let migrationsApplied = 0;
+  let migrationsUpToDate = false;
+  let pendingMigrations = 0;
+
+  if (pool && typeof pool.query === 'function' && typeof (pool as import('pg').Pool).connect === 'function') {
+    const pgPool = pool as import('pg').Pool;
+    try {
+      const { runDbExtensionChecks } = await import('../../db-extension-checks.js');
+      const client = await pgPool.connect();
+      try {
+        const ext = await runDbExtensionChecks(client);
+        vectorAvailable = ext.vectorAvailable;
+        vectorError = ext.vectorError ?? null;
+      } finally {
+        client.release();
+      }
+    } catch (e) {
+      vectorError = e instanceof Error ? e.message : String(e);
+    }
+
+    try {
+      const { rows } = await pgPool.query<{ version: number }>(
+        `SELECT version FROM core_schema_migrations ORDER BY version ASC`,
+      );
+      migrationsApplied = rows.length;
+      schemaVersion = rows.length > 0 ? Math.max(...rows.map((r) => r.version)) : 0;
+      const appliedSet = new Set(rows.map((r) => r.version));
+      const pending = MIGRATION_FILES.filter((m) => !appliedSet.has(m.version));
+      pendingMigrations = pending.length;
+      migrationsUpToDate = pending.length === 0;
+    } catch {
+      migrationsUpToDate = false;
+    }
+  }
+
+  return {
+    postgres: pgConnected,
+    backend,
+    vectorAvailable,
+    vectorError,
+    schemaVersion,
+    migrationsApplied,
+    migrationsUpToDate,
+    pendingMigrations,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<string, unknown>> {
   const now = Date.now();
@@ -108,8 +180,11 @@ async function buildDbStatus(eng: ReturnType<typeof getEngine>): Promise<Record<
     return { path: dir, sizeBytes, sizeFormatted: `${s.toFixed(1)} ${units[i]}` };
   }
 
+  const postgresBackend = getPostgresBackend(eng);
+
   const result = {
     backend: 'postgres',
+    postgresBackend,
     connected: pgConnected,
     stats: {
       dbSizeBytes,
@@ -159,6 +234,7 @@ async function persistPostgresBackend(
   // Must drain the write queue before discarding the engine — otherwise
   // pending crew INSERTs are lost while sessions may already be committed.
   await clearEngineDurable();
+  invalidateDbStatusCache();
 }
 
 export function createSettingsRouter(): Router {
@@ -182,6 +258,16 @@ export function createSettingsRouter(): Router {
     } catch (e: unknown) {
       getLogger().error('GET_API_SETTINGS_DB', e instanceof Error ? e : String(e));
       res.status(500).json({ error: e instanceof Error ? e.message : 'settings-db-failed' });
+    }
+  });
+
+  r.get('/api/settings/db/provision-status', async (_req, res) => {
+    try {
+      const eng = getEngine();
+      res.json(await buildProvisionStatus(eng));
+    } catch (e: unknown) {
+      getLogger().error('GET_API_SETTINGS_DB_PROVISION_STATUS', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'provision-status-failed' });
     }
   });
 
@@ -584,8 +670,6 @@ export function createSettingsRouter(): Router {
           checks: ext.checks,
           vectorAvailable: ext.vectorAvailable,
           vectorError: ext.vectorError,
-          ageAvailable: ext.ageAvailable,
-          ageError: ext.ageError,
           extensionsCreated: ext.extensionsCreated,
           error: blocking
             ? ext.checks.find((c: DbExtensionCheck) => c.status === 'fail')?.message ?? 'Required database extensions are missing'
@@ -612,10 +696,145 @@ export function createSettingsRouter(): Router {
       const started = Date.now();
       await store.connect();
       const durationMs = Date.now() - started;
+      invalidateDbStatusCache();
       res.json({ ok: true, migrated: {}, durationMs });
     } catch (e: unknown) {
       getLogger().error('POST_API_SETTINGS_DB_MIGRATE', e instanceof Error ? e : String(e));
       res.status(500).json({ ok: false, error: e instanceof Error ? e.message : 'settings-db-migrate-failed' });
+    }
+  });
+
+  r.post('/api/settings/db/transfer', async (req, res) => {
+    const { targetBackend, connectionString: rawConnectionString } = req.body || {};
+    const resolvedTarget = targetBackend === 'embedded-postgres' ? 'embedded-postgres' : 'postgres';
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {
+      (res as { flushHeaders: () => void }).flushHeaders();
+    }
+
+    let eventId = 0;
+    let clientDisconnected = false;
+    res.on('close', () => { clientDisconnected = true; });
+
+    const flush = () => {
+      const r = res as { flush?: () => void };
+      if (typeof r.flush === 'function') {
+        try { r.flush(); } catch { /* ignore */ }
+      }
+    };
+
+    const send = (event: string, data: unknown) => {
+      if (clientDisconnected || res.writableEnded || res.destroyed) return;
+      try {
+        res.write(`id: ${eventId}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        eventId += 1;
+        flush();
+      } catch { /* client closed */ }
+    };
+
+    const log = (line: string) => {
+      getLogger().info('PG_TRANSFER', line);
+      send('log', { line, ts: new Date().toISOString() });
+    };
+
+    const logError = (phase: string, e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      getLogger().error('PG_TRANSFER', { phase, error: message, stack: e instanceof Error ? e.stack : undefined });
+      send('log', { line: `[ERROR] ${phase}: ${message}`, ts: new Date().toISOString() });
+    };
+
+    try {
+      const eng = getEngine();
+      const currentBackend = getPostgresBackend(eng);
+      if (currentBackend === resolvedTarget) {
+        send('error', { error: `Already using ${resolvedTarget === 'embedded-postgres' ? 'embedded' : 'cloud'} PostgreSQL.` });
+        res.end();
+        return;
+      }
+
+      const store = eng.sessionManager?.getStorageAdapter() as PostgresStorageAdapter | undefined;
+      const sourcePool = store?.getPool?.() ?? eng.pgPool;
+      if (!sourcePool || typeof sourcePool.query !== 'function') {
+        send('error', { error: 'Source PostgreSQL is not connected.' });
+        res.end();
+        return;
+      }
+
+      send('status', { phase: 'starting', targetBackend: resolvedTarget, sourceBackend: currentBackend });
+      log(`Migrating storage from ${currentBackend === 'embedded-postgres' ? 'embedded' : 'cloud'} to ${resolvedTarget === 'embedded-postgres' ? 'embedded' : 'cloud'} PostgreSQL…`);
+
+      let destinationConnectionString = typeof rawConnectionString === 'string' ? rawConnectionString.trim() : '';
+
+      if (resolvedTarget === 'embedded-postgres') {
+        log('Starting bundled embedded PostgreSQL…');
+        try {
+          destinationConnectionString = await startEmbeddedPostgresViaBridge((line) => log(line));
+        } catch (e) {
+          logError('embedded-postgres-start', e);
+          throw e;
+        }
+      } else if (!destinationConnectionString) {
+        send('error', { error: 'Connection string is required for cloud PostgreSQL.' });
+        res.end();
+        return;
+      }
+
+      log('Testing destination PostgreSQL connection…');
+      const test = await PostgresStorageAdapter.testConnection(destinationConnectionString);
+      if (!test.ok) {
+        send('error', { error: test.error ?? 'Destination connection failed' });
+        res.end();
+        return;
+      }
+      log(test.version ? `Destination connected: ${test.version}` : 'Destination connection OK');
+
+      log('Copying data to destination (schema update + upsert)…');
+      const transferResult = await transferPostgresStorage({
+        sourcePool,
+        destinationConnectionString,
+        progress: log,
+      });
+
+      log('Updating local storage configuration…');
+      await persistPostgresBackend(resolvedTarget, destinationConnectionString);
+
+      log('Reconnecting engine with new storage backend…');
+      setStorageProgressCallback((line) => log(line));
+      try {
+        const storageReadyTimeoutMs = 20 * 60 * 1000;
+        await Promise.race([
+          getEngine().storageReady,
+          new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(`Storage reconnect timed out after ${Math.round(storageReadyTimeoutMs / 60000)} minutes.`));
+            }, storageReadyTimeoutMs);
+          }),
+        ]);
+      } finally {
+        setStorageProgressCallback(undefined);
+      }
+
+      if (clientDisconnected) return;
+
+      log('Storage migration complete.');
+      send('complete', {
+        ok: true,
+        targetBackend: resolvedTarget,
+        tablesCopied: transferResult.tablesCopied,
+        totalRows: transferResult.totalRows,
+        restartRequired: true,
+      });
+      res.end();
+    } catch (e: unknown) {
+      logError('transfer', e);
+      send('error', { error: e instanceof Error ? e.message : 'storage-transfer-failed' });
+      res.end();
     }
   });
 

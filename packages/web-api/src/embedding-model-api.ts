@@ -9,7 +9,7 @@ import { Router, type Request, type Response } from 'express';
 import { pipeline, env } from '@huggingface/transformers';
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { getDataDir, getLogger, isNeuralBrainSupported } from '@agentx/shared';
+import { getDataDir, getLogger, resolveNeuralCortexEmbeddingTier } from '@agentx/shared';
 import { setDefaultEmbeddingCacheDir } from '@agentx/engine';
 import os from 'node:os';
 
@@ -75,8 +75,17 @@ function ensureRedirectFetchPatch(): void {
   getLogger().info('EMBEDDING_DOWNLOAD', 'Patched globalThis.fetch with redirect-following wrapper');
 }
 
-function neuralBrainHardwareSupported(): boolean {
-  return isNeuralBrainSupported(os.totalmem() / (1024 ** 3));
+function getRamGb(): number {
+  return os.totalmem() / (1024 ** 3);
+}
+
+function getActiveEmbeddingTier(): 'bge-m3' | 'minilm' {
+  return resolveNeuralCortexEmbeddingTier(getRamGb());
+}
+
+function modelsForActiveTier(): ModelSpec[] {
+  const tier = getActiveEmbeddingTier();
+  return MODELS.filter((m) => m.id === tier);
 }
 
 const EMBEDDING_MODELS_DIR = join(getDataDir(), 'models');
@@ -105,7 +114,7 @@ const MODELS: ModelSpec[] = [
     id: 'bge-m3',
     huggingfaceId: 'Xenova/bge-m3',
     dtype: 'int8',
-    displayName: 'BGE-M3 Neural Embedding Engine',
+    displayName: 'Primary Neural Matrix',
     approxSizeMB: 600,
     subdir: 'Xenova/bge-m3',
   },
@@ -113,7 +122,7 @@ const MODELS: ModelSpec[] = [
     id: 'minilm',
     huggingfaceId: 'Xenova/all-MiniLM-L6-v2',
     dtype: 'q4',
-    displayName: 'MiniLM Lightweight Embedder',
+    displayName: 'Core Link Package',
     approxSizeMB: 55,
     subdir: 'Xenova/all-MiniLM-L6-v2',
   },
@@ -281,12 +290,10 @@ async function downloadModel(model: ModelSpec): Promise<void> {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
-/**
- * GET /api/embedding-models/status
- * Returns the current status of both embedding models.
- */
-router.get('/embedding-models/status', (_req: Request, res: Response) => {
-  const models = MODELS.map((m) => {
+function handleEmbeddingStatus(_req: Request, res: Response): void {
+  const tier = getActiveEmbeddingTier();
+  const tierModels = modelsForActiveTier();
+  const models = tierModels.map((m) => {
     const downloaded = isModelDownloaded(m);
     const state = downloadStates.get(m.id);
     return {
@@ -300,44 +307,49 @@ router.get('/embedding-models/status', (_req: Request, res: Response) => {
       percentage: state?.percentage ?? (downloaded ? 100 : 0),
     };
   });
-  res.json({ models, allDownloaded: models.every((m) => m.downloaded), neuralBrainSupported: neuralBrainHardwareSupported() });
-});
+  const allDownloaded = models.every((m) => m.downloaded);
+  res.json({
+    models,
+    allDownloaded,
+    recommendedTier: tier,
+    requiredModel: tier,
+    ready: allDownloaded,
+    activeTier: allDownloaded ? tier : null,
+    degraded: !allDownloaded,
+    neuralCortexEmbeddingTier: tier,
+    cortexReady: allDownloaded,
+    cortexDegraded: !allDownloaded,
+  });
+}
 
-/**
- * POST /api/embedding-models/download
- * Starts downloading both embedding models in the background.
- * Returns immediately with the initial state.
- */
-router.post('/embedding-models/download', async (req: Request, res: Response) => {
-  // Allow low-RAM systems to bypass the hardware check when the user has
-  // explicitly opted in via the setup wizard (force: true).
-  const force = req.body?.force === true;
-  if (!neuralBrainHardwareSupported() && !force) {
-    return res.status(403).json({
-      ok: false,
-      error: 'neural-brain-unsupported',
-      message: 'Neural brain requires 16 GB+ system RAM. Embedding models are not available on this machine.',
-    });
-  }
-  // Check which models still need downloading.
-  const needed = MODELS.filter((m) => !isModelDownloaded(m));
+router.get('/neural-cortex/embeddings/status', handleEmbeddingStatus);
+
+async function handleEmbeddingDownload(_req: Request, res: Response): Promise<void> {
+  const tier = getActiveEmbeddingTier();
+  const needed = modelsForActiveTier().filter((m) => !isModelDownloaded(m));
   if (needed.length === 0) {
-    return res.json({ ok: true, message: 'All models already downloaded', models: [] });
+    res.json({ ok: true, message: 'Embedding model already downloaded', models: [], tier });
+    return;
   }
 
   if (downloadInProgress) {
-    return res.json({ ok: true, message: 'Download already in progress', models: MODELS.map((m) => ({ id: m.id, status: downloadStates.get(m.id)?.status ?? 'pending' })) });
+    res.json({
+      ok: true,
+      message: 'Download already in progress',
+      tier,
+      models: needed.map((m) => ({ id: m.id, status: downloadStates.get(m.id)?.status ?? 'pending' })),
+    });
+    return;
   }
 
   downloadInProgress = true;
 
-  // Start downloads sequentially (BGE-M3 first, then MiniLM).
   (async () => {
     for (const model of needed) {
       try {
         await downloadModel(model);
       } catch {
-        // Error state is already set in downloadStates.
+        /* error state set in downloadStates */
       }
     }
     downloadInProgress = false;
@@ -346,59 +358,41 @@ router.post('/embedding-models/download', async (req: Request, res: Response) =>
   res.json({
     ok: true,
     message: 'Download started',
+    tier,
     models: needed.map((m) => ({ id: m.id, displayName: m.displayName, approxSizeMB: m.approxSizeMB })),
   });
-});
+}
 
-/**
- * POST /api/embedding-models/disable-neural-brain
- * Disables the neural brain module when embedding models fail to download.
- * The caller (frontend) uses the config API to set neuralBrain: false.
- */
-router.post('/embedding-models/disable-neural-brain', (_req: Request, res: Response) => {
-  getLogger().warn('EMBEDDING_DOWNLOAD', 'Neural brain disabled — embedding models failed to download after all retries.');
-  res.json({ ok: true, message: 'Neural brain disabled' });
-});
+router.post('/neural-cortex/embeddings/download', (req, res) => { void handleEmbeddingDownload(req, res); });
 
-/**
- * DELETE /api/embedding-models
- * Purges all downloaded embedding model files from disk and resets download
- * state. Used when the user opts out of the neural brain from Settings.
- * The caller should also set neuralBrain: false via the config API.
- */
-router.delete('/embedding-models', (_req: Request, res: Response) => {
+router.delete('/neural-cortex/embeddings', (_req: Request, res: Response) => {
   let purgedMB = 0;
-  for (const model of MODELS) {
+  for (const model of modelsForActiveTier()) {
     const sizeBefore = getModelSizeMB(model);
     cleanPartialDownload(model);
-    // Clear any in-progress download state.
     const state = downloadStates.get(model.id);
     if (state && (state.status === 'downloading' || state.status === 'pending')) {
       state.status = 'error';
-      state.error = 'Download cancelled — neural brain disabled by user.';
+      state.error = 'Download cancelled.';
     }
     purgedMB += sizeBefore;
   }
   downloadInProgress = false;
-  getLogger().info('EMBEDDING_DOWNLOAD', `Purged all embedding models from disk (${purgedMB.toFixed(1)} MB freed).`);
-  res.json({ ok: true, message: 'All embedding models purged', freedMB: Math.round(purgedMB * 100) / 100 });
+  getLogger().info('EMBEDDING_DOWNLOAD', `Purged embedding models (${purgedMB.toFixed(1)} MB freed).`);
+  res.json({ ok: true, message: 'Embedding models purged', freedMB: Math.round(purgedMB * 100) / 100 });
 });
 
-/**
- * GET /api/embedding-models/progress
- * Server-Sent Events stream that pushes download progress updates every 500ms.
- */
-router.get('/embedding-models/progress', (req: Request, res: Response) => {
+function handleEmbeddingProgress(req: Request, res: Response): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
   });
-  res.write('data: ' + JSON.stringify({ type: 'connected' }) + '\n\n');
+  res.write('data: ' + JSON.stringify({ type: 'connected', tier: getActiveEmbeddingTier() }) + '\n\n');
 
   const interval = setInterval(() => {
-    const models = MODELS.map((m) => {
+    const models = modelsForActiveTier().map((m) => {
       const state = downloadStates.get(m.id);
       const downloaded = isModelDownloaded(m);
       return {
@@ -414,7 +408,7 @@ router.get('/embedding-models/progress', (req: Request, res: Response) => {
     const allComplete = models.every((m) => m.status === 'complete');
     const hasError = models.some((m) => m.status === 'error');
 
-    res.write('data: ' + JSON.stringify({ type: 'progress', models, allComplete, hasError }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ type: 'progress', models, allComplete, hasError, tier: getActiveEmbeddingTier() }) + '\n\n');
 
     if (allComplete || hasError) {
       res.write('data: ' + JSON.stringify({ type: 'done', allComplete, hasError }) + '\n\n');
@@ -423,11 +417,12 @@ router.get('/embedding-models/progress', (req: Request, res: Response) => {
     }
   }, 500);
 
-  // Clean up on client disconnect.
   req.on('close', () => {
     clearInterval(interval);
     res.end();
   });
-});
+}
+
+router.get('/neural-cortex/embeddings/progress', handleEmbeddingProgress);
 
 export default router;

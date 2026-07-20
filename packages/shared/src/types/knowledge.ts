@@ -28,6 +28,8 @@ export interface KnowledgeSource {
   summary?: string;
   chunkCount?: number;
   pageCount?: number;
+  /** 1-based position in the ingest queue when status is pending. */
+  queuePosition?: number;
   createdAt: string;
   updatedAt: string;
 }
