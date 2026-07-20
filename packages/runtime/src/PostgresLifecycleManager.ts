@@ -322,7 +322,7 @@ export class PostgresLifecycleManager {
 
     const child = spawn(bin.postgres, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: this.getProcessEnv(binaryDir),
+      env: this.getProcessEnv(dirname(bin.postgres)),
       detached: false,
     });
 
