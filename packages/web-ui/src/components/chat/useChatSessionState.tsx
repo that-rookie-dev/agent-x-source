@@ -51,6 +51,14 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null);
   /** URL session id — only set while viewing /console/chat/:sessionId (not the sessions list). */
   const viewSessionIdRef = useRef<string | null>(sessionId ?? null);
+  const prevRoutedSessionIdRef = useRef<string | null>(sessionId ?? null);
+
+  // Keep the SSE filter target in lockstep with the route during render so
+  // coalesced tool/stream flushes cannot apply the previous thread's events.
+  const resolvedViewSessionId = sessionId ?? currentSessionIdRef.current;
+  if (viewSessionIdRef.current !== resolvedViewSessionId) {
+    viewSessionIdRef.current = resolvedViewSessionId;
+  }
 
   useEffect(() => { isCrewPrivateRef.current = isCrewPrivateSession; }, [isCrewPrivateSession]);
   useEffect(() => { crewPrivateHostRef.current = crewPrivateHost; }, [crewPrivateHost]);
@@ -611,9 +619,25 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
     viewSessionIdRef.current = sessionId ?? currentSessionIdRef.current;
   }, [sessionId]);
 
+  // Switching chat threads: drop the previous session's turn chrome immediately.
+  // (Returning to the session list keeps mid-turn state for the same thread.)
+  useEffect(() => {
+    const prev = prevRoutedSessionIdRef.current;
+    const next = sessionId ?? null;
+    prevRoutedSessionIdRef.current = next;
+    if (prev != null && next != null && prev !== next) {
+      endTurnUi();
+      setCurrentStep(null);
+      setLoadingSteps(null);
+      setPermissionPrompt(null);
+      setPendingPermissionCount(0);
+      setStepCapPrompt(null);
+    }
+  }, [sessionId, endTurnUi]);
+
   // ─── Telemetry: SSE subscription, handleEvent, RAF batching, streaming timeout, turn polling (extracted to useChatTelemetry) ───
   useChatTelemetry({
-    streaming, crewList, turnActivity,
+    streaming, crewList, turnActivity, viewSessionKey: resolvedViewSessionId,
     isInitialLoadRef, turnActiveRef, activeTurnIdRef, outgoingTurnRef, resendInProgressRef,
     lastTurnFeedbackCandidateRef, viewSessionIdRef, currentSessionIdRef, isCrewPrivateRef,
     crewPrivateHostRef, crewMissionSessionIdRef, crewSuggestionHandledRef, crewGateInFlightRef,

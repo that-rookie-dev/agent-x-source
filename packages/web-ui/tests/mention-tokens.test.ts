@@ -4,9 +4,11 @@ import {
   formatFileMentionToken,
   formatFolderMentionToken,
   formatCrewMentionToken,
+  formatKbMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
   parseCrewMentionToken,
+  parseKbMentionToken,
   isCompleteMentionToken,
   findActiveMentionQuery,
 } from '../src/chat/mention-tokens';
@@ -41,7 +43,18 @@ describe('mention tokens — bracket delimiters', () => {
     expect(isCompleteMentionToken('@file[a%2Fb.txt]')).toBe(true);
     expect(isCompleteMentionToken('@folder[.]')).toBe(true);
     expect(isCompleteMentionToken('@crew[alice:Alice]')).toBe(true);
+    expect(isCompleteMentionToken('@kb[src-1:Report%20Q1.pdf]')).toBe(true);
     expect(isCompleteMentionToken('@file[incomplete')).toBe(false);
+  });
+
+  it('formats and parses Knowledge Base mention tokens', () => {
+    const tok = formatKbMentionToken('src-abc', 'Tax Guide.pdf');
+    expect(tok).toBe('@kb[src-abc:Tax%20Guide.pdf]');
+    expect(parseKbMentionToken(tok)).toEqual({ sourceId: 'src-abc', name: 'Tax Guide.pdf' });
+    const text = `Summarize ${tok}?`;
+    const parts = text.split(MENTION_TOKEN_SPLIT_RE).filter(Boolean);
+    expect(parts).toEqual(['Summarize ', '@kb[src-abc:Tax%20Guide.pdf]', '?']);
+    expect(findActiveMentionQuery(`see ${tok}?`)).toBeNull();
   });
 
   it('does not reopen mention menu after a closed file token + ?', () => {

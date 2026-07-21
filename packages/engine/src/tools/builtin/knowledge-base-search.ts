@@ -62,7 +62,13 @@ export async function knowledgeBaseSearch(
   try {
     const results = await kb.search(query, topK, sourceId);
     if (results.length === 0) {
-      return { success: true, output: 'No knowledge-base matches. Confirm the document finished indexing (READY).' };
+      return {
+        success: true,
+        output: [
+          'No knowledge-base matches. Confirm the document finished indexing (READY).',
+          'Do not fall back to file_read, shell_exec, or any disk open of the original upload — stay on knowledge_base_search or tell the user the document is not searchable yet.',
+        ].join(' '),
+      };
     }
     const formatted = formatKnowledgeBaseToolOutput(results);
     return {

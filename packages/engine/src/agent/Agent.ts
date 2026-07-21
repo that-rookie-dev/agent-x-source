@@ -87,7 +87,8 @@ import { PromptEngine } from '../prompt/PromptEngine.js';
 import type { IntentResult } from '../prompt/PromptEngine.js';
 import { DecisionEngine } from './DecisionEngine.js';
 import type { DecisionResult } from './DecisionEngine.js';
-import { runTurnJourney } from './TurnJourney.js';
+import { parseKbMentionSourceIds, runTurnJourney } from './TurnJourney.js';
+import type { KbDocumentTurnPolicy } from '../knowledge-base/kb-document-access-guard.js';
 import { AgentBus, getAgentBus } from './AgentBus.js';
 import { SpecialistRegistry } from './SpecialistRegistry.js';
 import type { SpecialistType } from './SpecialistRegistry.js';
@@ -1403,6 +1404,7 @@ export class Agent {
     this.userCancelledTurn = true;
     this.toolExecutor?.setTurnAborted(true);
     this.toolExecutor?.setThirdPartyTurnPolicy(null);
+    this.toolExecutor?.setKbDocumentTurnPolicy(null);
     this.abortAllPendingTurnWaits();
     this.abortClarificationWait();
     this._abortSignalController?.abort();
@@ -2274,6 +2276,20 @@ export class Agent {
         });
         this.lastRagResults = journey.ragResults;
         this.lastJourneyBlock = journey.journeyBlock;
+        // Pin KB documents for this turn — hard-deny disk/shell fallbacks on originals.
+        const kbMentions = journey.mentionedKb.length > 0
+          ? journey.mentionedKb
+          : parseKbMentionSourceIds(content);
+        if (kbMentions.length > 0) {
+          const policy: KbDocumentTurnPolicy = {
+            active: true,
+            sourceIds: kbMentions.map((m) => m.sourceId),
+            names: kbMentions.map((m) => m.name || m.sourceId),
+          };
+          this.toolExecutor?.setKbDocumentTurnPolicy(policy);
+        } else {
+          this.toolExecutor?.setKbDocumentTurnPolicy(null);
+        }
         if (journey.ragResults.length > 0) {
           this.emit({
             type: 'rag_queried',
@@ -2292,6 +2308,15 @@ export class Agent {
         }
       } catch (e) {
         getLogger().warn('TURN_JOURNEY', e instanceof Error ? e.message : String(e));
+        // Still enforce @kb disk ban even if journey prefetch failed.
+        const kbMentions = parseKbMentionSourceIds(content);
+        if (kbMentions.length > 0) {
+          this.toolExecutor?.setKbDocumentTurnPolicy({
+            active: true,
+            sourceIds: kbMentions.map((m) => m.sourceId),
+            names: kbMentions.map((m) => m.name || m.sourceId),
+          });
+        }
       }
     }
 
@@ -2472,6 +2497,7 @@ export class Agent {
       this.todoDispositionThisTurn = null;
       this.toolExecutor?.setTurnAborted(false);
       this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.toolExecutor?.setKbDocumentTurnPolicy(null);
       this.userCancelledTurn = false;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
@@ -3047,6 +3073,7 @@ export class Agent {
     } finally {
       this.activeStreamHandler = null;
       this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.toolExecutor?.setKbDocumentTurnPolicy(null);
     }
   }
 

@@ -26,6 +26,7 @@ import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
 import { WorkflowEntryCard } from './WorkflowEntryCard';
+import { usePersonaName } from '../hooks/usePersonaName';
 
 // Loaded only when the user opens a turn's workflow — chunk stays out of the
 // chat path and the modal DOM is destroyed on close.
@@ -309,6 +310,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
+  const personaName = usePersonaName();
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
@@ -419,7 +421,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
         <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: displayColor, boxShadow: crewInfo ? `0 0 6px ${alphaColor(displayColor, '80')}` : 'none', flexShrink: 0 }} />
         <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>
-          {crewInfo ? crewInfo.name : 'Agent-X'}
+          {crewInfo ? crewInfo.name : personaName}
         </Typography>
         {crewInfo?.callsign && (
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", opacity: 0.7 }}>

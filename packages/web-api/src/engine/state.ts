@@ -366,7 +366,8 @@ export function getEngine(): EngineState {
       // Ensure CrewManager is bound to the live adapter (covers deferred→ready swaps).
       if (state) state.crewManager.setStore(store);
       if (state) {
-        // Rebuild roster rows lost when the async PG write queue never drained.
+        // Rebuild *custom* roster rows lost when the async PG write queue never drained.
+        // Hub hosts are ignored inside recoverFromSessionHosts (catalog re-recruit instead).
         const hosts = store.listSessions(500)
           .filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private' && s.hostCrewId)
           .map((s) => ({

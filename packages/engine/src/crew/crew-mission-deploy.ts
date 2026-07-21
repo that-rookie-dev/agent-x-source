@@ -41,11 +41,16 @@ function findRosterCrewForHubReference(crewManager: CrewManager, crew: Crew): Cr
 function createHubCrewFromCatalogEntry(
   crewManager: CrewManager,
   catalog: NonNullable<Awaited<ReturnType<CrewCatalogRecruitStore['getCatalogEntry']>>>,
-): Crew {
+): Crew | null {
   const existing = crewManager.list().find(
     (c) => c.catalogId === catalog.id || callsignsMatch(c.callsign, catalog.callsign),
   );
   if (existing) return existing;
+
+  // Respect intentional deactivation — do not silently re-recruit from leftover refs.
+  if (crewManager.isIntentionallyDeleted(catalog.id, catalog.id)) {
+    return null;
+  }
 
   const input: CrewCreateInput = {
     id: catalog.id,
@@ -86,10 +91,14 @@ export async function ensureHubCrewOnRoster(
   const catalogId = crew.catalogId ?? (crew.id.startsWith('hub-') ? crew.id : undefined);
   if (!catalogId || !catalogStore) return crew;
 
+  if (crewManager.isIntentionallyDeleted(crew.id, catalogId)) {
+    return crew;
+  }
+
   const catalog = await catalogStore.getCatalogEntry(catalogId);
   if (!catalog) return crew;
 
-  return createHubCrewFromCatalogEntry(crewManager, catalog);
+  return createHubCrewFromCatalogEntry(crewManager, catalog) ?? crew;
 }
 
 /** Recruit mission crew to roster and wire them into the active agent (Agent-X sessions only). */
@@ -103,6 +112,7 @@ export async function ensureCrewMembersOnRoster(
 
   for (const member of members) {
     const crew = await ensureHubCrewOnRoster(crewManager, member.crew, catalogStore);
+    if (!crewManager.get(crew.id)) continue;
     crewManager.enable(crew.id);
     if (agent) {
       agent.addCrewMember(crew);
@@ -155,8 +165,11 @@ export async function resolveMentionedCrewMembers(
       for (const catalogId of catalogIds) {
         const catalog = await catalogStore.getCatalogEntry(catalogId);
         if (!catalog) continue;
-        crew = createHubCrewFromCatalogEntry(crewManager, catalog);
-        break;
+        const recruited = createHubCrewFromCatalogEntry(crewManager, catalog);
+        if (recruited) {
+          crew = recruited;
+          break;
+        }
       }
     }
 
@@ -166,7 +179,8 @@ export async function resolveMentionedCrewMembers(
     }
 
     crew = await ensureHubCrewOnRoster(crewManager, crew, catalogStore);
-    if (crew.enabled === false) {
+    // Must be on the global roster — skip ephemeral / intentionally deleted refs.
+    if (!crewManager.get(crew.id) || crew.enabled === false) {
       unresolved.push(key);
       continue;
     }
@@ -220,6 +234,7 @@ export async function recruitCandidatesForMission(
       if (!catalog) continue;
 
       const crew = createHubCrewFromCatalogEntry(crewManager, catalog);
+      if (!crew) continue;
       crewManager.enable(crew.id);
       if (agent) {
         agent.addCrewMember(crew);

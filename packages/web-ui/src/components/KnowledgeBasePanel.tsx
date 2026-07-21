@@ -21,10 +21,12 @@ import LayersIcon from '@mui/icons-material/Layers';
 import DataObjectIcon from '@mui/icons-material/DataObject';
 import CloseIcon from '@mui/icons-material/Close';
 import ReplayIcon from '@mui/icons-material/Replay';
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import BoltIcon from '@mui/icons-material/Bolt';
 import PendingIcon from '@mui/icons-material/Pending';
+import { FileViewerModal } from './FileViewerModal';
 
 const ACCEPTED_EXTS = '.pdf,.docx,.xlsx,.pptx,.txt,.md,.json,.html,.htm';
 
@@ -639,12 +641,14 @@ function SourceCard({
   source,
   selected,
   onSelect,
+  onView,
   onReprocess,
   onDelete,
 }: {
   source: KnowledgeSource;
   selected: boolean;
   onSelect: () => void;
+  onView: () => void;
   onReprocess: () => void;
   onDelete: () => void;
 }) {
@@ -704,6 +708,18 @@ function SourceCard({
         <Typography sx={{ fontSize: '0.55rem', color: accent, fontFamily: MONO, fontWeight: 600, letterSpacing: 0.5 }}>
           {source.status.toUpperCase()}
         </Typography>
+        <Tooltip title="View file">
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              onView();
+            }}
+            sx={{ color: colors.text.dim, p: 0.2, '&:hover': { color: colors.accent.cyan } }}
+          >
+            <VisibilityOutlinedIcon sx={{ fontSize: 13 }} />
+          </IconButton>
+        </Tooltip>
         <Tooltip title="Reprocess">
           <IconButton
             size="small"
@@ -768,6 +784,7 @@ export function KnowledgeBasePanel() {
   } = useKnowledgeBase();
   const [dragOver, setDragOver] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{ id: string; name: string; mimeType?: string } | null>(null);
   const [cortexDegraded, setCortexDegraded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -1001,6 +1018,11 @@ export function KnowledgeBasePanel() {
                   source={source}
                   selected={source.id === selectedId}
                   onSelect={() => setSelectedId((prev) => (prev === source.id ? null : source.id))}
+                  onView={() => setViewer({
+                    id: source.storageId,
+                    name: source.name,
+                    mimeType: source.mimeType,
+                  })}
                   onReprocess={() => void reprocess(source.id)}
                   onDelete={() => {
                     void deleteSource(source.id);
@@ -1013,6 +1035,14 @@ export function KnowledgeBasePanel() {
           </Box>
         </Box>
       </Box>
+
+      <FileViewerModal
+        open={!!viewer}
+        onClose={() => setViewer(null)}
+        id={viewer?.id ?? ''}
+        name={viewer?.name ?? 'Document'}
+        mimeType={viewer?.mimeType}
+      />
 
       <style>{`
         @keyframes kbPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }

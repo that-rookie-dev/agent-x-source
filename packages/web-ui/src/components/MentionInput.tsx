@@ -9,9 +9,11 @@ import {
   formatCrewMentionToken,
   formatFileMentionToken,
   formatFolderMentionToken,
+  formatKbMentionToken,
   parseCrewMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
+  parseKbMentionToken,
 } from '../chat/mention-tokens';
 
 export interface MentionInputHandle {
@@ -25,6 +27,8 @@ export interface MentionInputHandle {
   insertFileChip: (file: { id: string; name: string; path: string; relativePath: string }) => void;
   /** Insert an inline folder chip (serializes as @folder[relativePath]). */
   insertFolderChip: (folder: { id: string; name: string; path: string; relativePath: string }) => void;
+  /** Insert a Knowledge Base document chip (serializes as @kb[sourceId:name]). */
+  insertKbChip: (source: { sourceId: string; name: string }) => void;
   /** Sync a newly attached upload into an inline chip at the caret. */
   insertAttachmentChip: (attachment: { id: string; name: string }) => void;
 }
@@ -70,6 +74,11 @@ function serializeNode(node: Node): string {
   if (chip === 'folder') {
     const rel = node.dataset.relativePath || node.dataset.name || '';
     return rel ? formatFolderMentionToken(rel) : '';
+  }
+  if (chip === 'kb') {
+    const sourceId = node.dataset.sourceId || '';
+    const name = node.dataset.name || sourceId;
+    return sourceId ? formatKbMentionToken(sourceId, name) : '';
   }
   // Legacy crew mention spans
   const mention = node.dataset.mention;
@@ -180,6 +189,17 @@ function folderChipHtml(folder: { id: string; name: string; relativePath: string
   return `<span data-chip="folder" data-attachment-id="${escapeHtml(folder.id)}" data-name="${escapeHtml(rawName)}" data-relative-path="${title}" contenteditable="false" title="${title}" style="display:inline-flex;align-items:center;gap:3px;box-sizing:border-box;padding:0 5px 0 0;margin:0 1px;border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:0.55rem;font-weight:600;color:${colors.accent.cyan};background:${alphaColor(colors.accent.cyan, '12')};border:1px solid ${alphaColor(colors.accent.cyan, '28')};user-select:none;white-space:nowrap;line-height:1.2;vertical-align:middle;max-width:200px;overflow:hidden"><span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:999px;line-height:1;color:${colors.bg.primary};background:${colors.accent.cyan};flex-shrink:0">${FOLDER_ICON_SVG}</span><span style="overflow:hidden;text-overflow:ellipsis;max-width:160px">${label}</span></span>`;
 }
 
+function kbChipHtml(source: { sourceId: string; name: string }): string {
+  const rawName = source.name || source.sourceId || 'document';
+  const extRaw = rawName.includes('.') ? (rawName.split('.').pop() || '').toUpperCase() : '';
+  const ext = (extRaw || 'KB').slice(0, 6);
+  const display = rawName.length > 24 ? `${rawName.slice(0, 24)}…` : rawName;
+  const label = escapeHtml(display);
+  const title = escapeHtml(`Knowledge Base: ${rawName}`);
+  const extLabel = escapeHtml(ext);
+  return `<span data-chip="kb" data-source-id="${escapeHtml(source.sourceId)}" data-name="${escapeHtml(rawName)}" contenteditable="false" title="${title}" style="display:inline-flex;align-items:center;gap:3px;box-sizing:border-box;padding:0 5px 0 0;margin:0 1px;border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:0.55rem;font-weight:600;color:${colors.accent.purple};background:${alphaColor(colors.accent.purple, '12')};border:1px solid ${alphaColor(colors.accent.purple, '28')};user-select:none;white-space:nowrap;line-height:1.2;vertical-align:middle;max-width:200px;overflow:hidden"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;padding:0 3px;height:14px;border-radius:999px;font-size:0.42rem;font-weight:700;letter-spacing:0.02em;line-height:1;color:${colors.bg.primary};background:${colors.accent.purple};flex-shrink:0">${extLabel}</span><span style="overflow:hidden;text-overflow:ellipsis;max-width:160px">${label}</span></span>`;
+}
+
 function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
   if (!text) return '';
   const parts = text.split(MENTION_TOKEN_SPLIT_RE);
@@ -192,12 +212,16 @@ function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
     if (folder) {
       return folderChipHtml({ id: crypto.randomUUID(), name: folder.name, relativePath: folder.relativePath });
     }
+    const kbTok = parseKbMentionToken(part);
+    if (kbTok) {
+      return kbChipHtml(kbTok);
+    }
     const crewTok = parseCrewMentionToken(part);
     if (crewTok) {
       return crewChipHtml(crewTok.callsign, crewTok.name, crewList);
     }
     // Legacy bare @callsign
-    if (part.startsWith('@') && part.length > 1 && !part.includes(':')) {
+    if (part.startsWith('@') && part.length > 1 && !part.includes(':') && !part.includes('[')) {
       const callsign = part.slice(1);
       const crew = crewList.find((c) => c.callsign.toLowerCase() === callsign.toLowerCase());
       return crewChipHtml(callsign, crew?.name || callsign, crewList);
@@ -344,6 +368,10 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     replaceActiveQueryWithHtml(folderChipHtml(folder));
   }, [replaceActiveQueryWithHtml]);
 
+  const insertKbChip = useCallback((source: { sourceId: string; name: string }) => {
+    replaceActiveQueryWithHtml(kbChipHtml(source));
+  }, [replaceActiveQueryWithHtml]);
+
   const insertAttachmentChip = useCallback((attachment: { id: string; name: string }) => {
     const el = editorRef.current;
     if (!el) return;
@@ -400,8 +428,9 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     insertMention,
     insertFileChip,
     insertFolderChip,
+    insertKbChip,
     insertAttachmentChip,
-  }), [clear, insertMention, insertFileChip, insertFolderChip, insertAttachmentChip, setValue]);
+  }), [clear, insertMention, insertFileChip, insertFolderChip, insertKbChip, insertAttachmentChip, setValue]);
 
   const handleInput = useCallback(() => {
     if (isComposing.current) return;

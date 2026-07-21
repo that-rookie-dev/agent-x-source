@@ -62,13 +62,10 @@ export const ChatModals = React.memo(function ChatModals() {
         open={crewDossierOpen}
         crew={crewDossierCrew}
         imported={false}
-        importLoading={false}
         accentColor={crewDossierCrew
           ? getCrewAccent(undefined, crewDossierCrew.callsign)
           : undefined}
         onClose={() => { setCrewDossierOpen(false); setCrewDossierCrew(null); }}
-        onImport={() => {}}
-        onRemove={() => {}}
       />
       <StepCapModal
         open={!!stepCapPrompt}

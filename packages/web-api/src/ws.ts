@@ -553,7 +553,12 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     broadcast({
       type: 'engine_event',
       event: evType,
-      data: event,
+      sessionId: subscribedSessionId || undefined,
+      data: {
+        ...(event as unknown as Record<string, unknown>),
+        // Stamp owning session so clients can isolate mid-turn streams after navigation.
+        ...(subscribedSessionId ? { sessionId: subscribedSessionId } : {}),
+      },
     });
 
     // Accumulate thinking deltas

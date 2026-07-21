@@ -373,9 +373,10 @@ export function createCrewPrivateConductSection(): PromptSection<string> {
     `- ALWAYS call knowledge_base_search as your FIRST action before answering any question that could reference uploaded documents.`,
     `- This searches all documents uploaded via the Knowledge Base (PDFs, text files, and other supported formats).`,
     `- Even if you think you know the answer from training data, search first — the user's documents may contain specific information they want you to reference.`,
-    `- Only skip knowledge_base_search for casual conversation (greetings, small talk) or real-time actions (file operations, tool execution).`,
+    `- Only skip knowledge_base_search for casual conversation (greetings, small talk) or real-time actions that are NOT about Knowledge Base documents.`,
     `- If knowledge_base_search returns results, base your answer on those results and cite the source.`,
-    `- If it returns "No matching documents", fall back to your knowledge or web_search.`,
+    `- If it returns no matches, say indexing may be incomplete (READY) or ask for a clearer query — then fall back to trained knowledge or web_search.`,
+    `- NEVER open Knowledge Base originals from disk (file_read / shell_exec / glob). The Knowledge Base search index is the only access path for uploaded docs.`,
     `[/CREW_PRIVATE_CONDUCT]`,
   ].join('\n');
   return {
@@ -1256,7 +1257,7 @@ export interface MemoryContextState {
 const EVIDENCE_CONTRACT = `[RETRIEVED_EVIDENCE_CONTRACT]
 Evidence blocks below (tagged [E# …]) are the ONLY allowed source for recalled facts from memory/knowledge base.
 - When stating a recalled fact, cite the matching [E#].
-- If evidence is empty / below confidence / insufficient, say you do not have it in retrieved evidence; use knowledge_base_search or file tools, or ask for a source. Do NOT invent pages, quotes, or sources.
+- If evidence is empty / below confidence / insufficient, say you do not have it in retrieved evidence; use knowledge_base_search (with sourceId when @kb-pinned), or ask for a source. Do NOT open Knowledge Base originals from disk/shell. Do NOT invent pages, quotes, or sources.
 - Reasoning is allowed; ungrounded factual claims are not.
 [/RETRIEVED_EVIDENCE_CONTRACT]`;
 

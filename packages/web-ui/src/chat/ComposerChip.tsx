@@ -3,7 +3,13 @@ import Box from '@mui/material/Box';
 import PersonIcon from '@mui/icons-material/Person';
 import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
-import { MENTION_TOKEN_SPLIT_RE, parseCrewMentionToken, parseFileMentionToken, parseFolderMentionToken } from './mention-tokens';
+import {
+  MENTION_TOKEN_SPLIT_RE,
+  parseCrewMentionToken,
+  parseFileMentionToken,
+  parseFolderMentionToken,
+  parseKbMentionToken,
+} from './mention-tokens';
 
 /** Stable per-callsign accent (uses crew.color when provided). */
 export function getWebCrewColor(callsign: string, color?: string): string {
@@ -222,7 +228,78 @@ export function FolderDisplayChip({
   );
 }
 
-/** Tokens for @file[…], @folder[…], @crew[…], and legacy colon / bare @callsign. */
+export function KbDisplayChip({
+  name,
+  sourceId,
+  onClick,
+}: {
+  name: string;
+  sourceId?: string;
+  onClick?: () => void;
+}) {
+  const rawName = name || 'document';
+  const extRaw = rawName.includes('.') ? (rawName.split('.').pop() || '').toUpperCase() : '';
+  const ext = (extRaw || 'KB').slice(0, 6);
+  const display = rawName.length > 24 ? `${rawName.slice(0, 24)}…` : rawName;
+  const title = sourceId ? `Knowledge Base: ${rawName}` : rawName;
+  return (
+    <Box
+      component="span"
+      title={title}
+      onClick={onClick}
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '3px',
+        boxSizing: 'border-box',
+        padding: '0 5px 0 0',
+        margin: '0 1px',
+        borderRadius: '999px',
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: '0.55rem',
+        fontWeight: 600,
+        color: colors.accent.purple,
+        background: alphaColor(colors.accent.purple, '12'),
+        border: `1px solid ${alphaColor(colors.accent.purple, '28')}`,
+        userSelect: 'none',
+        whiteSpace: 'nowrap',
+        lineHeight: 1.2,
+        verticalAlign: 'middle',
+        maxWidth: 200,
+        overflow: 'hidden',
+        cursor: onClick ? 'pointer' : 'default',
+        '&:hover': onClick ? { borderColor: alphaColor(colors.accent.purple, '50') } : undefined,
+      }}
+    >
+      <Box
+        component="span"
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 16,
+          px: '3px',
+          height: 14,
+          borderRadius: '999px',
+          fontSize: '0.42rem',
+          fontWeight: 700,
+          letterSpacing: '0.02em',
+          lineHeight: 1,
+          color: colors.bg.primary,
+          background: colors.accent.purple,
+          flexShrink: 0,
+        }}
+      >
+        {ext}
+      </Box>
+      <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>
+        {display}
+      </Box>
+    </Box>
+  );
+}
+
+/** Tokens for @file[…], @folder[…], @kb[…], @crew[…], and legacy colon / bare @callsign. */
 export function renderComposerMentionTokens(
   text: string,
   opts?: {
@@ -256,6 +333,16 @@ export function renderComposerMentionTokens(
         />
       );
     }
+    const kbTok = parseKbMentionToken(part);
+    if (kbTok) {
+      return (
+        <KbDisplayChip
+          key={i}
+          name={kbTok.name}
+          sourceId={kbTok.sourceId}
+        />
+      );
+    }
     const crewTok = parseCrewMentionToken(part);
     if (crewTok) {
       const key = crewTok.callsign.toLowerCase();
@@ -271,7 +358,7 @@ export function renderComposerMentionTokens(
         />
       );
     }
-    if (part.startsWith('@') && part.length > 1 && !part.includes(':')) {
+    if (part.startsWith('@') && part.length > 1 && !part.includes(':') && !part.includes('[')) {
       const callsign = part.slice(1);
       const key = callsign.toLowerCase();
       return (

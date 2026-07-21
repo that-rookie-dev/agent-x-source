@@ -25,6 +25,7 @@ function createMockCrewManager(initial: Crew[] = []): CrewManager {
   return {
     get: (id: string) => crews.get(id),
     list: () => [...crews.values()],
+    isIntentionallyDeleted: () => false,
     create: (input: CrewCreateInput) => {
       const crew = mockCrew({
         id: input.id ?? `crew-${crews.size}`,

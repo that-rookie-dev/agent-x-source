@@ -11,7 +11,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import RouteIcon from '@mui/icons-material/Route';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit } from './ComposerMentionMenu';
+import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit } from './ComposerMentionMenu';
 import { colors, alphaColor } from '../theme';
 import type { Crew } from '../api';
 
@@ -59,7 +59,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   hasAttachments,
   crewList,
   disableCrew = false,
-  placeholder = '@ to attach files or folders — message your AI wingman...',
+  placeholder = '@ to attach files, folders, or Knowledge Base docs…',
   onSend,
   onCancel,
   onStopAndSend,
@@ -174,6 +174,13 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
     });
   }, [onAttachWorkspaceFolder, closeMentionMenu]);
 
+  const handleKbSelect = useCallback((source: ComposerKbHit) => {
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    mentionInputRef.current?.insertKbChip({ sourceId: source.sourceId, name: source.name });
+  }, [closeMentionMenu]);
+
   const clearAndGetText = useCallback(() => {
     const text = mentionInputRef.current?.getValue() ?? '';
     mentionInputRef.current?.clear();
@@ -220,6 +227,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onSelectCrew={handleMentionSelect}
           onSelectFile={handleFileSelect}
           onSelectFolder={handleFolderSelect}
+          onSelectKb={handleKbSelect}
           onClose={closeMentionMenu}
         />
       )}

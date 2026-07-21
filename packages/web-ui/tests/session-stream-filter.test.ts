@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { eventBelongsToViewSession, resolveTelemetryEventSessionId } from '../src/chat/session-stream-filter';
+import {
+  eventBelongsToViewSession,
+  filterEventsForViewSession,
+  resolveTelemetryEventSessionId,
+} from '../src/chat/session-stream-filter';
 
 describe('session stream filter', () => {
   it('resolves session id from top-level or nested message', () => {
@@ -40,5 +44,18 @@ describe('session stream filter', () => {
   it('allows session-agnostic automation lifecycle events', () => {
     expect(eventBelongsToViewSession({ type: 'automation_run_triggered' }, 'sess_a')).toBe(true);
     expect(eventBelongsToViewSession({ type: 'automation_run_preparing' }, 'sess_a')).toBe(true);
+  });
+
+  it('filters deferred tool batches to the open session only', () => {
+    const batch = [
+      { type: 'tool_executing', sessionId: 'group', tool: 'shell_exec' },
+      { type: 'tool_executing', sessionId: 'private', tool: 'knowledge_base_search' },
+      { type: 'tool_complete', sessionId: 'group', tool: 'shell_exec' },
+    ];
+    expect(filterEventsForViewSession(batch, 'private')).toEqual([
+      { type: 'tool_executing', sessionId: 'private', tool: 'knowledge_base_search' },
+    ]);
+    expect(filterEventsForViewSession(batch, 'group')).toHaveLength(2);
+    expect(filterEventsForViewSession(batch, null)).toEqual([]);
   });
 });

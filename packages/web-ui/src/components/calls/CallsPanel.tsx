@@ -26,10 +26,9 @@ import AddIcCallIcon from '@mui/icons-material/AddIcCall';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
-import { useNavigate } from 'react-router-dom';
 import { crewChat, sessions, type CrewVoiceSessionInfo } from '../../api';
 import { getCrewAccent } from '../../styles/crew-theme';
-import { colors, alphaColor } from '../../theme';
+import { colors, alphaColor, PANEL_SIDE_LIST_WIDTH } from '../../theme';
 import {
   useCrewCall,
   crewCallTargetFromVoiceSession,
@@ -38,6 +37,7 @@ import {
 } from '../crew-call';
 import { CallTranscriptDivider } from '../crew-call/CallTranscriptDivider';
 import { groupCallSessionsByDay, sortCallsLatestFirst } from './call-list-groups';
+import { CrewCallPhonebookModal } from './CrewCallPhonebookModal';
 
 const MONO = "'JetBrains Mono', monospace";
 
@@ -288,7 +288,6 @@ function TranscriptBody({
 }
 
 export function CallsPanel() {
-  const navigate = useNavigate();
   const { startCall, isActive } = useCrewCall();
   const [rows, setRows] = useState<CrewVoiceSessionInfo[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -303,6 +302,7 @@ export function CallsPanel() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [phonebookOpen, setPhonebookOpen] = useState(false);
   const oldestIdRef = useRef<string | null>(null);
   const loadGenRef = useRef(0);
 
@@ -508,7 +508,7 @@ export function CallsPanel() {
         <Button
           size="small"
           startIcon={<AddIcCallIcon sx={{ fontSize: 12 }} />}
-          onClick={() => navigate('/console/crews')}
+          onClick={() => setPhonebookOpen(true)}
           sx={{
             color: colors.accent.blue,
             fontSize: '0.6rem',
@@ -530,7 +530,7 @@ export function CallsPanel() {
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: 'minmax(240px, 300px) 1fr' },
+          gridTemplateColumns: { xs: '1fr', md: `${PANEL_SIDE_LIST_WIDTH}px 1fr` },
           overflow: 'hidden',
         }}
       >
@@ -589,7 +589,7 @@ export function CallsPanel() {
                   <Button
                     size="small"
                     startIcon={<AddIcCallIcon sx={{ fontSize: 14 }} />}
-                    onClick={() => navigate('/console/crews')}
+                    onClick={() => setPhonebookOpen(true)}
                     sx={{
                       fontFamily: MONO,
                       fontSize: '0.55rem',
@@ -598,7 +598,7 @@ export function CallsPanel() {
                       border: `1px solid ${alphaColor(colors.accent.blue, 0.4)}`,
                     }}
                   >
-                    START FROM CREWS
+                    New Call
                   </Button>
                 )}
               </Box>
@@ -814,6 +814,8 @@ export function CallsPanel() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CrewCallPhonebookModal open={phonebookOpen} onClose={() => setPhonebookOpen(false)} />
     </Box>
   );
 }

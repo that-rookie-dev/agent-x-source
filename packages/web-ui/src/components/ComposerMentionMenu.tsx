@@ -6,11 +6,13 @@ import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import CircularProgress from '@mui/material/CircularProgress';
 import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
-import { system, type Crew } from '../api';
+import { knowledgeBase, system, type Crew } from '../api';
+import type { KnowledgeSource } from '@agentx/shared';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 export type ComposerFileHit = {
@@ -25,18 +27,25 @@ export type ComposerFolderHit = {
   relativePath: string;
 };
 
-type MenuStage = 'root' | 'crew' | 'files';
+export type ComposerKbHit = {
+  sourceId: string;
+  name: string;
+  mimeType?: string;
+};
+
+type MenuStage = 'root' | 'crew' | 'files' | 'kb';
 
 type NavItem =
   | { kind: 'back' }
   | { kind: 'select-folder' }
-  | { kind: 'category'; category: 'crew' | 'files' }
+  | { kind: 'category'; category: 'crew' | 'files' | 'kb' }
   | { kind: 'crew'; crew: Crew }
   | { kind: 'dir'; dir: ComposerFolderHit }
-  | { kind: 'file'; file: ComposerFileHit };
+  | { kind: 'file'; file: ComposerFileHit }
+  | { kind: 'kb'; source: ComposerKbHit };
 
 /**
- * Two-level @ picker: choose Crew / Directory, then browse (with Go back + Select this folder).
+ * Multi-level @ picker: Crew / Directory / Knowledge Base.
  */
 export function ComposerMentionMenu({
   query,
@@ -45,6 +54,7 @@ export function ComposerMentionMenu({
   onSelectCrew,
   onSelectFile,
   onSelectFolder,
+  onSelectKb,
   onClose,
 }: {
   query: string;
@@ -53,6 +63,7 @@ export function ComposerMentionMenu({
   onSelectCrew: (crew: Crew) => void;
   onSelectFile: (file: ComposerFileHit) => void;
   onSelectFolder: (folder: ComposerFolderHit) => void;
+  onSelectKb?: (source: ComposerKbHit) => void;
   onClose: () => void;
 }) {
   const q = query.toLowerCase();
@@ -65,7 +76,9 @@ export function ComposerMentionMenu({
   const [dirs, setDirs] = useState<ComposerFolderHit[]>([]);
   const [files, setFiles] = useState<ComposerFileHit[]>([]);
   const [searchFiles, setSearchFiles] = useState<ComposerFileHit[]>([]);
+  const [kbSources, setKbSources] = useState<ComposerKbHit[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
+  const [loadingKb, setLoadingKb] = useState(false);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const searching = stage === 'files' && q.length > 0;
@@ -105,6 +118,28 @@ export function ComposerMentionMenu({
       ctrl.abort();
     };
   }, [stage, browseRel, searching]);
+
+  // Knowledge Base sources (ready preferred).
+  useEffect(() => {
+    if (stage !== 'kb') return;
+    let cancelled = false;
+    setLoadingKb(true);
+    void knowledgeBase.list()
+      .then((sources: KnowledgeSource[]) => {
+        if (cancelled) return;
+        const mapped = sources
+          .filter((s) => s.status === 'ready' || s.status === 'indexing' || s.status === 'embedding')
+          .map((s) => ({ sourceId: s.id, name: s.name, mimeType: s.mimeType }));
+        setKbSources(mapped);
+      })
+      .catch(() => {
+        if (!cancelled) setKbSources([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingKb(false);
+      });
+    return () => { cancelled = true; };
+  }, [stage]);
 
   // Flat file search when user types a filter.
   useEffect(() => {
@@ -146,17 +181,31 @@ export function ComposerMentionMenu({
       .slice(0, 16);
   }, [crewList, disableCrew, q]);
 
+  const kbFiltered = useMemo(() => {
+    if (!q) return kbSources.slice(0, 24);
+    return kbSources
+      .filter((s) => s.name.toLowerCase().includes(q) || s.sourceId.toLowerCase().includes(q))
+      .slice(0, 24);
+  }, [kbSources, q]);
+
   const items: NavItem[] = useMemo(() => {
     if (stage === 'root') {
       const cats: NavItem[] = [];
       if (!disableCrew) cats.push({ kind: 'category', category: 'crew' });
       cats.push({ kind: 'category', category: 'files' });
+      cats.push({ kind: 'category', category: 'kb' });
       return cats;
     }
     if (stage === 'crew') {
       return [
         { kind: 'back' as const },
         ...crewFiltered.map((crew) => ({ kind: 'crew' as const, crew })),
+      ];
+    }
+    if (stage === 'kb') {
+      return [
+        { kind: 'back' as const },
+        ...kbFiltered.map((source) => ({ kind: 'kb' as const, source })),
       ];
     }
     if (searching) {
@@ -172,7 +221,7 @@ export function ComposerMentionMenu({
       ...dirs.map((dir) => ({ kind: 'dir' as const, dir })),
       ...files.map((file) => ({ kind: 'file' as const, file })),
     ];
-  }, [stage, disableCrew, crewFiltered, searching, searchFiles, dirs, files]);
+  }, [stage, disableCrew, crewFiltered, kbFiltered, searching, searchFiles, dirs, files]);
 
   // Reset highlight only when the browse context changes — not when item count
   // flickers during async loads (that was resetting selection mid-navigation).
@@ -227,12 +276,20 @@ export function ComposerMentionMenu({
       return;
     }
     if (item.kind === 'category') {
-      setStage(item.category === 'crew' ? 'crew' : 'files');
-      if (item.category === 'files') setBrowseRel('');
+      if (item.category === 'crew') setStage('crew');
+      else if (item.category === 'kb') setStage('kb');
+      else {
+        setStage('files');
+        setBrowseRel('');
+      }
       return;
     }
     if (item.kind === 'crew') {
       onSelectCrew(item.crew);
+      return;
+    }
+    if (item.kind === 'kb') {
+      onSelectKb?.(item.source);
       return;
     }
     if (item.kind === 'dir') {
@@ -241,7 +298,7 @@ export function ComposerMentionMenu({
     }
     onSelectFile(item.file);
   }, [
-    items, onSelectCrew, onSelectFile, onSelectFolder, onClose, disableCrew,
+    items, onSelectCrew, onSelectFile, onSelectFolder, onSelectKb, onClose, disableCrew,
     stage, browseRel, parentRelative, browseName, browseAbs,
   ]);
 
@@ -293,12 +350,15 @@ export function ComposerMentionMenu({
     ? '@ ATTACH'
     : stage === 'crew'
       ? '@ CREW'
-      : browseRel
-        ? `@ ${browseRel}`
-        : '@ DIRECTORY';
+      : stage === 'kb'
+        ? '@ KNOWLEDGE BASE'
+        : browseRel
+          ? `@ ${browseRel}`
+          : '@ DIRECTORY';
 
   const emptyBrowse = !searching && !loadingFiles && dirs.length === 0 && files.length === 0;
   const emptySearch = searching && !loadingFiles && searchFiles.length === 0;
+  const emptyKb = stage === 'kb' && !loadingKb && kbFiltered.length === 0;
 
   return (
     <Box
@@ -333,7 +393,9 @@ export function ComposerMentionMenu({
           {title}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        {stage === 'files' && loadingFiles && <CircularProgress size={8} sx={{ color: colors.text.dim }} />}
+        {(stage === 'files' && loadingFiles) || (stage === 'kb' && loadingKb)
+          ? <CircularProgress size={8} sx={{ color: colors.text.dim }} />
+          : null}
         <Typography sx={{ fontSize: '0.4rem', color: colors.text.dim }}>↑↓ · ⏎ · esc</Typography>
       </Box>
 
@@ -349,7 +411,11 @@ export function ComposerMentionMenu({
 
       {stage === 'root' && items.map((item, i) => {
         if (item.kind !== 'category') return null;
-        const isCrew = item.category === 'crew';
+        const meta = item.category === 'crew'
+          ? { label: 'Crew', hint: 'Mention a crew member', color: colors.accent.blue, icon: <GroupIcon sx={{ fontSize: 13, color: colors.accent.blue }} /> }
+          : item.category === 'kb'
+            ? { label: 'Knowledge Base', hint: 'Pick an embedded document', color: colors.accent.purple, icon: <LibraryBooksIcon sx={{ fontSize: 13, color: colors.accent.purple }} /> }
+            : { label: 'Directory', hint: 'Browse files & folders', color: colors.accent.cyan, icon: <FolderIcon sx={{ fontSize: 13, color: colors.accent.cyan }} /> };
         return (
           <Box
             key={item.category}
@@ -360,26 +426,86 @@ export function ComposerMentionMenu({
               px: 0.85, py: 0.45,
               display: 'flex', alignItems: 'center', gap: 0.65,
               cursor: 'pointer',
-              bgcolor: i === active ? alphaColor(isCrew ? colors.accent.blue : colors.accent.cyan, '14') : 'transparent',
+              bgcolor: i === active ? alphaColor(meta.color, '14') : 'transparent',
               borderLeft: i === active
-                ? `2px solid ${isCrew ? colors.accent.blue : colors.accent.cyan}`
+                ? `2px solid ${meta.color}`
                 : '2px solid transparent',
             }}
           >
-            {isCrew
-              ? <GroupIcon sx={{ fontSize: 13, color: colors.accent.blue }} />
-              : <FolderIcon sx={{ fontSize: 13, color: colors.accent.cyan }} />}
+            {meta.icon}
             <Box sx={{ minWidth: 0 }}>
               <Typography sx={{ fontSize: '0.62rem', fontWeight: 600, color: colors.text.primary }}>
-                {isCrew ? 'Crew' : 'Directory'}
+                {meta.label}
               </Typography>
               <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>
-                {isCrew ? 'Mention a crew member' : 'Browse files & folders'}
+                {meta.hint}
               </Typography>
             </Box>
           </Box>
         );
       })}
+
+      {stage === 'kb' && (
+        <>
+          {items.map((item, i) => {
+            if (item.kind === 'back') {
+              return (
+                <Box
+                  key="back"
+                  data-mention-idx={i}
+                  onClick={() => selectIndex(i)}
+                  onMouseEnter={() => setActive(i)}
+                  sx={{
+                    px: 0.85, py: 0.35,
+                    display: 'flex', alignItems: 'center', gap: 0.5,
+                    cursor: 'pointer',
+                    bgcolor: i === active ? alphaColor(colors.accent.purple, '12') : 'transparent',
+                    borderBottom: `1px solid ${colors.border.subtle}`,
+                  }}
+                >
+                  <ArrowBackIcon sx={{ fontSize: 12, color: colors.text.dim }} />
+                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary }}>Go back</Typography>
+                </Box>
+              );
+            }
+            if (item.kind !== 'kb') return null;
+            const src = item.source;
+            const ext = src.name.includes('.') ? (src.name.split('.').pop() || '').toUpperCase().slice(0, 6) : 'DOC';
+            return (
+              <Box
+                key={`kb-${src.sourceId}`}
+                data-mention-idx={i}
+                onClick={() => selectIndex(i)}
+                onMouseEnter={() => setActive(i)}
+                sx={{
+                  px: 0.85, py: 0.3,
+                  display: 'flex', alignItems: 'center', gap: 0.55,
+                  cursor: 'pointer',
+                  bgcolor: i === active ? alphaColor(colors.accent.purple, '15') : 'transparent',
+                  borderLeft: i === active ? `2px solid ${colors.accent.purple}` : '2px solid transparent',
+                }}
+              >
+                <Box sx={{
+                  minWidth: 16, height: 14, px: 0.35, borderRadius: '999px',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  bgcolor: colors.accent.purple, color: colors.bg.primary,
+                  fontSize: '0.4rem', fontWeight: 700, flexShrink: 0,
+                }}>
+                  {ext}
+                </Box>
+                <Typography sx={{ fontSize: '0.55rem', color: colors.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {src.name}
+                </Typography>
+              </Box>
+            );
+          })}
+          {emptyKb && (
+            <Typography sx={{ px: 1, py: 1.25, fontSize: '0.5rem', color: colors.text.dim }}>
+              No ready Knowledge Base documents
+            </Typography>
+          )}
+        </>
+      )}
 
       {stage === 'crew' && items.map((item, i) => {
         if (item.kind === 'back') {

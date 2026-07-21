@@ -106,7 +106,7 @@ describe('CrewManager', () => {
     expect(updated!.expertise).toEqual(['new-skill']);
   });
 
-  it('recovers missing crews from session host snapshots', () => {
+  it('recovers missing custom crews from session host snapshots', () => {
     const pm = new CrewManager();
     const restored = pm.recoverFromSessionHosts([
       {
@@ -124,7 +124,59 @@ describe('CrewManager', () => {
       id: 'orphan-1',
       name: 'Elena',
       callsign: 'elena',
+      source: 'custom',
     }])).toBe(0);
+  });
+
+  it('does not resurrect hub crews from session host leftovers', () => {
+    const pm = new CrewManager();
+    const restored = pm.recoverFromSessionHosts([
+      {
+        id: 'hub-elena',
+        name: 'Elena',
+        callsign: 'elena',
+        catalogId: 'hub-elena',
+        source: 'hub',
+      },
+    ]);
+    expect(restored).toBe(0);
+    expect(pm.get('hub-elena')).toBeUndefined();
+  });
+
+  it('does not resurrect intentionally deleted custom crews from session hosts', () => {
+    const pm = new CrewManager();
+    pm.create({
+      id: 'custom-1',
+      name: 'Custom',
+      callsign: 'custom1',
+      systemPrompt: 'hi',
+      source: 'custom',
+      isDefault: false,
+    });
+    expect(pm.delete('custom-1')).toBe(true);
+    expect(pm.get('custom-1')).toBeUndefined();
+
+    const restored = pm.recoverFromSessionHosts([
+      {
+        id: 'custom-1',
+        name: 'Custom',
+        callsign: 'custom1',
+        source: 'custom',
+      },
+    ]);
+    expect(restored).toBe(0);
+    expect(pm.get('custom-1')).toBeUndefined();
+
+    // Re-create after delete is still allowed.
+    pm.create({
+      id: 'custom-1',
+      name: 'Custom Again',
+      callsign: 'custom1',
+      systemPrompt: 'hi',
+      source: 'custom',
+      isDefault: false,
+    });
+    expect(pm.get('custom-1')?.name).toBe('Custom Again');
   });
 
   it('writes a local crews.json backup on create', () => {

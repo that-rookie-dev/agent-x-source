@@ -12,7 +12,7 @@ import { MarkdownViewer } from './MarkdownViewer';
 import { markdownDocuments, type MarkdownDocumentRecord } from '../api';
 import { groupMarkdownDocumentsByDay } from '../markdown/markdown-list-groups';
 import { useApp } from '../store/AppContext';
-import { colors, MONO } from '../theme';
+import { colors, MONO, PANEL_SIDE_LIST_WIDTH } from '../theme';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
@@ -205,8 +205,7 @@ export function MarkdownPanel() {
 
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Box sx={{
-          width: { xs: '100%', md: 260 },
-          maxWidth: { xs: '100%', md: 280 },
+          width: { xs: '100%', md: PANEL_SIDE_LIST_WIDTH },
           flexShrink: 0,
           borderRight: { md: `1px solid ${colors.border.default}` },
           borderBottom: { xs: `1px solid ${colors.border.default}`, md: 'none' },

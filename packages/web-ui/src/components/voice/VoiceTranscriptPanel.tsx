@@ -33,18 +33,26 @@ export function VoiceTranscriptPanel({
   liveUser,
   liveAgent,
   refreshToken,
+  agentLabel = 'Agent',
 }: {
   liveUser?: string;
   liveAgent?: string;
   refreshToken?: string | number;
+  /** Persona name for agent lines (defaults to "Agent"). */
+  agentLabel?: string;
 }) {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [hasOlder, setHasOlder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Sticky live lines until history catch-up (assistant persist lags phase idle). */
+  const [pendingUser, setPendingUser] = useState('');
+  const [pendingAgent, setPendingAgent] = useState('');
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const liveCapRef = useRef(true);
   const detachedRef = useRef(false);
+  const hasMessagesRef = useRef(false);
+  hasMessagesRef.current = messages.length > 0;
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const el = scrollerRef.current;
@@ -52,8 +60,9 @@ export function VoiceTranscriptPanel({
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  const loadLatest = useCallback(async () => {
-    setLoading(true);
+  const loadLatest = useCallback(async (opts?: { soft?: boolean }) => {
+    const soft = opts?.soft === true && hasMessagesRef.current;
+    if (!soft) setLoading(true);
     try {
       const page = await sessions.getMessagesPage(VOICE_SESSION_ID, { limit: VOICE_TRANSCRIPT_PAGE });
       const mapped = mapHistoryToUiMessages(page.messages).filter(
@@ -65,15 +74,28 @@ export function VoiceTranscriptPanel({
       detachedRef.current = false;
       requestAnimationFrame(() => scrollToBottom('auto'));
     } catch {
-      setMessages([]);
-      setHasOlder(false);
+      if (!soft) {
+        setMessages([]);
+        setHasOlder(false);
+      }
     } finally {
-      setLoading(false);
+      if (!soft) setLoading(false);
     }
   }, [scrollToBottom]);
 
   useEffect(() => {
-    void loadLatest();
+    const soft = hasMessagesRef.current;
+    void loadLatest({ soft });
+    // Assistant rows often land slightly after the UI returns to idle.
+    if (refreshToken !== undefined && refreshToken !== 'live') {
+      const t1 = window.setTimeout(() => { void loadLatest({ soft: true }); }, 350);
+      const t2 = window.setTimeout(() => { void loadLatest({ soft: true }); }, 1100);
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+      };
+    }
+    return undefined;
   }, [loadLatest, refreshToken]);
 
   useEffect(() => {
@@ -128,12 +150,48 @@ export function VoiceTranscriptPanel({
 
   const liveUserClean = sanitizeVoiceDisplayText(liveUser || '');
   const liveAgentClean = sanitizeVoiceDisplayText(liveAgent || '');
-  const showLiveUser = Boolean(liveUserClean);
-  const showLiveAgent = Boolean(liveAgentClean);
+
+  useEffect(() => {
+    if (liveUserClean) setPendingUser(liveUserClean);
+  }, [liveUserClean]);
+
+  useEffect(() => {
+    if (liveAgentClean) setPendingAgent(liveAgentClean);
+  }, [liveAgentClean]);
+
+  // Avoid duplicate lines when history already includes the same utterance
+  // (common while Local engine is thinking after STT persists the user turn).
+  const lastUserText = (() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i]!;
+      if (m.role === 'user') return messageText(m);
+    }
+    return '';
+  })();
+  const lastAgentText = (() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i]!;
+      if (m.role === 'assistant') return messageText(m);
+    }
+    return '';
+  })();
+
+  useEffect(() => {
+    if (pendingUser && pendingUser === lastUserText) setPendingUser('');
+  }, [pendingUser, lastUserText]);
+
+  useEffect(() => {
+    if (pendingAgent && pendingAgent === lastAgentText) setPendingAgent('');
+  }, [pendingAgent, lastAgentText]);
+
+  const displayUser = liveUserClean || pendingUser;
+  const displayAgent = liveAgentClean || pendingAgent;
+  const showLiveUser = Boolean(displayUser) && displayUser !== lastUserText;
+  const showLiveAgent = Boolean(displayAgent) && displayAgent !== lastAgentText;
 
   useEffect(() => {
     if (showLiveUser || showLiveAgent) scrollToBottom('smooth');
-  }, [showLiveUser, showLiveAgent, liveUserClean, liveAgentClean, scrollToBottom]);
+  }, [showLiveUser, showLiveAgent, displayUser, displayAgent, scrollToBottom]);
 
   return (
     <Box sx={{
@@ -242,12 +300,27 @@ export function VoiceTranscriptPanel({
               key={m.id}
               role={m.role === 'user' ? 'operator' : 'agent'}
               text={messageText(m)}
+              agentLabel={agentLabel}
             />
           ))
         )}
 
-        {showLiveUser && <LogLine role="operator" text={liveUserClean} live />}
-        {showLiveAgent && <LogLine role="agent" text={liveAgentClean} live />}
+        {showLiveUser && (
+          <LogLine
+            role="operator"
+            text={displayUser}
+            live={Boolean(liveUserClean)}
+            agentLabel={agentLabel}
+          />
+        )}
+        {showLiveAgent && (
+          <LogLine
+            role="agent"
+            text={displayAgent}
+            live={Boolean(liveAgentClean)}
+            agentLabel={agentLabel}
+          />
+        )}
       </Box>
     </Box>
   );
@@ -257,13 +330,15 @@ function LogLine({
   role,
   text,
   live,
+  agentLabel = 'Agent',
 }: {
   role: 'operator' | 'agent';
   text: string;
   live?: boolean;
+  agentLabel?: string;
 }) {
   const color = role === 'operator' ? colors.accent.green : colors.accent.blue;
-  const label = role === 'operator' ? 'You' : 'Agent';
+  const label = role === 'operator' ? 'You' : agentLabel;
   return (
     <Box sx={{ opacity: live ? 0.75 : 1 }}>
       <Typography sx={{

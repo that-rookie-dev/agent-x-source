@@ -19,12 +19,13 @@ import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } f
 import { CitationChip } from './CitationChip';
 import { prepareWebSourcedMarkdown } from './source-chip-utils';
 import { openExternalUrl } from '../utils/open-external-url';
-import { CrewDisplayChip, FileDisplayChip, FolderDisplayChip } from './ComposerChip';
+import { CrewDisplayChip, FileDisplayChip, FolderDisplayChip, KbDisplayChip } from './ComposerChip';
 import {
   MENTION_TOKEN_FIND_RE,
   parseCrewMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
+  parseKbMentionToken,
 } from './mention-tokens';
 
 const MARKDOWN_BASE_SX = {
@@ -481,7 +482,7 @@ export const MarkdownSection = memo(function MarkdownSection({
 /**
  * User bubble renderer — preserves whitespace and supports common markdown
  * (lists via `-`, bold via `*`/`**`, italics via `_`).
- * Renders @crew[…], @file[…], and @folder[…] tokens as the same chips used in the composer.
+ * Renders @crew[…], @file[…], @folder[…], and @kb[…] tokens as the same chips used in the composer.
  *
  * Tokens are extracted before markdown so paths like `@file[_test.html]` are not
  * mangled by emphasis / autolink rules. Bracket delimiters keep trailing `?` etc. outside.
@@ -500,7 +501,13 @@ export function UserMentionText({
 }) {
   const segments = useMemo(() => {
     const re = new RegExp(MENTION_TOKEN_FIND_RE.source, 'g');
-    const out: Array<{ kind: 'text' | 'crew' | 'file' | 'folder'; value: string; callsign?: string; name?: string }> = [];
+    const out: Array<{
+      kind: 'text' | 'crew' | 'file' | 'folder' | 'kb';
+      value: string;
+      callsign?: string;
+      name?: string;
+      sourceId?: string;
+    }> = [];
     let last = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(content)) !== null) {
@@ -514,13 +521,18 @@ export function UserMentionText({
         if (folder) {
           out.push({ kind: 'folder', value: folder.relativePath });
         } else {
-          const crew = parseCrewMentionToken(tok);
-          if (crew) {
-            out.push({ kind: 'crew', value: tok, callsign: crew.callsign, name: crew.name });
-          } else if (tok.startsWith('@') && tok.length > 1) {
-            out.push({ kind: 'crew', value: tok, callsign: tok.slice(1) });
+          const kb = parseKbMentionToken(tok);
+          if (kb) {
+            out.push({ kind: 'kb', value: tok, sourceId: kb.sourceId, name: kb.name });
           } else {
-            out.push({ kind: 'text', value: tok });
+            const crew = parseCrewMentionToken(tok);
+            if (crew) {
+              out.push({ kind: 'crew', value: tok, callsign: crew.callsign, name: crew.name });
+            } else if (tok.startsWith('@') && tok.length > 1 && !tok.includes('[')) {
+              out.push({ kind: 'crew', value: tok, callsign: tok.slice(1) });
+            } else {
+              out.push({ kind: 'text', value: tok });
+            }
           }
         }
       }
@@ -614,6 +626,15 @@ export function UserMentionText({
               key={i}
               name={folderName}
               relativePath={seg.value}
+            />
+          );
+        }
+        if (seg.kind === 'kb') {
+          return (
+            <KbDisplayChip
+              key={i}
+              name={seg.name || seg.value}
+              sourceId={seg.sourceId}
             />
           );
         }

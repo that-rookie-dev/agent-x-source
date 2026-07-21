@@ -17,6 +17,7 @@ import { useAppCore, useAppLive } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
 import { VoiceAgentCard, VoiceAgentHeaderControls } from './voice/VoiceAgentCard';
 import { VoiceConnectionPulses } from './voice/VoiceConnectionPulses';
+import { usePersonaName } from '../hooks/usePersonaName';
 import { colors, alphaColor, MONO } from '../theme';
 import {
   sessions as sessionsApi,
@@ -428,6 +429,7 @@ export function BentoDashboard() {
   const { healthData, serverOnline, refreshHealth } = useAppLive();
   const visible = usePageVisible();
   const { mode, setMode } = useColorScheme();
+  const personaName = usePersonaName();
   const mounted = useRef(true);
 
   const [voiceActiveForPulses, setVoiceActiveForPulses] = useState(false);
@@ -713,12 +715,15 @@ export function BentoDashboard() {
           minHeight: { xs: 560, lg: 0 },
           display: 'grid',
           gap: 1.25,
-          // Top: Voice ~70% | System ~30%. Bottom: 3 equal activity cols.
-          gridTemplateColumns: { xs: '1fr', lg: '7fr 3fr' },
-          gridTemplateRows: { lg: 'minmax(0, 0.88fr) minmax(200px, 0.92fr)' },
+          // 3 equal columns: Voice = Crew+Sub-agents width; System = Automations width.
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+          gridTemplateRows: {
+            sm: 'auto auto minmax(180px, 1fr)',
+            lg: 'minmax(0, 0.88fr) minmax(200px, 0.92fr)',
+          },
         }}>
           <Panel
-            title="Voice Agent"
+            title={personaName}
             icon={<MicIcon sx={{ fontSize: 15, color: colors.accent.blue }} />}
             action={
               <VoiceAgentHeaderControls
@@ -730,8 +735,8 @@ export function BentoDashboard() {
             }
             voiceAgentCard
             sx={{
-              gridColumn: { lg: '1' },
-              gridRow: { lg: '1' },
+              gridColumn: { sm: '1 / -1', lg: '1 / 3' },
+              gridRow: { sm: '1', lg: '1' },
               border: `1px solid ${alphaColor(colors.accent.blue, '30')}`,
               boxShadow: `0 0 28px ${alphaColor(colors.accent.blue, '08')}`,
               background: `linear-gradient(165deg, ${alphaColor(colors.accent.blue, '08')} 0%, ${colors.bg.secondary} 42%)`,
@@ -752,7 +757,10 @@ export function BentoDashboard() {
                 {metrics ? `up ${formatUptime(metrics.uptime)}` : '—'}
               </Typography>
             }
-            sx={{ gridColumn: { lg: '2' }, gridRow: { lg: '1' } }}
+            sx={{
+              gridColumn: { sm: '1 / -1', lg: '3' },
+              gridRow: { sm: '2', lg: '1' },
+            }}
           >
             <Box sx={{
               display: 'flex',
@@ -892,15 +900,7 @@ export function BentoDashboard() {
             </Box>
           </Panel>
 
-          <Box sx={{
-            gridColumn: { lg: '1 / -1' },
-            gridRow: { lg: '2' },
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
-            gap: 1.25,
-            minHeight: 0,
-          }}>
-            <Panel
+          <Panel
               title="Crew & turns"
               icon={<GroupsIcon sx={{ fontSize: 15, color: colors.accent.cyan }} />}
               action={
@@ -908,6 +908,7 @@ export function BentoDashboard() {
                   {runningTurns.length} live · {crewSessions.length} crew
                 </Typography>
               }
+              sx={{ gridColumn: { sm: '1' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
             >
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
                 {activeSessions.length === 0 ? (
@@ -939,6 +940,7 @@ export function BentoDashboard() {
                   {runningSubs} run · {queuedSubs} q
                 </Typography>
               }
+              sx={{ gridColumn: { sm: '2' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
             >
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
                 {subagentTasks.length === 0 ? (
@@ -970,6 +972,7 @@ export function BentoDashboard() {
                   {activeAutos} active · {pausedAutos} paused
                 </Typography>
               }
+              sx={{ gridColumn: { sm: '3' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
             >
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
                 {tasks.length === 0 ? (
@@ -988,7 +991,6 @@ export function BentoDashboard() {
                 )}
               </Box>
             </Panel>
-          </Box>
         </Box>
       </Box>
     </Box>

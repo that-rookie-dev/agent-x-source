@@ -10,6 +10,9 @@ import { createTheme, type CssVarsThemeOptions } from '@mui/material/styles';
 
 export const MONO = "'JetBrains Mono', monospace" as const;
 
+/** Shared width for Calls / Automations / Markdown side list columns. */
+export const PANEL_SIDE_LIST_WIDTH = 280;
+
 /** Raw channel values per scheme. Single source of truth. */
 const SCHEMES = {
   dark: {

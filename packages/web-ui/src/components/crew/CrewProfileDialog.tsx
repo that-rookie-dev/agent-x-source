@@ -33,10 +33,11 @@ interface CrewProfileDialogProps {
   open: boolean;
   crew: PrebuiltCrew | null;
   imported: boolean;
-  importLoading: boolean;
+  importLoading?: boolean;
   onClose: () => void;
-  onImport: () => void;
-  onRemove: () => void;
+  /** Omit to hide Recruit (e.g. chat dossier view-only). */
+  onImport?: () => void;
+  onRemove?: () => void;
   /** Open private 1:1 crew chat (recruits from hub if needed) */
   onPrivateChat?: () => void;
   privateChatLoading?: boolean;
@@ -615,7 +616,7 @@ export function CrewProfileDialog({
               DEACTIVATE OPERATIVE
             </Button>
             </>
-          ) : (
+          ) : onImport ? (
             <>
               <Box sx={{ display: 'flex', gap: 0.5, width: '100%' }}>
                 <Button
@@ -681,6 +682,24 @@ export function CrewProfileDialog({
                 )}
               </Box>
             </>
+          ) : (
+            <Button
+              fullWidth
+              size="small"
+              variant="outlined"
+              onClick={onClose}
+              sx={{
+                fontSize: '0.62rem',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.5px',
+                py: 0.75,
+                borderColor: crewTheme.border.strong,
+                color: crewTheme.text.primary,
+                '&:hover': { borderColor: crewTheme.text.primary, bgcolor: crewTheme.bg.cardHover },
+              }}
+            >
+              CLOSE
+            </Button>
           )}
         </Box>
       </DialogContent>

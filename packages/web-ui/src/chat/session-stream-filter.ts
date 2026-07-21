@@ -33,3 +33,12 @@ export function eventBelongsToViewSession(ev: TelemetryEvent, viewSessionId: str
 
   return false;
 }
+
+/** Re-check deferred/coalesced events against the session open at flush time. */
+export function filterEventsForViewSession(
+  events: TelemetryEvent[],
+  viewSessionId: string | null | undefined,
+): TelemetryEvent[] {
+  if (!viewSessionId || events.length === 0) return [];
+  return events.filter((ev) => eventBelongsToViewSession(ev, viewSessionId));
+}

@@ -5,7 +5,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { subscribeOptimizedTelemetry } from '../../perf/optimized-telemetry';
 import { ensureRenderInstrumentation } from '../../perf/render-instrumentation';
-import { eventBelongsToViewSession } from '../../chat/session-stream-filter';
+import { eventBelongsToViewSession, filterEventsForViewSession } from '../../chat/session-stream-filter';
 import { applyOperationEventToAssistant } from '../../chat/operation-tool-patch';
 import { stripToolNoise, repairStreamTextGlitches, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts, coerceDisplayLabel } from '../../chat/utils';
 import {
@@ -32,6 +32,8 @@ export interface UseChatTelemetryParams {
   streaming: boolean;
   crewList: Crew[];
   turnActivity: { stage: string; step: number; elapsedMs: number } | null;
+  /** Routed/open session id — used to drop deferred UI when the thread changes. */
+  viewSessionKey: string | null;
 
   // Shared refs
   isInitialLoadRef: React.MutableRefObject<boolean>;
@@ -104,6 +106,7 @@ interface EventHandlerContext {
   outgoingTurnRef: React.MutableRefObject<{ userId: string; userContent: string; placeholderId: string } | null>;
   resendInProgressRef: React.MutableRefObject<boolean>;
   lastTurnFeedbackCandidateRef: React.MutableRefObject<{ messageId: string; elapsedMs: number } | null>;
+  viewSessionIdRef: React.MutableRefObject<string | null>;
   currentSessionIdRef: React.MutableRefObject<string | null>;
   isCrewPrivateRef: React.MutableRefObject<boolean>;
   crewPrivateHostRef: React.MutableRefObject<{ name: string; callsign: string; title?: string } | null>;
@@ -128,6 +131,8 @@ interface EventHandlerContext {
   providerErrorTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   toolBatchRef: React.MutableRefObject<TelemetryEvent[]>;
   toolFlushRef: React.MutableRefObject<number | null>;
+  /** Session id that owned the current coalesced stream/thinking buffers. */
+  pendingUiSessionIdRef: React.MutableRefObject<string | null>;
 
   // Setters
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
@@ -272,8 +277,10 @@ const handleToolBatchEvent = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
   if (ctx.toolFlushRef.current === null) {
     ctx.toolFlushRef.current = requestAnimationFrame(() => {
       ctx.toolFlushRef.current = null;
-      const batch = ctx.toolBatchRef.current;
+      const rawBatch = ctx.toolBatchRef.current;
       ctx.toolBatchRef.current = [];
+      // Re-filter at flush time — session may have changed since enqueue (cross-session bleed).
+      const batch = filterEventsForViewSession(rawBatch, ctx.viewSessionIdRef.current);
       if (batch.length === 0) return;
       // Main-turn loader: only parent tools. Sub-agent tool activity stays inside the sub-agent card/drawer.
       const hasParentTool = batch.some((e) => e.type !== 'subagent_event');
@@ -505,6 +512,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
       const base = ctx.ensureOutgoingTurnMessages(prev);
       const tip = base[base.length - 1];
       if (tip?.role === 'assistant' && tip.streaming) {
+        ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
         ctx.streamChunkPendingRef.current = rawFull || null;
         if (ctx.streamChunkRAFRef.current === null) {
           ctx.streamChunkRAFRef.current = window.setTimeout(() => {
@@ -512,6 +520,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
             const fullContent = ctx.streamChunkPendingRef.current ?? '';
             ctx.streamChunkPendingRef.current = null;
             if (!fullContent) return;
+            if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
             ctx.setMessages(p => {
               const ensured = ctx.ensureOutgoingTurnMessages(p);
               const l = ensured[ensured.length - 1];
@@ -540,6 +549,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
       }];
     }
     if (last?.role === 'assistant') {
+      ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
       ctx.streamChunkPendingRef.current = rawFull || null;
       if (ctx.streamChunkRAFRef.current === null) {
         // Coalesced flush: markdown re-parses the active bubble on every
@@ -549,6 +559,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
           const fullContent = ctx.streamChunkPendingRef.current ?? '';
           ctx.streamChunkPendingRef.current = null;
           if (!fullContent) return;
+          if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
           ctx.setMessages(p => {
             const l = p[p.length - 1];
             if (l?.role !== 'assistant') return p;
@@ -806,6 +817,7 @@ const handleReasoningDelta = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
     const delta = (ev.content as string) ?? (ev.text as string) ?? (ev.delta as string) ?? '';
     // Coalesce reasoning tokens — flushing per-delta causes a render
     // storm on reasoning-heavy models. appendStreamText dedupes cumulative/dup chunks.
+    ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
     ctx.thinkingPendingRef.current = appendStreamText(ctx.thinkingPendingRef.current, delta);
     if (ctx.thinkingFlushRef.current === null) {
       ctx.thinkingFlushRef.current = window.setTimeout(() => {
@@ -813,6 +825,7 @@ const handleReasoningDelta = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
         const pending = ctx.thinkingPendingRef.current;
         ctx.thinkingPendingRef.current = '';
         if (!pending) return;
+        if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
         ctx.setMessages(p => {
           const l = p[p.length - 1];
           if (l?.role !== 'assistant') return p;
@@ -1330,7 +1343,7 @@ const telemetryDispatch: Record<string, (ev: TelemetryEvent, ctx: EventHandlerCo
 
 export function useChatTelemetry(params: UseChatTelemetryParams): void {
   const {
-    streaming, crewList, turnActivity,
+    streaming, crewList, turnActivity, viewSessionKey,
     isInitialLoadRef, turnActiveRef, activeTurnIdRef, outgoingTurnRef, resendInProgressRef,
     lastTurnFeedbackCandidateRef, viewSessionIdRef, currentSessionIdRef, isCrewPrivateRef,
     crewPrivateHostRef, crewMissionSessionIdRef, crewSuggestionHandledRef, crewGateInFlightRef,
@@ -1356,6 +1369,36 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
   // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
   const toolBatchRef = useRef<TelemetryEvent[]>([]);
   const toolFlushRef = useRef<number | null>(null);
+  const pendingUiSessionIdRef = useRef<string | null>(null);
+  const lastViewSessionForPendingRef = useRef<string | null>(viewSessionKey);
+
+  const clearDeferredTurnUi = useCallback(() => {
+    toolBatchRef.current = [];
+    if (toolFlushRef.current != null) {
+      cancelAnimationFrame(toolFlushRef.current);
+      toolFlushRef.current = null;
+    }
+    streamChunkPendingRef.current = null;
+    if (streamChunkRAFRef.current != null) {
+      clearTimeout(streamChunkRAFRef.current);
+      streamChunkRAFRef.current = null;
+    }
+    thinkingPendingRef.current = '';
+    if (thinkingFlushRef.current != null) {
+      clearTimeout(thinkingFlushRef.current);
+      thinkingFlushRef.current = null;
+    }
+    pendingUiSessionIdRef.current = null;
+  }, []);
+
+  // Drop coalesced tool/stream/thinking buffers when the open chat thread changes.
+  useEffect(() => {
+    const prev = lastViewSessionForPendingRef.current;
+    lastViewSessionForPendingRef.current = viewSessionKey;
+    if (prev != null && viewSessionKey != null && prev !== viewSessionKey) {
+      clearDeferredTurnUi();
+    }
+  }, [viewSessionKey, clearDeferredTurnUi]);
 
   const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
 
@@ -1653,12 +1696,12 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
     const ctx: EventHandlerContext = {
       crewList, turnActivity,
       isInitialLoadRef, turnActiveRef, outgoingTurnRef, resendInProgressRef,
-      lastTurnFeedbackCandidateRef, currentSessionIdRef, isCrewPrivateRef,
+      lastTurnFeedbackCandidateRef, viewSessionIdRef, currentSessionIdRef, isCrewPrivateRef,
       crewPrivateHostRef, crewMissionSessionIdRef, crewSuggestionHandledRef,
       crewGateInFlightRef, attachCrewRosterPickerRef, rateLimitSeenRef,
       tokenInputRef, tokenOutputRef, tokenReservedRef,
       streamChunkRAFRef, streamChunkPendingRef, thinkingPendingRef, thinkingFlushRef,
-      providerErrorTimerRef, toolBatchRef, toolFlushRef,
+      providerErrorTimerRef, toolBatchRef, toolFlushRef, pendingUiSessionIdRef,
       setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming,
       setTokenUsed, setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
       setPendingPermissionCount, setCrewWorkers, setCrewMissionActive,

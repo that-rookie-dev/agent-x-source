@@ -21,21 +21,32 @@ export interface CrewHostSnapshot {
   updatedAt?: string | null;
 }
 
+interface CrewTombstoneFile {
+  ids: string[];
+  catalogIds: string[];
+}
+
 export class CrewManager {
   private crews: Crew[] = [];
   private store: StorageAdapter | null = null;
+  /** Intentionally deleted roster ids / hub catalog ids — never auto-resurrect these. */
+  private deletedIds = new Set<string>();
+  private deletedCatalogIds = new Set<string>();
 
   constructor(store?: StorageAdapter) {
     this.store = store ?? null;
+    this.loadTombstones();
     this.loadCrews();
   }
 
   setStore(store: StorageAdapter): void {
     this.store = store;
+    this.loadTombstones();
     this.loadCrews();
   }
 
   refresh(): void {
+    this.loadTombstones();
     this.loadCrews();
   }
 
@@ -43,8 +54,75 @@ export class CrewManager {
     return join(getDataDir(), 'crews.json');
   }
 
+  private tombstoneFilePath(): string {
+    return join(getDataDir(), 'crew-deleted.json');
+  }
+
   private legacyCrewsFilePath(): string {
     return join(getDataDir(), 'secret-sauce', 'crews.json');
+  }
+
+  private loadTombstones(): void {
+    this.deletedIds = new Set();
+    this.deletedCatalogIds = new Set();
+    const path = this.tombstoneFilePath();
+    if (!existsSync(path)) return;
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf-8')) as Partial<CrewTombstoneFile>;
+      for (const id of raw.ids ?? []) {
+        if (typeof id === 'string' && id.trim()) this.deletedIds.add(id.trim());
+      }
+      for (const id of raw.catalogIds ?? []) {
+        if (typeof id === 'string' && id.trim()) this.deletedCatalogIds.add(id.trim());
+      }
+    } catch {
+      /* ignore corrupt tombstone file */
+    }
+  }
+
+  private writeTombstones(): void {
+    try {
+      mkdirSync(getDataDir(), { recursive: true });
+      const payload: CrewTombstoneFile = {
+        ids: [...this.deletedIds].sort(),
+        catalogIds: [...this.deletedCatalogIds].sort(),
+      };
+      writeFileSync(this.tombstoneFilePath(), JSON.stringify(payload, null, 2), 'utf-8');
+    } catch (e) {
+      getLogger().warn('CREW_MGR', `Failed to write crew-deleted.json: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  private isTombstoned(id: string, catalogId?: string | null): boolean {
+    if (this.deletedIds.has(id)) return true;
+    const cat = catalogId?.trim();
+    return Boolean(cat && this.deletedCatalogIds.has(cat));
+  }
+
+  /** True when the user explicitly deleted this roster / hub catalog entry. */
+  isIntentionallyDeleted(id: string, catalogId?: string | null): boolean {
+    return this.isTombstoned(id, catalogId);
+  }
+
+  private markDeleted(id: string, catalogId?: string | null): void {
+    this.deletedIds.add(id);
+    const cat = catalogId?.trim();
+    if (cat) this.deletedCatalogIds.add(cat);
+    this.writeTombstones();
+  }
+
+  private clearTombstone(id: string, catalogId?: string | null): void {
+    let changed = this.deletedIds.delete(id);
+    const cat = catalogId?.trim();
+    if (cat && this.deletedCatalogIds.delete(cat)) changed = true;
+    if (changed) this.writeTombstones();
+  }
+
+  /** Hub crews are re-recruitable from catalog; session-host recovery is only for custom/user crews. */
+  private isHubHost(host: CrewHostSnapshot): boolean {
+    if (host.source === 'hub') return true;
+    if (host.catalogId?.trim()) return true;
+    return false;
   }
 
   private resolveCrewsFilePath(): string {
@@ -135,11 +213,20 @@ export class CrewManager {
     }
     this.crews = [...byId.values()];
 
+    // Drop intentionally deleted crews that may still linger in the local backup / DB lag.
+    const beforeTombstone = this.crews.length;
+    if (this.deletedIds.size > 0 || this.deletedCatalogIds.size > 0) {
+      this.crews = this.crews.filter((c) => !this.isTombstoned(c.id, c.catalogId));
+    }
+    const purgedTombstones = beforeTombstone !== this.crews.length;
+
     // Re-upsert any file-only crews into the DB so they survive subsequent restarts.
+    // Never resurrect tombstoned (intentionally deleted) rows.
     if (this.store && fileCrews.length > 0) {
       const dbIds = new Set(dbCrews.map((c) => c.id));
       for (const crew of fileCrews) {
         if (!crew?.id || dbIds.has(crew.id)) continue;
+        if (this.isTombstoned(crew.id, crew.catalogId)) continue;
         try {
           if (typeof this.store.getCrew === 'function' && this.store.getCrew(crew.id)) {
             this.store.updateCrew?.(crew.id, crew);
@@ -156,8 +243,8 @@ export class CrewManager {
       });
     }
 
-    // Keep backup aligned with the merged roster.
-    if (this.crews.length > 0) this.writeFileBackup();
+    // Keep backup aligned with the merged roster (including empty after tombstone purge).
+    if (this.crews.length > 0 || purgedTombstones) this.writeFileBackup();
   }
 
   private crewToCreateInput(crew: Crew): CrewCreateInput {
@@ -215,13 +302,29 @@ export class CrewManager {
 
   /**
    * Rebuild missing roster entries from crew_private session host snapshots.
-   * Sessions keep host_crew_* fields even when the crews row was lost.
+   * Intended as a crash safeguard for **custom / user-created** crews when the
+   * async PG write queue never drained. Hub crews must NOT be resurrected here —
+   * private-session leftovers would otherwise put deleted hub recruits back on
+   * the roster; they can be recruited again from the catalog.
    */
   recoverFromSessionHosts(hosts: CrewHostSnapshot[]): number {
     let restored = 0;
     for (const host of hosts) {
       const id = host.id?.trim();
       if (!id || this.get(id)) continue;
+      if (this.isHubHost(host)) {
+        getLogger().info(
+          'CREW_MGR',
+          `Skipping session-host recovery for hub crew ${id}`
+            + (host.catalogId ? ` (catalog ${host.catalogId})` : '')
+            + ' — recruit from hub instead',
+        );
+        continue;
+      }
+      if (this.isTombstoned(id, host.catalogId)) {
+        getLogger().info('CREW_MGR', `Skipping session-host recovery for deleted crew ${id}`);
+        continue;
+      }
       const callsign = (host.callsign || id).replace(/\s+/g, '').toLowerCase();
       if (this.crews.some((c) => c.callsign.toLowerCase() === callsign)) continue;
       const now = new Date().toISOString();
@@ -293,6 +396,9 @@ export class CrewManager {
     if (this.crews.some((c) => c.callsign.toLowerCase() === callsign)) {
       throw new Error(`Callsign "${callsign}" is already taken`);
     }
+    const source = input.source ?? (input.catalogId ? 'hub' : 'custom');
+    // Re-recruit / recreate after an intentional delete is allowed.
+    this.clearTombstone(input.id, input.catalogId);
     const crew: Crew = {
       id: input.id,
       name: input.name,
@@ -301,7 +407,7 @@ export class CrewManager {
       systemPrompt: input.systemPrompt,
       description: input.description,
       emotion: input.emotion,
-      source: input.source ?? (input.catalogId ? 'hub' : 'custom'),
+      source,
       catalogId: input.catalogId,
       searchText: input.searchText,
       suggestable: input.suggestable ?? true,
@@ -328,7 +434,7 @@ export class CrewManager {
   delete(id: string): boolean {
     const idx = this.crews.findIndex((p) => p.id === id);
     if (idx < 0) return false;
-    this.crews.splice(idx, 1);
+    const [removed] = this.crews.splice(idx, 1);
     if (this.store && typeof this.store.deleteCrew === 'function') {
       try {
         this.store.deleteCrew(id);
@@ -336,6 +442,7 @@ export class CrewManager {
         getLogger().error('CREW_MGR', `DB delete failed for ${id}: ${e instanceof Error ? e.message : e}`);
       }
     }
+    this.markDeleted(id, removed?.catalogId);
     this.writeFileBackup();
     return true;
   }
