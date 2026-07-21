@@ -206,10 +206,17 @@ export const notificationChannelsConfigSchema = z.object({
   }).optional(),
 }).optional();
 
-export const performancePresetSchema = z.enum(['quiet', 'balanced', 'performance', 'max']);
+export const performancePresetSchema = z.enum(['quiet', 'balanced', 'moderate', 'ultimate']);
+
+/** Accept current + legacy (`performance`→`moderate`, `max`→`ultimate`) preset ids. */
+export const performancePresetInputSchema = z.preprocess((raw) => {
+  if (raw === 'performance') return 'moderate';
+  if (raw === 'max') return 'ultimate';
+  return raw;
+}, performancePresetSchema);
 
 export const performanceSettingsSchema = z.object({
-  preset: performancePresetSchema.optional(),
+  preset: performancePresetInputSchema.optional(),
   budgetPercent: z.number().int().min(10).max(80).optional(),
   /** @deprecated Prefer budgetPercent — accepted for one-release local migrate. */
   cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
@@ -239,6 +246,12 @@ function migrateConfigPerformanceKey(raw: unknown): unknown {
       perf['budgetPercent'] = perf['cpuBudgetPercent'];
     }
     obj['performance'] = perf;
+  }
+  const migratedPerf = obj['performance'];
+  if (migratedPerf != null && typeof migratedPerf === 'object') {
+    const perf = migratedPerf as Record<string, unknown>;
+    if (perf['preset'] === 'performance') perf['preset'] = 'moderate';
+    else if (perf['preset'] === 'max') perf['preset'] = 'ultimate';
   }
   delete obj['runtime'];
   return obj;

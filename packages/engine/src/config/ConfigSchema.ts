@@ -106,6 +106,12 @@ function migrateConfigPerformanceKey(raw: unknown): unknown {
     }
     obj['performance'] = perf;
   }
+  const migratedPerf = obj['performance'];
+  if (migratedPerf != null && typeof migratedPerf === 'object') {
+    const perf = migratedPerf as Record<string, unknown>;
+    if (perf['preset'] === 'performance') perf['preset'] = 'moderate';
+    else if (perf['preset'] === 'max') perf['preset'] = 'ultimate';
+  }
   delete obj['runtime'];
   return obj;
 }
@@ -127,7 +133,11 @@ export const agentXConfigSchema = z.preprocess(migrateConfigPerformanceKey, z.ob
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
   performance: z.object({
-    preset: z.enum(['quiet', 'balanced', 'performance', 'max']).optional(),
+    preset: z.preprocess((raw) => {
+      if (raw === 'performance') return 'moderate';
+      if (raw === 'max') return 'ultimate';
+      return raw;
+    }, z.enum(['quiet', 'balanced', 'moderate', 'ultimate']).optional()),
     budgetPercent: z.number().int().min(10).max(80).optional(),
     cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
     lazyStorageCache: z.boolean().optional(),

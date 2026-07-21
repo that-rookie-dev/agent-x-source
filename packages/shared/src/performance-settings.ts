@@ -1,26 +1,29 @@
 import { cpus, freemem, platform, arch, totalmem, hostname } from 'node:os';
 
 /** User-facing resource profile. Maps to a CPU budget % under the hood. */
-export type PerformancePreset = 'quiet' | 'balanced' | 'performance' | 'max';
+export type PerformancePreset = 'quiet' | 'balanced' | 'moderate' | 'ultimate';
 
-export const PERFORMANCE_PRESETS: PerformancePreset[] = ['quiet', 'balanced', 'performance', 'max'];
+/** @deprecated Old persisted IDs — normalized via {@link normalizePerformancePreset}. */
+export type LegacyPerformancePreset = 'performance' | 'max';
+
+export const PERFORMANCE_PRESETS: PerformancePreset[] = ['quiet', 'balanced', 'moderate', 'ultimate'];
 
 export const PERFORMANCE_PRESET_BUDGET: Record<PerformancePreset, number> = {
   quiet: 25,
   balanced: 40,
-  performance: 70,
-  max: 80,
+  moderate: 70,
+  ultimate: 80,
 };
 
 /**
  * Host share claimed by each preset. Tuned so common core counts (4/8/10/12)
- * do not round Quiet/Balanced/Performance/Max onto the same effectiveCores.
+ * do not round Quiet/Balanced/Moderate/Ultimate onto the same effectiveCores.
  */
 const PRESET_HOST_SHARE: Record<PerformancePreset, number> = {
   quiet: 0.22,
   balanced: 0.40,
-  performance: 0.62,
-  max: 0.85,
+  moderate: 0.62,
+  ultimate: 0.85,
 };
 
 /**
@@ -38,23 +41,41 @@ const PRESET_LANE_BIAS: Record<PerformancePreset, {
 }> = {
   quiet: { llm: 0, tools: 0, subs: 0, bg: 0, attach: 0, onnx: 0 },
   balanced: { llm: 0, tools: 1, subs: 1, bg: 0, attach: 0, onnx: 0 },
-  performance: { llm: 1, tools: 2, subs: 2, bg: 1, attach: 0, onnx: 1 },
-  max: { llm: 2, tools: 4, subs: 4, bg: 2, attach: 1, onnx: 1 },
+  moderate: { llm: 1, tools: 2, subs: 2, bg: 1, attach: 0, onnx: 1 },
+  ultimate: { llm: 2, tools: 4, subs: 4, bg: 2, attach: 1, onnx: 1 },
 };
 
 const PRESET_TIER: Record<PerformancePreset, number> = {
   quiet: 0,
   balanced: 1,
-  performance: 2,
-  max: 3,
+  moderate: 2,
+  ultimate: 3,
 };
+
+/** Map persisted legacy preset ids → current ids. */
+const LEGACY_PRESET_IDS: Record<string, PerformancePreset> = {
+  performance: 'moderate',
+  max: 'ultimate',
+};
+
+/**
+ * Normalize a preset id from config / API (accepts legacy `performance` / `max`).
+ */
+export function normalizePerformancePreset(raw: unknown): PerformancePreset | undefined {
+  if (typeof raw !== 'string') return undefined;
+  if ((PERFORMANCE_PRESETS as readonly string[]).includes(raw)) {
+    return raw as PerformancePreset;
+  }
+  return LEGACY_PRESET_IDS[raw];
+}
 
 export interface PerformanceSettings {
   /**
    * Preferred profile. When set, drives budgetPercent.
    * Older configs may only have budgetPercent — we infer the nearest preset.
+   * Legacy ids `performance` / `max` are accepted and normalized on resolve.
    */
-  preset?: PerformancePreset;
+  preset?: PerformancePreset | LegacyPerformancePreset;
   /**
    * Target CPU budget as a percent of available cores (10–80, default 40).
    * Kept for back-compat; derived from preset when preset is set.
@@ -123,8 +144,8 @@ const DEFAULT_PRESET: PerformancePreset = 'balanced';
 const PRESET_META: Record<PerformancePreset, { label: string; blurb: string }> = {
   quiet: { label: 'Quiet', blurb: 'Cool & light — minimal parallel work' },
   balanced: { label: 'Balanced', blurb: 'Default headroom for daily agent work' },
-  performance: { label: 'Performance', blurb: 'Wide lanes for crew & research storms' },
-  max: { label: 'Max', blurb: 'Highest allowed concurrency (80% ceiling)' },
+  moderate: { label: 'Moderate', blurb: 'Wide lanes for crew & research storms' },
+  ultimate: { label: 'Ultimate', blurb: 'Highest allowed concurrency (80% ceiling)' },
 };
 
 function clamp(n: number, min: number, max: number): number {
@@ -135,8 +156,8 @@ export function inferPerformancePreset(budgetPercent?: number | null): Performan
   const pct = budgetPercent ?? PERFORMANCE_PRESET_BUDGET.balanced;
   if (pct <= 30) return 'quiet';
   if (pct <= 50) return 'balanced';
-  if (pct <= 75) return 'performance';
-  return 'max';
+  if (pct <= 75) return 'moderate';
+  return 'ultimate';
 }
 
 function budgetFromSettings(settings?: PerformanceSettings | null): number | undefined {
@@ -147,9 +168,8 @@ function budgetFromSettings(settings?: PerformanceSettings | null): number | und
 }
 
 export function resolvePerformancePreset(settings?: PerformanceSettings | null): PerformancePreset {
-  if (settings?.preset && PERFORMANCE_PRESETS.includes(settings.preset)) {
-    return settings.preset;
-  }
+  const normalized = normalizePerformancePreset(settings?.preset);
+  if (normalized) return normalized;
   return inferPerformancePreset(budgetFromSettings(settings));
 }
 
@@ -173,7 +193,7 @@ function lanesFromEffectiveCores(
   };
 }
 
-/** Dominance score for ensuring Quiet < Balanced < Performance < Max in the UI. */
+/** Dominance score for ensuring Quiet < Balanced < Moderate < Ultimate in the UI. */
 export function laneDominanceScore(lanes: PerformanceLanes): number {
   return (
     lanes.subAgents * 1_000_000
@@ -188,7 +208,7 @@ export function laneDominanceScore(lanes: PerformanceLanes): number {
 /**
  * Project soft lanes for a named preset on this host.
  * Guarantees a stepped profile: each higher preset claims more host share and
- * applies a larger lane bias so Performance ≠ Max on common machines (e.g. 8 cores).
+ * applies a larger lane bias so Moderate ≠ Ultimate on common machines (e.g. 8 cores).
  */
 export function projectPresetLanes(cpuCount: number, preset: PerformancePreset): PerformanceLanes {
   const cores = Math.max(1, cpuCount);
@@ -210,9 +230,7 @@ export function projectPerformanceLanes(
   budgetPercent: number,
   preset?: PerformancePreset | null,
 ): PerformanceLanes {
-  const resolved = preset && PERFORMANCE_PRESETS.includes(preset)
-    ? preset
-    : inferPerformancePreset(budgetPercent);
+  const resolved = normalizePerformancePreset(preset) ?? inferPerformancePreset(budgetPercent);
   return projectPresetLanes(cpuCount, resolved);
 }
 
@@ -254,10 +272,11 @@ export function resolvePerformanceSettings(
 ): ResolvedPerformanceSettings {
   const preset = resolvePerformancePreset(settings);
   const fromSettings = budgetFromSettings(settings);
-  const budgetPercent = settings?.preset
+  const hasExplicitPreset = normalizePerformancePreset(settings?.preset) != null;
+  const budgetPercent = hasExplicitPreset
     ? PERFORMANCE_PRESET_BUDGET[preset]
     : clamp(fromSettings ?? PERFORMANCE_PRESET_BUDGET[preset], 10, 80);
-  const budget = settings?.preset ? PERFORMANCE_PRESET_BUDGET[preset] : budgetPercent;
+  const budget = hasExplicitPreset ? PERFORMANCE_PRESET_BUDGET[preset] : budgetPercent;
   // Prefer the distinct stepped projection so live governor matches the showcase cards.
   const distinct = projectDistinctPresetLanes(cpuCount);
   const lanes = { ...distinct[preset] };
@@ -305,8 +324,8 @@ export function buildPerformanceHostProfile(
 function recommendPreset(host: PerformanceHostProfile): PerformancePreset {
   if (host.totalMemoryGB < 12 || host.cpuCores <= 4) return 'quiet';
   if (host.totalMemoryGB < 24 || host.cpuCores <= 8) return 'balanced';
-  if (host.totalMemoryGB < 48) return 'performance';
-  return 'max';
+  if (host.totalMemoryGB < 48) return 'moderate';
+  return 'ultimate';
 }
 
 function presetSummary(host: PerformanceHostProfile, lanes: PerformanceLanes, preset: PerformancePreset): string {
@@ -318,10 +337,10 @@ function presetSummary(host: PerformanceHostProfile, lanes: PerformanceLanes, pr
   if (preset === 'balanced') {
     return `${crew} parallel agents · ${tools} tools · solid daily throughput`;
   }
-  if (preset === 'performance') {
-    return `${crew} crew slots · ${tools} tools · built for research storms`;
+  if (preset === 'moderate') {
+    return `${crew} crew slots · ${tools} tools · moderate research headroom`;
   }
-  return `${crew} crew · ${tools} tools · ${lanes.llmGlobal} LLM · ceiling profile`;
+  return `${crew} crew · ${tools} tools · ${lanes.llmGlobal} LLM · ultimate profile`;
 }
 
 export function buildPerformanceShowcase(

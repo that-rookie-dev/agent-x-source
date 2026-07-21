@@ -27,7 +27,7 @@ interface PerformanceTabProps {
   onChange: (cfg: AgentXConfig) => void;
 }
 
-const PRESET_ORDER: PerformancePresetId[] = ['quiet', 'balanced', 'performance', 'max'];
+const PRESET_ORDER: PerformancePresetId[] = ['quiet', 'balanced', 'moderate', 'ultimate'];
 
 const PRESET_UI: Record<PerformancePresetId, {
   label: string;
@@ -47,19 +47,28 @@ const PRESET_UI: Record<PerformancePresetId, {
     accent: settingsTheme.accent.hud,
     budget: 40,
   },
-  performance: {
-    label: 'Performance',
+  moderate: {
+    label: 'Moderate',
     tag: 'STORM',
     accent: settingsTheme.accent.amber,
     budget: 70,
   },
-  max: {
-    label: 'Max',
-    tag: 'CEILING',
+  ultimate: {
+    label: 'Ultimate',
+    tag: 'PEAK',
     accent: settingsTheme.accent.signal,
     budget: 80,
   },
 };
+
+function normalizePresetId(raw: unknown): PerformancePresetId | undefined {
+  if (raw === 'performance') return 'moderate';
+  if (raw === 'max') return 'ultimate';
+  if (raw === 'quiet' || raw === 'balanced' || raw === 'moderate' || raw === 'ultimate') {
+    return raw;
+  }
+  return undefined;
+}
 
 function platformLabel(platform: string, arch: string): string {
   const p = platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : platform === 'linux' ? 'Linux' : platform;
@@ -225,11 +234,11 @@ function scenariosFor(lanes: PerformanceLanesInfo, hostCores: number, memGB: num
 
 export function PerformanceTab({ cfg, onChange }: PerformanceTabProps) {
   const perfCfg = cfg.performance ?? {};
-  const selected: PerformancePresetId = (perfCfg.preset as PerformancePresetId | undefined)
+  const selected: PerformancePresetId = normalizePresetId(perfCfg.preset)
     ?? (perfCfg.budgetPercent != null
       ? (perfCfg.budgetPercent <= 30 ? 'quiet'
         : perfCfg.budgetPercent <= 50 ? 'balanced'
-          : perfCfg.budgetPercent <= 75 ? 'performance' : 'max')
+          : perfCfg.budgetPercent <= 75 ? 'moderate' : 'ultimate')
       : 'balanced');
   const lazyCache = perfCfg.lazyStorageCache !== false;
 

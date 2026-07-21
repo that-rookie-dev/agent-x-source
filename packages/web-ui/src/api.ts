@@ -1236,7 +1236,7 @@ export interface AgentXConfig {
     };
   };
   performance?: {
-    preset?: 'quiet' | 'balanced' | 'performance' | 'max';
+    preset?: 'quiet' | 'balanced' | 'moderate' | 'ultimate';
     budgetPercent?: number;
     lazyStorageCache?: boolean;
     backgroundConcurrency?: number;
@@ -2762,7 +2762,7 @@ export const subagents = {
   cancel: (id: string) => request<{ ok: boolean }>(`/subagents/${id}/cancel`, { method: 'POST' }),
 };
 
-export type PerformancePresetId = 'quiet' | 'balanced' | 'performance' | 'max';
+export type PerformancePresetId = 'quiet' | 'balanced' | 'moderate' | 'ultimate';
 
 export interface PerformanceLanesInfo {
   effectiveCores: number;

@@ -32,6 +32,7 @@ function buildTerminalLines(
   h: HealthStatus | null,
   catalogSeed: CatalogSeedStatusResponse | null,
   roster: Crew[],
+  readyToLaunch: boolean,
 ): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
   const v = h?.version || '';
   const provider = h?.config?.provider || '—';
@@ -68,7 +69,10 @@ function buildTerminalLines(
     { type: 'dim', text: '  4 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
     { type: 'dim', text: '  AES-256-GCM encrypted storage \u00B7 Self-destruct tamper protection' },
     { type: 'blank', text: '' },
-    { type: 'info', text: '  Ready to launch. All systems nominal.' },
+    // Only when LAUNCH is clickable — never while still preparing.
+    ...(readyToLaunch
+      ? [{ type: 'info' as const, text: '  Ready to launch. All systems nominal.' }]
+      : []),
   ];
 }
 
@@ -157,8 +161,23 @@ export function DockingStation() {
     clientSituationApi.set(location.clientSituation).catch(() => {});
   }, [serverOnline, location.clientSituation]);
 
+  const version = healthData?.version || '';
+  const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
+
+  const voiceModuleEnabled = Boolean(voice?.voiceReady);
+  const engineWarmAtLaunch = Boolean(voice?.engineWarmAtLaunch);
+  const voiceNeedsReady = voiceModuleEnabled && engineWarmAtLaunch;
+  const voiceLaunchReady = !voiceNeedsReady
+    || voice?.warmupPhase === 'ready'
+    || voice?.warmupPhase === 'failed';
+  const voiceResolved = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
+  const voiceOk = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
+  const systemsResolved = !checking && location.resolved && voiceResolved;
+  const canLaunch = serverOnline && systemsResolved && voiceOk;
+  const preparing = serverOnline && !canLaunch;
+
   useEffect(() => {
-    const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
+    const built = buildTerminalLines(healthData, catalogSeed, rosterCrews, canLaunch);
     setLines(built);
     if (introPlayedRef.current) {
       setVisibleLines(built.length);
@@ -166,7 +185,7 @@ export function DockingStation() {
       introStartedRef.current = true;
       setVisibleLines(0);
     }
-  }, [healthData, catalogSeed, rosterCrews]);
+  }, [healthData, catalogSeed, rosterCrews, canLaunch]);
 
   const handleLaunch = useCallback(() => {
     navigate('/console/dashboard');
@@ -184,20 +203,6 @@ export function DockingStation() {
     const timeout = setTimeout(() => setVisibleLines((v) => v + 1), delay);
     return () => clearTimeout(timeout);
   }, [visibleLines, lines]);
-  const version = healthData?.version || '';
-  const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
-
-  const voiceModuleEnabled = Boolean(voice?.voiceReady);
-  const engineWarmAtLaunch = Boolean(voice?.engineWarmAtLaunch);
-  const voiceNeedsReady = voiceModuleEnabled && engineWarmAtLaunch;
-  const voiceLaunchReady = !voiceNeedsReady
-    || voice?.warmupPhase === 'ready'
-    || voice?.warmupPhase === 'failed';
-  const voiceResolved = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
-  const voiceOk = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
-  const systemsResolved = !checking && location.resolved && voiceResolved;
-  const canLaunch = serverOnline && systemsResolved && voiceOk;
-  const preparing = serverOnline && !canLaunch;
 
   const locationColor =
     location.state === 'granted' ? colors.accent.green

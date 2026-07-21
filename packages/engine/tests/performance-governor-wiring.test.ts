@@ -52,7 +52,7 @@ describe('Performance governor wiring', () => {
     applyPerformanceGovernor({ preset: 'quiet' }, 8);
     const quietBg = getPerformanceLanes().backgroundConcurrency;
 
-    applyPerformanceGovernor({ preset: 'max' }, 16);
+    applyPerformanceGovernor({ preset: 'ultimate' }, 16);
     const maxBg = getPerformanceLanes().backgroundConcurrency;
     expect(maxBg).toBeGreaterThanOrEqual(quietBg);
 
