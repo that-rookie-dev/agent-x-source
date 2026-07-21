@@ -2,7 +2,7 @@
  * GraphAssembler — assembles extracted nodes and edges into a fabric graph.
  *
  * Takes extracted nodes + edges from the KnowledgeExtractor and:
- * 1. Scaffolds structural edges (CONTAINS, NEXT_STEP) deterministically.
+ * 1. Scaffolds structural edges (CONTAINS, FOLLOWS/order) deterministically.
  * 2. Enforces topology constraints (max edges per node via anti-hub relay).
  * 3. Calculates depth metrics.
  *

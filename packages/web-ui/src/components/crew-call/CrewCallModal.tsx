@@ -16,6 +16,7 @@ import { friendlyVoiceError } from '../voice/voice-comms-theme';
 import { getCrewAccent } from '../../styles/crew-theme';
 import { VoiceParticleField } from '../voice/VoiceParticleField';
 import type { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
+import { CallTranscriptDivider } from './CallTranscriptDivider';
 import { callTheme, formatCallDuration } from './crew-call-theme';
 import { resolveCallParticlePhase } from './resolve-call-particle-phase';
 import type { CrewCallPhase, CrewCallTarget, CrewCallTranscriptLine } from './types';
@@ -450,6 +451,15 @@ export function CrewCallModal({
               </Typography>
             )}
             {transcript.map((line) => {
+              if (line.divider) {
+                return (
+                  <CallTranscriptDivider
+                    key={line.id}
+                    label={line.text}
+                    variant={line.divider}
+                  />
+                );
+              }
               const color =
                 line.role === 'operator' ? callTheme.operator
                   : line.role === 'crew' ? accent

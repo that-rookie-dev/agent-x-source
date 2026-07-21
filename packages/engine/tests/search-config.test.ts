@@ -45,6 +45,16 @@ describe('search-config', () => {
     expect(listActiveWebSearchProviders(rt)).toEqual(['duckduckgo', 'brave']);
   });
 
+  it('respects custom providerOrder for active providers', () => {
+    const rt = resolveWebSearchRuntime({
+      duckduckgo: { enabled: true },
+      brave: { enabled: true, apiKey: 'bsa-test' },
+      tavily: { enabled: true, apiKey: 'tvly-test' },
+      providerOrder: ['tavily', 'brave', 'duckduckgo', 'exa'],
+    });
+    expect(listActiveWebSearchProviders(rt)).toEqual(['tavily', 'brave', 'duckduckgo']);
+  });
+
   it('allows disabling DuckDuckGo', () => {
     const rt = resolveWebSearchRuntime({
       duckduckgo: { enabled: false },
@@ -52,6 +62,14 @@ describe('search-config', () => {
     });
     expect(rt.duckduckgo).toBe(false);
     expect(listActiveWebSearchProviders(rt)).toEqual(['brave']);
+  });
+
+  it('mergeWebSearchToolsConfig preserves providerOrder', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { providerOrder: ['exa', 'duckduckgo', 'brave', 'tavily'] },
+      { brave: { enabled: true } },
+    );
+    expect(merged.providerOrder).toEqual(['exa', 'duckduckgo', 'brave', 'tavily']);
   });
 
   it('applyWebSearchConfigFromAgentConfig updates runtime', () => {

@@ -178,11 +178,13 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
   const shell = getShellCommand(command);
 
   return new Promise((resolvePromise) => {
+    // Do not set shell:true — getShellCommand already returns an absolute
+    // shell + ['-c', command]. shell:true would re-spawn a bare `sh` via PATH
+    // and can throw "spawn sh ENOENT" under Electron.
     const child = spawn(shell.cmd, shell.args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: buildShellEnv(cwd),
-      shell: true,
     });
     trackShellChildPid(child.pid);
 

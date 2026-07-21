@@ -1,5 +1,5 @@
 import { Pool, type PoolConfig } from 'pg';
-import { generateId } from '@agentx/shared';
+import { buildListDayDivider, generateId, getLogger } from '@agentx/shared';
 import type {
   StorageAdapter,
   StorableSession,
@@ -7,9 +7,12 @@ import type {
   StorableMessageInput,
   StorableTokenLog,
   RecordMeta,
+  SessionEvent,
+  Crew,
+  CrewCreateInput,
+  SessionListKpis,
+  Session,
 } from '@agentx/shared';
-import type { SessionEvent, Crew, CrewCreateInput, SessionListKpis, Session } from '@agentx/shared';
-import { getLogger } from '@agentx/shared';
 import { normalizeSessionUpdates } from '../session/session-field-utils.js';
 import { estimateTokensFromMessages } from '../session/session-token-utils.js';
 import { createPgCrewCatalogStore } from '../crew/postgres-crew-catalog.js';
@@ -422,6 +425,9 @@ export class PostgresStorageAdapter implements StorageAdapter {
     const inputAny = input as Record<string, unknown>;
     const id = (inputAny['id'] as string) ?? generateId();
     const now = new Date().toISOString();
+    const fallbackDay = buildListDayDivider(now);
+    const listDayKey = (inputAny['listDayKey'] as string | null) ?? fallbackDay.dayKey;
+    const listDayLabel = (inputAny['listDayLabel'] as string | null) ?? fallbackDay.dayLabel;
     const session: StorableSession = {
       id, ...input,
       parentId: (inputAny['parentId'] as string) ?? null,
@@ -433,12 +439,14 @@ export class PostgresStorageAdapter implements StorageAdapter {
       hostCrewColor: (inputAny['hostCrewColor'] as string | null) ?? null,
       hostCrewCatalogId: (inputAny['hostCrewCatalogId'] as string | null) ?? null,
       hostCrewCategoryId: (inputAny['hostCrewCategoryId'] as string | null) ?? null,
+      listDayKey,
+      listDayLabel,
       createdAt: now, updatedAt: now,
     };
     this.cache.sessions.set(id, session);
     this.write(
-      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      `INSERT INTO sessions (id,title,status,provider_id,model_id,scope_path,parent_id,token_used,token_available,context_kind,host_crew_id,host_crew_name,host_crew_callsign,host_crew_title,host_crew_color,host_crew_catalog_id,host_crew_category_id,list_day_key,list_day_label,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        ON CONFLICT (id) DO UPDATE SET
          title = EXCLUDED.title,
          status = EXCLUDED.status,
@@ -455,12 +463,15 @@ export class PostgresStorageAdapter implements StorageAdapter {
          host_crew_color = EXCLUDED.host_crew_color,
          host_crew_catalog_id = EXCLUDED.host_crew_catalog_id,
          host_crew_category_id = EXCLUDED.host_crew_category_id,
+         list_day_key = COALESCE(sessions.list_day_key, EXCLUDED.list_day_key),
+         list_day_label = COALESCE(sessions.list_day_label, EXCLUDED.list_day_label),
          updated_at = NOW()`,
       [id, input.title, input.status, input.providerId, input.modelId, input.scopePath,
        session.parentId, input.tokenUsed, input.tokenAvailable,
        session.contextKind ?? 'agent_x', session.hostCrewId ?? null,
        session.hostCrewName ?? null, session.hostCrewCallsign ?? null, session.hostCrewTitle ?? null,
        session.hostCrewColor ?? null, session.hostCrewCatalogId ?? null, session.hostCrewCategoryId ?? null,
+       session.listDayKey ?? null, session.listDayLabel ?? null,
        now, now]
     );
     return session;
@@ -488,6 +499,7 @@ export class PostgresStorageAdapter implements StorageAdapter {
       hostCrewName: 'host_crew_name', hostCrewCallsign: 'host_crew_callsign',
       hostCrewTitle: 'host_crew_title', hostCrewColor: 'host_crew_color',
       hostCrewCatalogId: 'host_crew_catalog_id', hostCrewCategoryId: 'host_crew_category_id',
+      listDayKey: 'list_day_key', listDayLabel: 'list_day_label',
     };
     for (const [key, col] of Object.entries(map)) {
       if (key in normalized) {

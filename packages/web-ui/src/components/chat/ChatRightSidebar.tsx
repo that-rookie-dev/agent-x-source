@@ -1,28 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
 import LinearProgress from '@mui/material/LinearProgress';
-import CircularProgress from '@mui/material/CircularProgress';
-import ArticleIcon from '@mui/icons-material/Article';
-import ReplayIcon from '@mui/icons-material/Replay';
-import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import GroupsIcon from '@mui/icons-material/Groups';
-import AddIcon from '@mui/icons-material/Add';
-import SearchIcon from '@mui/icons-material/Search';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import PlayCircleIcon from '@mui/icons-material/PlayCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
+import BadgeIcon from '@mui/icons-material/Badge';
 import { CheckCircle } from '../CheckCircle';
 import { colors, alphaColor } from '../../theme';
 import { crewTheme } from '../../styles/crew-theme';
 import { copyToClipboard } from '../../utils/clipboard';
 import { subagents, type SubAgentTaskInfo } from '../../api';
-import { CrewMissionCard } from '../CrewMissionCard';
 import type { SxProps } from '@mui/material/styles';
 import {
   useChatTokenContext,
@@ -30,9 +24,7 @@ import {
   useChatSessionIdentityContext,
   useChatSessionPrivacyContext,
   useChatSidebarContext,
-  useChatCrewAddContext,
   useChatSessionSettersContext,
-  useChatCrewHandlersContext,
   useChatNavigationHandlersContext,
 } from './ChatSessionProvider';
 
@@ -41,6 +33,10 @@ export interface ChatRightSidebarProps {
   sidebarSectionHeaderSx: (expanded: boolean) => SxProps;
   sidebarSectionHeaderWithDividerSx: (expanded: boolean) => SxProps;
   sidebarSectionContentSx: SxProps;
+}
+
+function isActiveCrewStatus(status: string): boolean {
+  return status === 'running' || status === 'verifying' || status === 'retrying' || status === 'blocked';
 }
 
 export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: ChatRightSidebarProps) {
@@ -53,7 +49,7 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
   } = useChatTokenContext();
   // Crew values — re-renders on crew mission/worker updates.
   const {
-    crewMissionActive, crewMissionId, crewWorkers, crewInterMessages,
+    crewMissionActive, crewWorkers,
   } = useChatCrewContext();
 
   // Session identity and privacy.
@@ -61,20 +57,13 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
   const { isCrewPrivateSession } = useChatSessionPrivacyContext();
   // Sidebar state — does NOT re-render on streaming chunks.
   const {
-    contextExpanded, contextData, rebuildingContext,
     tokenExpanded, missionExpanded, tasksExpanded,
-    todoItems, cwd,
+    todoItems,
   } = useChatSidebarContext();
-  // Crew add / search state.
-  const { crewAddOpen, crewAddQuery, crewAddResults, crewAddLoading } = useChatCrewAddContext();
   // Stable dispatch values.
   const {
-    setContextExpanded, setTokenExpanded, setMissionExpanded, setTasksExpanded,
-    setCrewAddOpen, setCrewAddQuery, setCrewAddResults,
-    pendingFolderActionRef, setFolderConsentOpen,
+    setTokenExpanded, setMissionExpanded, setTasksExpanded,
   } = useChatSessionSettersContext();
-  // Crew handlers.
-  const { handleCrewAddSearch, handleCrewAddSelect, handleCrewRemove, handleRebuildContext } = useChatCrewHandlersContext();
   // Navigation handlers.
   const { openChildSession } = useChatNavigationHandlersContext();
 
@@ -88,7 +77,8 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
     const load = async () => {
       try {
         const list = await subagents.bySession(currentSessionId);
-        if (!cancelled) setSubAgents(list);
+        // Only keep in-flight agents — completed/failed/cancelled drop out of the sidebar.
+        if (!cancelled) setSubAgents(list.filter((a) => a.status === 'running'));
       } catch {
         if (!cancelled) setSubAgents([]);
       }
@@ -98,46 +88,32 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
     return () => { cancelled = true; clearInterval(id); };
   }, [currentSessionId]);
 
+  const activeCrewWorkers = crewWorkers.filter((w) => isActiveCrewStatus(w.status));
+
   return (
     <Box sx={{
       width: '15%', minWidth: 220, flexShrink: 0, borderLeft: `1px solid ${colors.border.default}`,
       display: 'flex', flexDirection: 'column', overflow: 'auto',
     }}>
-      {/* ─── Context ─── */}
+      {/* ─── Session ID ─── */}
       <Box>
-        <Box
-          onClick={() => setContextExpanded(!contextExpanded)}
-          sx={sidebarSectionHeaderSx(contextExpanded)}
-        >
-          <ArticleIcon sx={{ fontSize: 12, color: colors.accent.cyan }} />
+        <Box sx={sidebarSectionHeaderSx(true)}>
+          <BadgeIcon sx={{ fontSize: 12, color: colors.accent.cyan }} />
           <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, letterSpacing: '1px', flex: 1 }}>
-            {contextExpanded ? '▾' : '▸'} CONTEXT
+            SESSION
           </Typography>
-          {contextData && (
-            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>{contextData.length} chars</Typography>
-          )}
-          <IconButton
-            size="small"
-            onClick={(e) => { e.stopPropagation(); handleRebuildContext(); }}
-            disabled={rebuildingContext}
-            sx={{ p: 0.25, width: 20, height: 20, color: rebuildingContext ? colors.accent.blue : colors.text.dim, '&:hover': { color: colors.accent.cyan } }}
-          >
-            <ReplayIcon sx={{ fontSize: 12, animation: rebuildingContext ? 'agentx-spin 1s linear infinite' : 'none' }} />
-          </IconButton>
         </Box>
-        {contextExpanded && (
-          <Box sx={sidebarSectionContentSx}>
-            {contextData ? (
-              <Box sx={{ bgcolor: colors.bg.tertiary, borderRadius: 0.75, p: 1, maxHeight: 300, overflow: 'auto' }}>
-                <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, whiteSpace: 'pre-wrap', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                  {contextData}
-                </Typography>
-              </Box>
-            ) : (
-              <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontStyle: 'italic' }}>No context yet</Typography>
-            )}
-          </Box>
-        )}
+        <Box sx={sidebarSectionContentSx}>
+          {currentSessionId ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <CopySessionId sessionId={currentSessionId} />
+            </Box>
+          ) : (
+            <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontStyle: 'italic' }}>
+              No active session
+            </Typography>
+          )}
+        </Box>
       </Box>
 
       {/* ─── Token usage ─── */}
@@ -204,24 +180,6 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
             {compactionCount}
           </Typography>
         </Box>
-
-        {currentSessionId && (
-          <Box sx={{ mt: 1, pt: 0.75, borderTop: `1px solid ${colors.border.subtle}` }}>
-            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, letterSpacing: '0.5px' }}>SCOPE</Typography>
-            <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, mt: 0.25, wordBreak: 'break-all', cursor: 'pointer', '&:hover': { color: colors.accent.blue } }}
-              onClick={() => { pendingFolderActionRef.current = 'changeCwd'; setFolderConsentOpen(true); }}>
-              {cwd.split('/').slice(-3).join('/') || cwd}
-            </Typography>
-          </Box>
-        )}
-        {currentSessionId && (
-          <Box sx={{ mt: 0.5, pt: 0.5, borderTop: `1px solid ${colors.border.subtle}` }}>
-            <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, letterSpacing: '0.5px' }}>SESSION</Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
-              <CopySessionId sessionId={currentSessionId} />
-            </Box>
-          </Box>
-        )}
         </Box>
         )}
       </Box>
@@ -240,96 +198,56 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
               <Box component="span" sx={{ width: 4, height: 4, borderRadius: '50%', bgcolor: crewTheme.accent.signal, boxShadow: `0 0 5px ${crewTheme.accent.signal}` }} />
             )}
           </Typography>
-          {crewWorkers.length > 0 && (
-            <Chip size="small" label={crewWorkers.length} sx={{ fontSize: '0.45rem', height: 15 }} />
+          {activeCrewWorkers.length > 0 && (
+            <Chip size="small" label={String(activeCrewWorkers.length)} sx={{ fontSize: '0.45rem', height: 15 }} />
           )}
-          <Tooltip title="Add crew member" arrow>
-            <IconButton
-              size="small"
-              onClick={(e) => { e.stopPropagation(); setCrewAddOpen(!crewAddOpen); setCrewAddQuery(''); setCrewAddResults([]); }}
-              sx={{ p: 0.25, width: 20, height: 20, color: crewAddOpen ? crewTheme.accent.tactical : colors.text.dim, '&:hover': { color: crewTheme.accent.tactical } }}
-            >
-              <AddIcon sx={{ fontSize: 12 }} />
-            </IconButton>
-          </Tooltip>
         </Box>
-
         {missionExpanded && (
         <Box sx={sidebarSectionContentSx}>
-          {/* Manual add-crew search */}
-          {crewAddOpen && (
-            <Box sx={{ mb: 1, position: 'relative' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, bgcolor: colors.bg.tertiary, borderRadius: 0.75, px: 0.75, py: 0.4 }}>
-                <SearchIcon sx={{ fontSize: 11, color: colors.text.dim }} />
-                <input
-                  autoFocus
-                  value={crewAddQuery}
-                  onChange={(e) => handleCrewAddSearch(e.target.value)}
-                  placeholder="Search crew hub…"
-                  style={{
-                    flex: 1, border: 'none', outline: 'none', background: 'transparent',
-                    fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
-                    color: colors.text.secondary,
-                  }}
-                />
-                {crewAddLoading && <CircularProgress size={9} sx={{ color: colors.text.dim }} />}
-              </Box>
-              {crewAddResults.length > 0 && (
-                <Box sx={{
-                  mt: 0.25, maxHeight: 160, overflowY: 'auto',
-                  border: `1px solid ${colors.border.default}`, borderRadius: 0.75,
-                  bgcolor: colors.bg.secondary,
-                }}>
-                  {crewAddResults.map((entry) => (
+          {activeCrewWorkers.length === 0 ? (
+            <Typography sx={{ fontSize: '0.55rem', color: colors.text.tertiary, py: 1 }}>
+              No running crew members for this session.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              {activeCrewWorkers.map((w) => {
+                const label = w.callsign
+                  ? `@${w.callsign}${w.crewName ? ` · ${w.crewName}` : ''}`
+                  : (w.crewName || w.workerId.slice(0, 8));
+                const subtask = (w.message || '').trim();
+                const tip = subtask || label;
+                return (
+                  <Tooltip
+                    key={w.workerId}
+                    title={tip.slice(0, 72) + (tip.length > 72 ? '…' : '')}
+                    placement="left"
+                    arrow
+                    enterDelay={400}
+                  >
                     <Box
-                      key={entry.id}
-                      onClick={() => handleCrewAddSelect(entry)}
+                      onClick={() => openChildSession?.({
+                        childSessionId: w.workerId,
+                        label: label.slice(0, 40),
+                        kind: 'crew_worker',
+                      })}
                       sx={{
-                        px: 0.75, py: 0.5, cursor: 'pointer',
-                        borderBottom: `1px solid ${colors.border.subtle}`,
-                        '&:last-child': { borderBottom: 'none' },
-                        '&:hover': { bgcolor: colors.bg.tertiary },
+                        display: 'flex', alignItems: 'center', gap: 0.5, py: 0.4, px: 0.5, borderRadius: '4px',
+                        cursor: 'pointer',
+                        '&:hover': { bgcolor: alphaColor(colors.bg.primary, 0.5) },
                       }}
                     >
-                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary }}>
-                        @{entry.callsign}
+                      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.green, flexShrink: 0 }} />
+                      <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {subtask ? `${label.slice(0, 18)}${label.length > 18 ? '…' : ''} — ${subtask.slice(0, 28)}` : label.slice(0, 40)}
                       </Typography>
-                      <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, mt: 0.15 }}>
-                        {entry.title}
+                      <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, textTransform: 'uppercase' }}>
+                        running
                       </Typography>
                     </Box>
-                  ))}
-                </Box>
-              )}
-              {crewAddQuery.trim().length >= 2 && !crewAddLoading && crewAddResults.length === 0 && (
-                <Typography sx={{ fontSize: '0.48rem', color: colors.text.dim, fontStyle: 'italic', px: 0.75, py: 0.5 }}>
-                  No matches
-                </Typography>
-              )}
+                  </Tooltip>
+                );
+              })}
             </Box>
-          )}
-
-          {/* Worker list + comms (embedded, header-less) */}
-          <CrewMissionCard
-            workers={crewWorkers}
-            missionActive={crewMissionActive}
-            missionId={crewMissionId}
-            interMessages={crewInterMessages}
-            placement="embedded"
-            showHeader={false}
-            onViewWorker={(workerId, crewName) => openChildSession({
-              childSessionId: workerId,
-              label: crewName,
-              kind: 'crew_worker',
-            })}
-            onRemoveWorker={handleCrewRemove}
-          />
-
-          {/* Empty state */}
-          {crewWorkers.length === 0 && !crewMissionActive && (
-            <Typography sx={{ fontSize: '0.52rem', color: colors.text.dim, fontStyle: 'italic', textAlign: 'center', py: 1, fontFamily: "'JetBrains Mono', monospace" }}>
-              No crew assigned — use + to add a specialist
-            </Typography>
           )}
         </Box>
         )}
@@ -348,41 +266,51 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
             {subAgentsExpanded ? '▾' : '▸'} SUB-AGENTS
           </Typography>
           {subAgents.length > 0 && (
-            <Chip size="small" label={`${subAgents.filter((a) => a.status === 'running').length}/${subAgents.length}`} sx={{ fontSize: '0.45rem', height: 15 }} />
+            <Chip size="small" label={String(subAgents.length)} sx={{ fontSize: '0.45rem', height: 15 }} />
           )}
         </Box>
         {subAgentsExpanded && (
         <Box sx={sidebarSectionContentSx}>
           {subAgents.length === 0 ? (
             <Typography sx={{ fontSize: '0.55rem', color: colors.text.tertiary, py: 1 }}>
-              No active sub-agents for this session.
+              No running sub-agents for this session.
             </Typography>
           ) : (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-              {subAgents.map((a) => {
-                const isRunning = a.status === 'running';
-                const color = isRunning ? colors.accent.green : a.status === 'failed' || a.status === 'cancelled' ? colors.accent.red : a.status === 'completed' ? colors.text.dim : colors.accent.orange;
-                return (
-                  <Tooltip key={a.id} title={a.instruction || ''} placement="left" arrow>
+              {subAgents.map((a) => (
+                  <Tooltip
+                    key={a.id}
+                    title={(a.instruction || a.id).slice(0, 72) + ((a.instruction?.length ?? 0) > 72 ? '…' : '')}
+                    placement="left"
+                    arrow
+                    enterDelay={400}
+                  >
                     <Box
-                      onClick={() => a.childSessionId && openChildSession?.({ childSessionId: a.childSessionId, label: a.instruction?.slice(0, 40) || a.id.slice(0, 8), kind: 'sub_agent' })}
+                      onClick={() => {
+                        const sid = a.childSessionId || a.id;
+                        if (!sid) return;
+                        openChildSession?.({
+                          childSessionId: sid,
+                          label: a.instruction?.slice(0, 40) || a.id.slice(0, 8),
+                          kind: 'sub_agent',
+                        });
+                      }}
                       sx={{
                         display: 'flex', alignItems: 'center', gap: 0.5, py: 0.4, px: 0.5, borderRadius: '4px',
-                        cursor: a.childSessionId ? 'pointer' : 'default',
-                        '&:hover': a.childSessionId ? { bgcolor: alphaColor(colors.bg.primary, 0.5) } : undefined,
+                        cursor: 'pointer',
+                        '&:hover': { bgcolor: alphaColor(colors.bg.primary, 0.5) },
                       }}
                     >
-                      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: color, flexShrink: 0 }} />
+                      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.green, flexShrink: 0 }} />
                       <Typography sx={{ fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.secondary, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {a.instruction?.slice(0, 40) || a.id.slice(0, 8)}
                       </Typography>
                       <Typography sx={{ fontSize: '0.5rem', fontFamily: "'JetBrains Mono', monospace", color: colors.text.dim, textTransform: 'uppercase' }}>
-                        {a.status}
+                        running
                       </Typography>
                     </Box>
                   </Tooltip>
-                );
-              })}
+              ))}
             </Box>
           )}
         </Box>
@@ -390,8 +318,8 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
       </Box>
       )}
 
-      {/* ─── Tasks ─── */}
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+      {/* ─── Tasks (live todo_write checklist) ─── */}
+      <Box sx={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <Box
           onClick={() => setTasksExpanded(!tasksExpanded)}
           sx={sidebarSectionHeaderWithDividerSx(tasksExpanded)}
@@ -401,38 +329,100 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
             {tasksExpanded ? '▾' : '▸'} TASKS
           </Typography>
           {todoItems.length > 0 && (
-            <Chip size="small" label={`${todoItems.filter(t => t.status === 'completed').length}/${todoItems.length}`} sx={{ fontSize: '0.45rem', height: 15 }} />
+            <Chip
+              size="small"
+              label={`${todoItems.filter((t) => t.status === 'completed').length}/${todoItems.length}`}
+              sx={{ fontSize: '0.45rem', height: 15 }}
+            />
           )}
         </Box>
         {tasksExpanded && (
-        <Box sx={sidebarSectionContentSx}>
-
-        {todoItems.map((item) => (
-          <Box key={item.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.3 }}>
-            {item.status === 'completed' && <CheckCircle size={10} color={colors.accent.green} />}
-            {item.status === 'in-progress' && <PlayCircleIcon sx={{ fontSize: 10, color: colors.accent.orange }} />}
-            {item.status === 'not-started' && <RadioButtonUncheckedIcon sx={{ fontSize: 10, color: colors.text.dim }} />}
-            <Typography sx={{
-              fontSize: '0.55rem', color: item.status === 'completed' ? colors.text.dim : colors.text.secondary,
-              textDecoration: item.status === 'completed' ? 'line-through' : 'none',
-              lineHeight: 1.3,
-            }}>
-              {item.title}
-            </Typography>
+          <Box sx={sidebarSectionContentSx}>
+            {todoItems.length === 0 ? (
+              <Typography sx={{ color: colors.text.dim, fontSize: '0.55rem', textAlign: 'center', mt: 2, px: 0.5 }}>
+                Task list appears when the agent starts a plan.
+              </Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.35 }}>
+                {todoItems.map((item) => {
+                  const ongoing = item.status === 'in-progress';
+                  const done = item.status === 'completed';
+                  return (
+                    <Box
+                      key={item.id}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.6,
+                        py: 0.35,
+                        px: 0.4,
+                        borderRadius: '4px',
+                        bgcolor: ongoing ? alphaColor(colors.accent.orange, 0.12) : 'transparent',
+                        minWidth: 0,
+                      }}
+                    >
+                      <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+                        {done && <CheckCircle size={11} color={colors.accent.green} />}
+                        {ongoing && <PlayCircleIcon sx={{ fontSize: 12, color: colors.accent.orange }} />}
+                        {!done && !ongoing && <RadioButtonUncheckedIcon sx={{ fontSize: 12, color: colors.text.dim }} />}
+                      </Box>
+                      <TaskHeading title={item.title} done={done} ongoing={ongoing} />
+                    </Box>
+                  );
+                })}
+              </Box>
+            )}
           </Box>
-        ))}
-
-        {todoItems.length === 0 && (
-          <Typography sx={{ color: colors.text.dim, fontSize: '0.55rem', textAlign: 'center', mt: 3 }}>
-            No active tasks
-          </Typography>
         )}
       </Box>
-      )}
-    </Box>
     </Box>
   );
 });
+
+function TaskHeading({ title, done, ongoing }: { title: string; done: boolean; ongoing: boolean }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <Box
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+        '@keyframes agentx-task-marquee': {
+          '0%': { transform: 'translateX(0)' },
+          '100%': { transform: 'translateX(-50%)' },
+        },
+      }}
+    >
+      <Typography
+        component="span"
+        sx={{
+          display: 'inline-block',
+          fontSize: '0.55rem',
+          lineHeight: 1.3,
+          color: done ? colors.text.dim : colors.text.secondary,
+          fontWeight: ongoing ? 600 : 400,
+          textDecoration: done ? 'line-through' : 'none',
+          whiteSpace: 'nowrap',
+          ...(hover
+            ? {
+                animation: 'agentx-task-marquee 7s linear infinite',
+                paddingRight: '2em',
+              }
+            : {
+                maxWidth: '100%',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }),
+        }}
+      >
+        {hover ? `${title}\u00A0\u00A0\u00A0${title}` : title}
+      </Typography>
+    </Box>
+  );
+}
 
 function CopySessionId({ sessionId }: { sessionId: string }) {
   const [copied, setCopied] = useState(false);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeAssistantMarkdown, repairMarkdownTables, isPlainTextMarkdown } from '../src/chat/markdown-normalize';
+import { normalizeAssistantMarkdown, repairMarkdownTables, isPlainTextMarkdown, isLikelyPlainProse } from '../src/chat/markdown-normalize';
 import { expandCollapsedTreeLine, repairTreeDiagrams } from '../src/chat/tree-diagram';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -163,6 +163,14 @@ On first platform startup: ├── Detect if Vosk + Piper are installed`;
     const repaired = repairTreeDiagrams(collapsed);
     expect(repaired).toContain('```tree');
     expect(repaired.split('\n').filter((l) => l.includes('├──')).length).toBeGreaterThan(2);
+  });
+});
+
+describe('isLikelyPlainProse', () => {
+  it('matches short conversational lines without normalizing', () => {
+    expect(isLikelyPlainProse('Ah — the tool appended a comment to the CSS.')).toBe(true);
+    expect(isLikelyPlainProse('```js\nconst x = 1\n```')).toBe(false);
+    expect(isLikelyPlainProse('## Report')).toBe(false);
   });
 });
 

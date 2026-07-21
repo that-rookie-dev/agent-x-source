@@ -30,6 +30,7 @@ import {
   createNode as createNodeImpl,
   bindEdge as bindEdgeImpl,
   fireNeuron as fireNeuronImpl,
+  fireNeurons as fireNeuronsImpl,
   findNodesBySessionAndCategory as findNodesBySessionAndCategoryImpl,
   getNode as getNodeImpl,
   hasChatMemoryTurn as hasChatMemoryTurnImpl,
@@ -38,6 +39,8 @@ import {
 import type { NodeCrudContext } from './fabric-node-crud.js';
 import {
   vectorSearch as vectorSearchImpl,
+  lexicalSearch as lexicalSearchImpl,
+  hybridSearch as hybridSearchImpl,
   searchWeighted as searchWeightedImpl,
   assembleContext as assembleContextImpl,
   findDuplicate as findDuplicateImpl,
@@ -249,6 +252,7 @@ export class MemoryFabric {
       pool: this.pool,
       isHalfvecAvailable: () => this.isHalfvecAvailable(),
       fireNeuron: (nodeId: string) => this.fireNeuron(nodeId),
+      fireNeurons: (nodeIds: string[]) => this.fireNeurons(nodeIds),
       graphWalk: (options: GraphWalkOptions) => this.graphWalk(options),
     };
   }
@@ -401,6 +405,13 @@ export class MemoryFabric {
     getGlobalBrainEventStreamer().emitNeuronActivated({ nodeIds: [nodeId] });
   }
 
+  async fireNeurons(nodeIds: string[]): Promise<void> {
+    const ids = [...new Set(nodeIds.filter(Boolean))];
+    if (!ids.length) return;
+    await fireNeuronsImpl(this.nodeCrudCtx(), ids);
+    getGlobalBrainEventStreamer().emitNeuronActivated({ nodeIds: ids });
+  }
+
   /**
    * Find nodes by session ID and category. Used to check if a session hub
    * already exists before creating a duplicate (survives server restarts).
@@ -415,6 +426,21 @@ export class MemoryFabric {
 
   async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {}): Promise<MemoryNode[]> {
     return vectorSearchImpl(this.searchCtx(), embedding, options);
+  }
+
+  async lexicalSearch(
+    query: string,
+    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {},
+  ): Promise<MemoryNode[]> {
+    return lexicalSearchImpl(this.searchCtx(), query, options);
+  }
+
+  async hybridSearch(
+    embedding: number[],
+    query: string,
+    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; vectorLimit?: number; lexicalLimit?: number } = {},
+  ): Promise<MemoryNode[]> {
+    return hybridSearchImpl(this.searchCtx(), embedding, query, options);
   }
 
   /**

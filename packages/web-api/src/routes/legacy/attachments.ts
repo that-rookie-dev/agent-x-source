@@ -1,10 +1,54 @@
 import { Router } from 'express';
+import { basename } from 'node:path';
 import { getAttachmentService } from '@agentx/engine';
-import { getLogger } from '@agentx/shared';
+import { getLogger, isPathInsideRoot } from '@agentx/shared';
+import { getActiveWorkspacePath } from '../../workspace.js';
 
 export function createAttachmentsRouter(): Router {
   const r = Router();
   const service = getAttachmentService();
+
+  /** Register a workspace file for preview/download (idempotent by absolute path). */
+  r.post('/api/attachments/register-workspace', async (req, res) => {
+    try {
+      const { originalPath, filename, mimeType, sessionId } = req.body as {
+        originalPath?: string;
+        filename?: string;
+        mimeType?: string;
+        sessionId?: string;
+      };
+      if (!originalPath || typeof originalPath !== 'string') {
+        res.status(422).json({ error: 'originalPath is required' });
+        return;
+      }
+      const workspaceRoot = getActiveWorkspacePath();
+      if (!isPathInsideRoot(originalPath, workspaceRoot)) {
+        res.status(403).json({ error: 'Path is outside the active workspace' });
+        return;
+      }
+      const existing = (
+        service as typeof service & {
+          findByOriginalPath?: (path: string) => ReturnType<typeof service.getAttachment>;
+        }
+      ).findByOriginalPath?.(originalPath);
+      if (existing) {
+        res.json({ ok: true, attachment: existing });
+        return;
+      }
+      const attachment = await service.registerAttachment({
+        sessionId: sessionId || 'preview',
+        filename: filename || basename(originalPath),
+        mimeType,
+        source: 'workspace',
+        originalPath,
+      });
+      res.json({ ok: true, attachment });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      getLogger().error('ATTACHMENT_REGISTER_WORKSPACE', message);
+      res.status(400).json({ error: message });
+    }
+  });
 
   r.post('/api/sessions/:sessionId/attachments', async (req, res) => {
     try {

@@ -65,9 +65,52 @@ export const ragConfigSchema = z.object({
   minScore: z.number().default(0.0),
 }).optional();
 
+/** Grounded retrieval knobs (see GROUNDED_EMBEDDING_RETRIEVAL_PLAN.md / RETRIEVAL_DEFAULTS). */
+export const retrievalConfigSchema = z.object({
+  chunkTargetChars: z.number().int().min(200).max(8000).default(1200),
+  chunkOverlapChars: z.number().int().min(0).max(2000).default(120),
+  minScoreMemory: z.number().min(0).max(1).default(0.42),
+  minScoreKb: z.number().min(0).max(1).default(0.40),
+  vectorOverFetch: z.number().int().min(5).max(200).default(40),
+  rerankKeep: z.number().int().min(1).max(50).default(8),
+  injectKeep: z.number().int().min(1).max(30).default(6),
+  maxEvidenceCharsFull: z.number().int().min(500).max(20000).default(4000),
+  maxEvidenceCharsCompact: z.number().int().min(200).max(8000).default(1500),
+  maxEvidenceLineChars: z.number().int().min(100).max(2000).default(500),
+  maxChunksPerSource: z.number().int().min(1).max(20).default(3),
+  hybridEnabled: z.boolean().default(true),
+  rerankEnabled: z.boolean().default(true),
+  evidenceOnlyPrompt: z.boolean().default(true),
+  graphExpandDepth: z.number().int().min(0).max(2).default(1),
+  similarityEdgeMinScore: z.number().min(0).max(1).default(0.82),
+  similarityEdgeMaxDegree: z.number().int().min(0).max(20).default(5),
+}).optional();
+
 export { notificationChannelsConfigSchema, toolsConfigSchema } from '@agentx/shared';
 
-export const agentXConfigSchema = z.object({
+function migrateConfigPerformanceKey(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = { ...(raw as Record<string, unknown>) };
+  const legacyRuntime = obj['runtime'];
+  const performance = obj['performance'];
+  if (performance == null && legacyRuntime != null && typeof legacyRuntime === 'object') {
+    const rt = { ...(legacyRuntime as Record<string, unknown>) };
+    if (rt['budgetPercent'] == null && typeof rt['cpuBudgetPercent'] === 'number') {
+      rt['budgetPercent'] = rt['cpuBudgetPercent'];
+    }
+    obj['performance'] = rt;
+  } else if (performance != null && typeof performance === 'object') {
+    const perf = { ...(performance as Record<string, unknown>) };
+    if (perf['budgetPercent'] == null && typeof perf['cpuBudgetPercent'] === 'number') {
+      perf['budgetPercent'] = perf['cpuBudgetPercent'];
+    }
+    obj['performance'] = perf;
+  }
+  delete obj['runtime'];
+  return obj;
+}
+
+export const agentXConfigSchema = z.preprocess(migrateConfigPerformanceKey, z.object({
   provider: providerSettingsSchema,
   ui: uiSettingsSchema.default({}),
   organization: organizationConfigSchema.default(null),
@@ -75,13 +118,17 @@ export const agentXConfigSchema = z.object({
   timezone: z.string().optional(),
   user: userConfigSchema,
   setupComplete: z.boolean().optional(),
+  workspacePath: z.string().min(1).optional(),
   rag: ragConfigSchema,
+  retrieval: retrievalConfigSchema,
   tools: toolsConfigSchema,
   channels: notificationChannelsConfigSchema,
   voice: voiceConfigSchema,
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
-  runtime: z.object({
+  performance: z.object({
+    preset: z.enum(['quiet', 'balanced', 'performance', 'max']).optional(),
+    budgetPercent: z.number().int().min(10).max(80).optional(),
     cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
     lazyStorageCache: z.boolean().optional(),
     backgroundConcurrency: z.number().int().min(1).max(8).optional(),
@@ -109,6 +156,6 @@ export const agentXConfigSchema = z.object({
       comment: z.string().optional(),
     }).passthrough()).optional(),
   }).passthrough()).optional(),
-});
+}));
 
 export type ValidatedConfig = z.infer<typeof agentXConfigSchema>;

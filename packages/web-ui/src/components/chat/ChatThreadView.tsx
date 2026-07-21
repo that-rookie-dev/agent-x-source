@@ -69,6 +69,7 @@ export interface ChatThreadViewProps {
   streaming: boolean;
   loadingOlderMessages: boolean;
   hasOlderMessages: boolean;
+  onLoadOlderMessages: () => void;
   loadingSteps: Array<{ id: string; label: string; status: string }> | null;
   freezeMessageLayout: boolean;
   pendingFeedbackMessageId: string | null;
@@ -81,6 +82,7 @@ export interface ChatThreadViewProps {
   onCrewRosterPickerSubmit: (messageId: string, selected: CrewMatchCandidate[]) => void;
   onCrewRosterPickerSkip: (messageId: string, dismissForSession?: boolean) => void;
   onViewCrewDossier: (candidate: CrewMatchCandidate) => void;
+  onViewCrewByCallsign?: (callsign: string, name?: string) => void;
   onTurnFeedback: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
   onSaveMarkdown: (message: UIMessage) => void;
 }
@@ -93,6 +95,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
     streaming,
     loadingOlderMessages,
     hasOlderMessages,
+    onLoadOlderMessages,
     loadingSteps,
     freezeMessageLayout,
     pendingFeedbackMessageId,
@@ -105,6 +108,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
     onCrewRosterPickerSubmit,
     onCrewRosterPickerSkip,
     onViewCrewDossier,
+    onViewCrewByCallsign,
     onTurnFeedback,
     onSaveMarkdown,
   } = props;
@@ -166,7 +170,30 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
           {loadingOlderMessages ? (
             <CircularProgress size={14} sx={{ color: colors.text.dim }} />
           ) : (
-            <Typography sx={{ fontSize: '0.6rem', color: colors.text.dim }}>Scroll up for older messages</Typography>
+            <Box
+              component="button"
+              type="button"
+              onClick={onLoadOlderMessages}
+              sx={{
+                border: `1px solid ${colors.border.default}`,
+                bgcolor: colors.bg.secondary,
+                color: colors.text.secondary,
+                borderRadius: '999px',
+                px: 1.25,
+                py: 0.35,
+                fontSize: '0.6rem',
+                fontFamily: "'JetBrains Mono', monospace",
+                letterSpacing: '0.3px',
+                cursor: 'pointer',
+                '&:hover': {
+                  bgcolor: colors.bg.tertiary,
+                  color: colors.text.primary,
+                  borderColor: colors.border.strong,
+                },
+              }}
+            >
+              Load more messages
+            </Box>
           )}
         </Box>
       )}
@@ -182,6 +209,7 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
         onCrewRosterPickerSubmit={onCrewRosterPickerSubmit}
         onCrewRosterPickerSkip={onCrewRosterPickerSkip}
         onViewCrewDossier={onViewCrewDossier}
+        onViewCrewByCallsign={onViewCrewByCallsign}
         pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
         onTurnFeedback={onTurnFeedback}
         onSaveMarkdown={onSaveMarkdown}
@@ -204,11 +232,14 @@ function threadPropsEqual(a: ChatThreadViewProps, b: ChatThreadViewProps): boole
     && a.streaming === b.streaming
     && a.loadingOlderMessages === b.loadingOlderMessages
     && a.hasOlderMessages === b.hasOlderMessages
+    && a.onLoadOlderMessages === b.onLoadOlderMessages
     && a.loadingSteps === b.loadingSteps
     && a.freezeMessageLayout === b.freezeMessageLayout
     && a.pendingFeedbackMessageId === b.pendingFeedbackMessageId
     && a.feedbackSubmitting === b.feedbackSubmitting
-    && a.turnActivityStage === b.turnActivityStage;
+    && a.turnActivityStage === b.turnActivityStage
+    && a.onViewCrewByCallsign === b.onViewCrewByCallsign
+    && a.onViewCrewDossier === b.onViewCrewDossier;
 }
 
 export const ChatThreadView = memo(ChatThreadViewComponent, threadPropsEqual);

@@ -41,6 +41,14 @@ export interface MessageMetadata {
   provider?: string;
   /** Model used for the response. */
   model?: string;
+  /**
+   * Call-transcript divider that belongs immediately before this spoken turn.
+   * Persisted at write time — clients render it without recomputing.
+   */
+  callDivider?: {
+    variant: 'daytime' | 'time' | 'duration';
+    label: string;
+  };
 }
 
 export type InputType =

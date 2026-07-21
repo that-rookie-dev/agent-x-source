@@ -26,6 +26,10 @@ export interface StorableSession extends RecordMeta {
   hostCrewColor?: string | null;
   hostCrewCatalogId?: string | null;
   hostCrewCategoryId?: string | null;
+  /** Persisted list-section day key (`YYYY-MM-DD`), set at create. */
+  listDayKey?: string | null;
+  /** Persisted absolute day label for call-history (and other session) list dividers. */
+  listDayLabel?: string | null;
   tokenUsed: number;
   tokenAvailable: number;
   compactionCount?: number;

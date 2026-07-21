@@ -21,12 +21,18 @@ export interface SubAgent {
   result?: string;
   toolCalls?: ToolCall[];
   kind?: 'sub_agent' | 'crew_worker';
+  /** True once bound to a real child session id (prevents parallel-spawn remapping). */
+  sessionBound?: boolean;
+  /** Live activity label shown inside the sub-agent drawer (not the main turn loader). */
+  currentStep?: string;
+  thinking?: string;
+  streamContent?: string;
 }
 
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
 export interface PartEntry extends Record<string, unknown> {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart' | 'thinking';
   id: string;
   content?: string;
   tool?: ToolCall;
@@ -51,7 +57,14 @@ export interface UIMessage extends ChatMessage {
   todos?: TodoItem[];
   streaming?: boolean;
   plan?: string[];
-  attachments?: { id: string; name: string; mimeType?: string }[];
+  attachments?: {
+    id: string;
+    name: string;
+    mimeType?: string;
+    placement?: 'chip' | 'inline';
+    /** Absolute workspace path for @file mentions (preview registration). */
+    originalPath?: string;
+  }[];
   turnTokens?: number;
   voiceTimings?: {
     sttMs: number;
@@ -86,12 +99,21 @@ export interface FileAttachment {
   id: string;
   name: string;
   mimeType: string;
-  /** base64 data URL for preview / upload. */
-  dataUrl: string;
+  /** base64 data URL for preview / upload (uploads only). */
+  dataUrl?: string;
+  /** Absolute workspace path — sent as TurnAttachment.originalPath (no upload). */
+  originalPath?: string;
   /** server attachment id once uploaded. */
   storageId?: string;
   /** true when upload has completed. */
   uploaded?: boolean;
+  /**
+   * `chip` — + / drag-drop: shown above the input, not inlined in text.
+   * `inline` — @ mention: capsule chip inside the composer text.
+   */
+  placement?: 'chip' | 'inline';
+  /** Workspace folder mention vs file (default file). */
+  kind?: 'file' | 'folder';
 }
 
 export type ChatView = 'sessions' | 'chat';

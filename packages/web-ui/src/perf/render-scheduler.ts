@@ -42,6 +42,7 @@ const P1_LIVE = new Set([
   'operation_command_executed',
   'child_session_started',
   'agent_spawned',
+  'background_task_complete',
   'decision_made',
 ]);
 

@@ -47,6 +47,7 @@ import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/
 import { WizardVoiceStep } from '../components/setup/WizardVoiceStep';
 import { WizardNeuralStep } from '../components/setup/WizardNeuralStep';
 import { WizardTelegramStep } from '../components/setup/WizardTelegramStep';
+import { WorkspaceCard } from '../components/settings/WorkspaceCard';
 import { WizardCheckMark, WizardHintTag, WizardStepHeader } from '../components/setup/wizard-ui';
 import {
   wizardBackBtnSx,
@@ -1353,7 +1354,7 @@ export function SetupWizard() {
               )}
 
               {step === 11 && (
-                <Box sx={{ textAlign: 'center', maxWidth: 520, mx: 'auto' }}>
+                <Box sx={{ textAlign: 'center', maxWidth: 560, mx: 'auto' }}>
                   <CheckCircle size={64} color={wizardTheme.accentOk} sx={{ mb: 2 }} />
                   <WizardStepHeader codename="MODULE · COMPLETE" title="Setup Complete" subtitle="Your Agent-X instance is ready." />
                   <Box sx={{ textAlign: 'left', ...wizardPanelSx, mb: 3, fontFamily: WIZARD_MONO, fontSize: '0.75rem' }}>
@@ -1370,6 +1371,14 @@ export function SetupWizard() {
                     <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>
                     <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Agent: {personaName || '(not set)'}</Typography>
+                  </Box>
+                  <Box sx={{ textAlign: 'left', ...wizardPanelSx, mb: 2 }}>
+                    <WizardStepHeader
+                      codename="MODULE · WORKSPACE"
+                      title="Agent-X Workspace"
+                      subtitle="One folder for all file access. Built-in default needs no permission — pick your project folder if you want."
+                    />
+                    <WorkspaceCard compact />
                   </Box>
                 </Box>
               )}

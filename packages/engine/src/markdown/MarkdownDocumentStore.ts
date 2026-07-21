@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  buildListDayDivider,
   generateId,
   getMarkdownDocumentsDir,
   deriveMarkdownTitle,
@@ -45,6 +46,8 @@ function rowToRecord(row: Record<string, unknown>): MarkdownDocumentRecord {
     sourceRole: (row['source_role'] as MarkdownDocumentRecord['sourceRole']) ?? null,
     createdAt: new Date(row['created_at'] as string).toISOString(),
     updatedAt: new Date(row['updated_at'] as string).toISOString(),
+    listDayKey: (row['list_day_key'] as string | null | undefined) ?? null,
+    listDayLabel: (row['list_day_label'] as string | null | undefined) ?? null,
   };
 }
 
@@ -105,10 +108,11 @@ export class MarkdownDocumentStore {
 
     const excerpt = deriveExcerpt(markdown);
     const now = new Date().toISOString();
+    const { dayKey: listDayKey, dayLabel: listDayLabel } = buildListDayDivider(now);
 
     await this.pool.query(
-      `INSERT INTO canvases (id, session_id, message_id, title, excerpt, file_path, content_format, source_role, compile_error, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9)`,
+      `INSERT INTO markdowns (id, session_id, message_id, title, excerpt, file_path, content_format, source_role, compile_error, created_at, updated_at, list_day_key, list_day_label)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9, $10, $11)`,
       [
         id,
         input.sessionId,
@@ -119,6 +123,8 @@ export class MarkdownDocumentStore {
         'markdown',
         input.sourceRole ?? null,
         now,
+        listDayKey,
+        listDayLabel,
       ],
     );
 
@@ -133,6 +139,8 @@ export class MarkdownDocumentStore {
       sourceRole: input.sourceRole ?? null,
       createdAt: now,
       updatedAt: now,
+      listDayKey,
+      listDayLabel,
     };
   }
 
@@ -140,7 +148,7 @@ export class MarkdownDocumentStore {
     const lim = Math.max(1, Math.min(200, limit));
     const off = Math.max(0, offset);
     const { rows } = await this.pool.query(
-      `SELECT * FROM canvases ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT * FROM markdowns ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       [lim, off],
     );
     return rows.map(rowToRecord);
@@ -149,14 +157,14 @@ export class MarkdownDocumentStore {
   async listForSession(sessionId: string, limit = 50): Promise<MarkdownDocumentRecord[]> {
     const lim = Math.max(1, Math.min(200, limit));
     const { rows } = await this.pool.query(
-      `SELECT * FROM canvases WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      `SELECT * FROM markdowns WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [sessionId, lim],
     );
     return rows.map(rowToRecord);
   }
 
   async get(id: string): Promise<MarkdownDocumentRecord | null> {
-    const { rows } = await this.pool.query(`SELECT * FROM canvases WHERE id = $1`, [id]);
+    const { rows } = await this.pool.query(`SELECT * FROM markdowns WHERE id = $1`, [id]);
     if (rows.length === 0) return null;
     return rowToRecord(rows[0]!);
   }
@@ -180,7 +188,7 @@ export class MarkdownDocumentStore {
     if (existsSync(absDir)) {
       try { rmSync(absDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
-    await this.pool.query(`DELETE FROM canvases WHERE id = $1`, [id]);
+    await this.pool.query(`DELETE FROM markdowns WHERE id = $1`, [id]);
     return true;
   }
 }

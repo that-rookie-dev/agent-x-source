@@ -7,7 +7,8 @@ import Tooltip from '@mui/material/Tooltip';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
 import InputBase from '@mui/material/InputBase';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import UndoIcon from '@mui/icons-material/Undo';
 import SecurityIcon from '@mui/icons-material/Security';
 import { settingsPermissionTools, settingsPermissions, type PermissionToolEntry } from '../../api';
 import {
@@ -202,7 +203,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
             onClick={resetToDefault}
             disabled={overriddenCount === 0 || resetting}
             sx={settingsBtnDangerSx}
-            startIcon={<RefreshIcon sx={{ fontSize: 14 }} />}
+            startIcon={<RestartAltIcon sx={{ fontSize: 14 }} />}
           >
             {resetting ? 'Resetting…' : 'Reset to Default'}
           </Button>
@@ -411,9 +412,15 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
                         <IconButton
                           size="small"
                           onClick={() => resetTool(tool.id)}
-                          sx={{ color: settingsTheme.text.dim, '&:hover': { color: settingsTheme.accent.hud }, padding: '2px' }}
+                          sx={{
+                            color: settingsTheme.text.dim,
+                            border: `1px solid ${settingsTheme.border.default}`,
+                            borderRadius: '4px',
+                            padding: '2px',
+                            '&:hover': { color: settingsTheme.accent.hud, borderColor: settingsTheme.accent.hud },
+                          }}
                         >
-                          <RefreshIcon sx={{ fontSize: 12 }} />
+                          <UndoIcon sx={{ fontSize: 12 }} />
                         </IconButton>
                       </Tooltip>
                     )}

@@ -4,7 +4,9 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import type { Crew, Session } from '@agentx/shared';
 import {
+  buildDurationDividerMeta,
   crewVoiceSessionId,
+  encodeCallDividerContent,
   getDataDir,
   getLogger,
   isCrewVoiceSessionId,
@@ -12,6 +14,8 @@ import {
 } from '@agentx/shared';
 import { getEngine } from './engine.js';
 import { getSessionDir } from './api-helpers.js';
+import { persistMessageDirect } from './ws.js';
+import { getActiveWorkspacePath } from './workspace.js';
 
 function crewInfo(crew: Crew) {
   return {
@@ -51,14 +55,8 @@ function hostInputFromCrew(crew: Crew, extras?: { categoryId?: string }) {
   };
 }
 
-function resolveScopePath(scopePath?: string): string {
-  if (scopePath?.trim()) return scopePath.trim();
-  try {
-    const cfg = getEngine().configManager.load();
-    const fromCfg = (cfg as { workspacePath?: string }).workspacePath;
-    if (fromCfg?.trim()) return fromCfg.trim();
-  } catch { /* ignore */ }
-  return process.cwd();
+function resolveScopePath(_scopePath?: string): string {
+  return getActiveWorkspacePath();
 }
 
 function sessionToInfo(session: Session, crew?: Crew) {
@@ -355,6 +353,8 @@ export async function listCrewChatVoiceSessions(_req: Request, res: Response): P
         messageCount,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
+        listDayKey: s.listDayKey ?? null,
+        listDayLabel: s.listDayLabel ?? null,
       };
     });
 
@@ -362,6 +362,48 @@ export async function listCrewChatVoiceSessions(_req: Request, res: Response): P
   } catch (e: unknown) {
     getLogger().error('LIST_CREW_CHAT_VOICE_SESSIONS', e instanceof Error ? e : String(e));
     res.status(500).json({ error: e instanceof Error ? e.message : 'list-voice-sessions-failed' });
+  }
+}
+
+/**
+ * POST /api/crew-chat/voice-sessions/:id/dividers — persist a call-transcript
+ * divider row (currently duration at hang-up). Written once; clients read as-is.
+ */
+export async function postCrewChatVoiceSessionDivider(req: Request, res: Response): Promise<void> {
+  try {
+    const sessionId = String(req.params['id'] ?? '');
+    if (!isCrewVoiceSessionId(sessionId)) {
+      res.status(400).json({ error: 'not-a-voice-session' });
+      return;
+    }
+    const eng = getEngine();
+    const peek = eng.sessionManager.getSessionById(sessionId);
+    if (!peek) {
+      res.status(404).json({ error: 'not-found' });
+      return;
+    }
+    if ((peek.contextKind ?? 'agent_x') !== 'crew_private') {
+      res.status(400).json({ error: 'not-a-crew-call' });
+      return;
+    }
+    const body = req.body as { variant?: string; elapsedMs?: number };
+    if (body.variant !== 'duration') {
+      res.status(400).json({ error: 'unsupported-divider-variant' });
+      return;
+    }
+    const elapsedMs = Number(body.elapsedMs);
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+      res.status(400).json({ error: 'invalid-elapsed-ms' });
+      return;
+    }
+    const meta = buildDurationDividerMeta(elapsedMs);
+    persistMessageDirect(sessionId, 'user', encodeCallDividerContent(meta), {
+      metadata: { callDivider: meta },
+    });
+    res.json({ ok: true, divider: meta });
+  } catch (e: unknown) {
+    getLogger().error('POST_CREW_CHAT_VOICE_DIVIDER', e instanceof Error ? e : String(e));
+    res.status(500).json({ error: e instanceof Error ? e.message : 'persist-divider-failed' });
   }
 }
 

@@ -32,8 +32,28 @@ export const attachmentRefSchema = z.object({
   name: z.string().max(256),
   mimeType: z.string().optional(),
   storageId: z.string().optional(),
-  source: z.enum(['upload', 'gmail', 'tool']).optional(),
-  type: z.enum(['file', 'image', 'url']).optional(),
+  /** upload / gmail / tool / workspace (@file mention path refs). */
+  source: z.enum(['upload', 'gmail', 'tool', 'workspace']).optional(),
+  type: z.enum(['file', 'image', 'url', 'folder']).optional(),
+  /** Absolute path for workspace @file / @folder mentions — engine reads without re-upload. */
+  originalPath: z.string().max(4096).optional(),
+  data: z.string().optional(),
+  url: z.string().max(2048).optional(),
+}).superRefine((val, ctx) => {
+  if (val.source === 'workspace' && !val.originalPath) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'workspace attachments require originalPath',
+      path: ['originalPath'],
+    });
+  }
+  if (val.originalPath && val.source && val.source !== 'workspace') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'originalPath is only allowed when source is workspace',
+      path: ['originalPath'],
+    });
+  }
 });
 
 export const clientSituationSchema = z.object({
@@ -66,6 +86,11 @@ export const chatMessageSchema = z.object({
   forceWebSearch: z.boolean().optional(),
   /** Crew-suggestion toggle in chat — explicitly request crew evaluation for this turn. */
   crewSuggestionRequested: z.boolean().optional(),
+  /**
+   * When the session has leftover incomplete TASKS and the user starts a new message:
+   * continue = finish checklist; skip = clear checklist; defer = park for later.
+   */
+  todoDisposition: z.enum(['continue', 'skip', 'defer']).optional(),
   resumeCrewIntake: z.object({
     originalUserText: z.string(),
     intakeAnswer: z.string(),
@@ -126,18 +151,21 @@ const crewChatRecruitSchema = z.object({
 
 export const crewChatSessionSchema = z.object({
   crewId: z.string().optional(),
-  scopePath: z.string().optional(),
   recruit: crewChatRecruitSchema.optional(),
 }).refine((d) => d.crewId || d.recruit, { message: 'crewId or recruit required' });
 
 /** Same as text crew chat, plus optional textSessionId to bind `voice:{textSessionId}`. */
 export const crewChatVoiceSessionSchema = z.object({
   crewId: z.string().optional(),
-  scopePath: z.string().optional(),
   textSessionId: z.string().optional(),
   recruit: crewChatRecruitSchema.optional(),
 }).refine((d) => d.crewId || d.recruit || d.textSessionId, {
   message: 'crewId, recruit, or textSessionId required',
+});
+
+export const crewChatVoiceDividerSchema = z.object({
+  variant: z.literal('duration'),
+  elapsedMs: z.number().positive(),
 });
 
 export const chatSteerSchema = z.object({
@@ -198,7 +226,6 @@ export const permissionRespondBatchSchema = z.object({
 });
 
 export const createSessionSchema = z.object({
-  scopePath: z.string().optional(),
   parentId: z.string().optional(),
 });
 

@@ -58,6 +58,16 @@ vi.mock('@agentx/engine', () => ({
   })),
   configureBackgroundTaskPool: vi.fn(),
   setOnnxThreadConfig: vi.fn(),
+  applyPerformanceGovernor: vi.fn(),
+  getPerformanceLanes: vi.fn().mockReturnValue({
+    subAgents: 3, toolParallel: 3, llmGlobal: 3, llmPerProvider: 2,
+    backgroundConcurrency: 2, onnxIntraOpThreads: 1, onnxInterOpThreads: 1,
+    attachmentWorkers: 1, effectiveCores: 3, preset: 'balanced', budgetPercent: 40,
+    lazyStorageCache: true,
+  }),
+  getLlmConcurrencyLimits: vi.fn().mockReturnValue({ global: 3, perProvider: 2 }),
+  getAttachmentWorkerLimit: vi.fn().mockReturnValue(1),
+  registerPerformanceTuneTarget: vi.fn().mockReturnValue(() => {}),
   MarkdownDocumentStore: vi.fn(),
   setMarkdownDocumentStoreInstance: vi.fn(),
   InMemoryQueue: vi.fn().mockImplementation(() => ({
@@ -119,6 +129,7 @@ vi.mock('../src/deferred-storage.js', () => ({
 
 import {
   setStorageProgressCallback,
+  applyPerformanceSettings,
   applyRuntimeSettings,
   isStorageDeferred,
   setEngineDEK,
@@ -129,6 +140,7 @@ import {
 describe('engine module smoke tests', () => {
   it('exports expected functions', () => {
     expect(typeof setStorageProgressCallback).toBe('function');
+    expect(typeof applyPerformanceSettings).toBe('function');
     expect(typeof applyRuntimeSettings).toBe('function');
     expect(typeof isStorageDeferred).toBe('function');
     expect(typeof setEngineDEK).toBe('function');
@@ -153,17 +165,21 @@ describe('setStorageProgressCallback', () => {
   });
 });
 
-describe('applyRuntimeSettings', () => {
+describe('applyPerformanceSettings', () => {
   it('does not throw with null config', () => {
-    expect(() => applyRuntimeSettings(null)).not.toThrow();
+    expect(() => applyPerformanceSettings(null)).not.toThrow();
   });
 
   it('does not throw with empty config', () => {
-    expect(() => applyRuntimeSettings({} as any)).not.toThrow();
+    expect(() => applyPerformanceSettings({} as any)).not.toThrow();
   });
 
-  it('does not throw with runtime settings', () => {
-    expect(() => applyRuntimeSettings({ runtime: { backgroundConcurrency: 4 } } as any)).not.toThrow();
+  it('does not throw with performance settings', () => {
+    expect(() => applyPerformanceSettings({ performance: { backgroundConcurrency: 4 } } as any)).not.toThrow();
+  });
+
+  it('keeps deprecated applyRuntimeSettings alias', () => {
+    expect(() => applyRuntimeSettings({ performance: { preset: 'balanced' } } as any)).not.toThrow();
   });
 });
 

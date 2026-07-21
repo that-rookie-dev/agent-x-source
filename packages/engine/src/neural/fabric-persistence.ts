@@ -8,6 +8,7 @@
 import type { Pool } from 'pg';
 import { getLogger } from '@agentx/shared';
 import { toHalfvecLiteral } from './VectorQuantizer.js';
+import { resolveEmbedTextForNode } from './retrieval/contextualize.js';
 import type {
   MemoryNode,
   MemoryNodeCategory,
@@ -36,13 +37,31 @@ export async function reEmbedAll(
   let updated = 0;
   let failed = 0;
   while (true) {
-    const { rows } = await ctx.pool.query<{ id: string; content: string }>(
-      `SELECT id, content FROM memory_nodes WHERE status = 'active' AND embedding IS NOT NULL ORDER BY id LIMIT $1 OFFSET $2`,
+    const { rows } = await ctx.pool.query<{
+      id: string;
+      content: string;
+      label: string | null;
+      heading_path: string[] | null;
+      provenance: Record<string, unknown> | null;
+    }>(
+      `SELECT id, content, label, heading_path, provenance
+         FROM memory_nodes
+        WHERE status = 'active' AND embedding IS NOT NULL
+        ORDER BY id
+        LIMIT $1 OFFSET $2`,
       [batchSize, offset],
     );
     if (rows.length === 0) break;
     offset += rows.length;
-    const texts = rows.map((r) => r.content);
+    // Prefer ingest-time contextualized embedText so re-embed matches new uploads.
+    const texts = rows.map((r) =>
+      resolveEmbedTextForNode({
+        content: r.content,
+        label: r.label,
+        headingPath: r.heading_path ?? undefined,
+        provenance: r.provenance,
+      }),
+    );
     try {
       const embeddings = await embedder.embedBatch(texts);
       for (let i = 0; i < rows.length; i++) {

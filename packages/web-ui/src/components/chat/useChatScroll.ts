@@ -5,6 +5,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { sessions } from '../../api';
 import { mapHistoryToUiMessages } from '../../chat/restoreMessages';
+import { MESSAGE_PAGE_SIZE, MESSAGE_WINDOW_MAX } from '../../chat/messageWindow';
 import type { UIMessage, ChatView } from '../../chat/types';
 
 export interface UseChatScrollInputs {
@@ -58,6 +59,10 @@ export function useChatScroll({
   const prevRealCountRef = useRef(0);
   const prevMessagesLengthRef = useRef(messages.length);
   const prevStreamingRef = useRef(false);
+  /** When false, live trim is paused (user is browsing older history). */
+  const liveCapEnabledRef = useRef(true);
+  /** True after a load-more dropped the newest page — jump-to-latest must re-fetch. */
+  const detachedFromTailRef = useRef(false);
 
   // ─── scrollMessagesToBottom ───
   const scrollMessagesToBottom = useCallback((behavior: 'smooth' | 'instant' = 'instant') => {
@@ -74,7 +79,15 @@ export function useChatScroll({
     }
   }, []);
 
-  // ─── loadOlderMessages ───
+  // ─── Live recycling: keep only the newest page while attached to the tail ───
+  useEffect(() => {
+    if (!liveCapEnabledRef.current) return;
+    if (messages.length <= MESSAGE_PAGE_SIZE) return;
+    setHasOlderMessages(true);
+    setMessages((prev) => (prev.length > MESSAGE_PAGE_SIZE ? prev.slice(-MESSAGE_PAGE_SIZE) : prev));
+  }, [messages.length, setMessages]);
+
+  // ─── loadOlderMessages (explicit chip only — no auto scroll-up load) ───
   const loadOlderMessages = useCallback(async () => {
     const sessionId = currentSessionIdRef.current;
     if (!sessionId || loadingOlderRef.current || !hasOlderMessages) return;
@@ -83,6 +96,7 @@ export function useChatScroll({
     const first = messages.find((m) => m.role === 'user' || m.role === 'assistant');
     if (!first?.id) return;
     loadingOlderRef.current = true;
+    liveCapEnabledRef.current = false;
     setLoadingOlderMessages(true);
     setFreezeMessageLayout(true);
     const el = messagesContainerRef.current;
@@ -99,7 +113,7 @@ export function useChatScroll({
     }
     paginationCooldownUntilRef.current = Date.now() + 1000;
     try {
-      const page = await sessions.getMessagesPage(sessionId, { limit: 20, before: first.id });
+      const page = await sessions.getMessagesPage(sessionId, { limit: MESSAGE_PAGE_SIZE, before: first.id });
       const older = mapHistoryToUiMessages(page.messages);
       if (older.length === 0) {
         setHasOlderMessages(false);
@@ -111,7 +125,14 @@ export function useChatScroll({
       setMessages((prev) => {
         const seen = new Set(prev.map((m) => m.id));
         const prepend = older.filter((m) => !seen.has(m.id));
-        return prepend.length ? [...prepend, ...prev] : prev;
+        if (!prepend.length) return prev;
+        let next = [...prepend, ...prev];
+        // Sliding window: once we exceed two pages, drop the newest page.
+        if (next.length > MESSAGE_WINDOW_MAX) {
+          next = next.slice(0, next.length - MESSAGE_PAGE_SIZE);
+          detachedFromTailRef.current = true;
+        }
+        return next;
       });
       setHasOlderMessages(page.hasMore);
     } catch {
@@ -125,6 +146,39 @@ export function useChatScroll({
       window.setTimeout(() => setFreezeMessageLayout(false), 120);
     }
   }, [hasOlderMessages, messages, setMessages, currentSessionIdRef]);
+
+  // ─── Jump / reset to the live latest window ───
+  const resetToLatestMessages = useCallback(async () => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId) {
+      scrollMessagesToBottom('smooth');
+      return;
+    }
+    if (!detachedFromTailRef.current && liveCapEnabledRef.current) {
+      liveCapEnabledRef.current = true;
+      setMessages((prev) => (prev.length > MESSAGE_PAGE_SIZE ? prev.slice(-MESSAGE_PAGE_SIZE) : prev));
+      scrollMessagesToBottom('smooth');
+      return;
+    }
+    setLoadingOlderMessages(true);
+    setFreezeMessageLayout(true);
+    try {
+      const page = await sessions.getMessagesPage(sessionId, { limit: MESSAGE_PAGE_SIZE });
+      const latest = mapHistoryToUiMessages(page.messages);
+      setMessages(latest);
+      setHasOlderMessages(page.hasMore);
+      liveCapEnabledRef.current = true;
+      detachedFromTailRef.current = false;
+      isAtBottomRef.current = true;
+      setShowJumpPill(false);
+      requestAnimationFrame(() => scrollMessagesToBottom('instant'));
+    } catch {
+      scrollMessagesToBottom('smooth');
+    } finally {
+      setLoadingOlderMessages(false);
+      window.setTimeout(() => setFreezeMessageLayout(false), 120);
+    }
+  }, [currentSessionIdRef, scrollMessagesToBottom, setMessages]);
 
   // ─── resetScrollState: called by session lifecycle on session switch ───
   const resetScrollState = useCallback(() => {
@@ -142,34 +196,28 @@ export function useChatScroll({
     paginationAnchorMessageIdRef.current = null;
     paginationAnchorOffsetRef.current = null;
     jumpSuppressScrollTopRef.current = null;
+    liveCapEnabledRef.current = true;
+    detachedFromTailRef.current = false;
     setHasOlderMessages(false);
   }, []);
 
-  // ─── Smart auto-scroll: track user scroll position ───
+  // ─── Smart auto-scroll: track user scroll position (no auto load-older) ───
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const onScroll = () => {
-      const prevTop = lastScrollTopRef.current;
-      const scrolledUp = el.scrollTop < prevTop - 4;
       lastScrollTopRef.current = el.scrollTop;
-
-      if (
-        paginationReadyRef.current
-        && scrolledUp
-        && Date.now() >= paginationCooldownUntilRef.current
-        && el.scrollTop < 64
-        && hasOlderMessages
-        && !loadingOlderRef.current
-      ) {
-        void loadOlderMessages();
-      }
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       const atBottom = distanceFromBottom < 80;
       isAtBottomRef.current = atBottom;
       if (atBottom) {
         jumpSuppressScrollTopRef.current = null;
         setShowJumpPill(false);
+        // Re-attach to the live window once the user returns to the newest end
+        // (unless a prior load-more dropped the true tail).
+        if (!detachedFromTailRef.current) {
+          liveCapEnabledRef.current = true;
+        }
         return;
       }
       if (jumpSuppressScrollTopRef.current !== null) {
@@ -186,7 +234,7 @@ export function useChatScroll({
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [view, hasOlderMessages, loadOlderMessages]);
+  }, [view]);
 
   // ─── Sync initialScrollDone ref ───
   useEffect(() => {
@@ -222,30 +270,43 @@ export function useChatScroll({
     }
 
     if (needsInitialScrollRef.current && messages.length > 0) {
-      // Use scrollIntoView on the bottom sentinel for reliable bottom-scrolling,
-      // even when content-visibility: auto defers rendering of some messages.
+      // Force bottom on open — don't gate on atBottom (content-visibility can
+      // report a false gap before heights expand).
       if (bottomRef.current) {
         bottomRef.current.scrollIntoView({ block: 'end' });
-      } else {
-        el.scrollTop = el.scrollHeight;
       }
-      // Also set scrollTop directly as a fallback (content-visibility may not
-      // have expanded all message heights yet).
       el.scrollTop = el.scrollHeight;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      if (atBottom) {
-        needsInitialScrollRef.current = false;
-        initialScrollDoneRef.current = true;
-        setInitialScrollDone(true);
-        paginationReadyRef.current = true;
-        isAtBottomRef.current = true;
-        lastScrollTopRef.current = el.scrollTop;
-        paginationCooldownUntilRef.current = Date.now() + 600;
-        if (sessionRestoringRef.current) {
-          setSessionRestoring(false);
-          sessionRestoringRef.current = false;
-        }
+      needsInitialScrollRef.current = false;
+      initialScrollDoneRef.current = true;
+      setInitialScrollDone(true);
+      paginationReadyRef.current = true;
+      isAtBottomRef.current = true;
+      lastScrollTopRef.current = el.scrollTop;
+      paginationCooldownUntilRef.current = Date.now() + 600;
+      if (sessionRestoringRef.current) {
+        setSessionRestoring(false);
+        sessionRestoringRef.current = false;
       }
+      // Follow-up passes after deferred layout / content-visibility expand.
+      requestAnimationFrame(() => {
+        if (bottomRef.current) bottomRef.current.scrollIntoView({ block: 'end' });
+        const box = messagesContainerRef.current;
+        if (box) box.scrollTop = box.scrollHeight;
+      });
+      window.setTimeout(() => {
+        if (bottomRef.current) bottomRef.current.scrollIntoView({ block: 'end' });
+        const box = messagesContainerRef.current;
+        if (box) {
+          box.scrollTop = box.scrollHeight;
+          lastScrollTopRef.current = box.scrollTop;
+          isAtBottomRef.current = true;
+        }
+      }, 120);
+      window.setTimeout(() => {
+        if (bottomRef.current) bottomRef.current.scrollIntoView({ block: 'end' });
+        const box = messagesContainerRef.current;
+        if (box) box.scrollTop = box.scrollHeight;
+      }, 350);
     }
   }, [messages.length, setSessionRestoring, sessionRestoringRef]);
 
@@ -315,7 +376,7 @@ export function useChatScroll({
     return () => window.clearTimeout(timer);
   }, [sessionRestoring, scrollMessagesToBottom, setSessionRestoring, sessionRestoringRef]);
 
-  // ─── Auto-scroll only when user is at bottom — also on streaming content updates ───
+  // ─── Auto-scroll when user is at bottom — smooth for new entries and live updates ───
   useEffect(() => {
     const lengthChanged = messages.length !== prevMessagesLengthRef.current;
     if (lengthChanged) prevMessagesLengthRef.current = messages.length;
@@ -329,15 +390,17 @@ export function useChatScroll({
       if (countChanged) setShowJumpPill(true);
       return;
     }
-    const behavior = countChanged ? 'smooth' : 'instant';
-    // New message: scroll immediately; streaming chunks: throttle to ~12 fps.
-    if (behavior === 'smooth') {
+    // New list entries and streaming updates: always ease to the true bottom.
+    const behavior: 'smooth' | 'instant' = 'smooth';
+    if (countChanged || lengthChanged) {
       if (scrollToBottomTimerRef.current !== null) {
         window.clearTimeout(scrollToBottomTimerRef.current);
         scrollToBottomTimerRef.current = null;
         pendingScrollBehaviorRef.current = null;
       }
       scrollMessagesToBottom('smooth');
+      // Second tick after layout settles (thoughts / tools expanding height).
+      requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
       return;
     }
     if (scrollToBottomTimerRef.current !== null) {
@@ -382,6 +445,7 @@ export function useChatScroll({
     // Callbacks
     scrollMessagesToBottom,
     loadOlderMessages,
+    resetToLatestMessages,
     resetScrollState,
   };
 }

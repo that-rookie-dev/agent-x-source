@@ -233,28 +233,61 @@ export function extractTasksFromResponse(ctx: CrewMissionContext, content: strin
     .filter((t) => t.length > 5 && t.length < 200);
 
   if (tasks.length >= 2) {
-    ctx.todoManager.clear();
+    // Never clobber an agent-managed checklist — only seed when empty.
+    if (ctx.todoManager.getItems().length > 0) return;
     ctx.todoManager.addItems(tasks);
     getLogger().info('TODO_EXTRACT', `Extracted ${tasks.length} tasks from response`);
   }
 }
 
+/** Composer `@crew[callsign:…]` / `@crew:callsign` tokens (callsign or id keys). */
+export function parseCrewMentionKeys(content: string): string[] {
+  const normalized = content.replace(/\u200b/g, '');
+  const keys: string[] = [];
+  const push = (raw: string) => {
+    const key = raw.trim();
+    if (!key) return;
+    const lower = key.toLowerCase();
+    if (lower === 'file' || lower === 'crew') return;
+    if (!keys.some((k) => k.toLowerCase() === lower)) keys.push(key);
+  };
+
+  for (const match of normalized.matchAll(/@crew\[([^:\]]+)/g)) {
+    push(match[1]!);
+  }
+  for (const match of normalized.matchAll(/@crew:([^:\s\[\]]+)(?::[^\s\[\]?!,;:)'"]+)?/g)) {
+    push(match[1]!);
+  }
+  return keys;
+}
+
 export function detectAtMentions(ctx: CrewMissionContext, content: string): string[] {
   const normalized = content.replace(/\u200b/g, '');
-  const matches = normalized.matchAll(/(?<!\w)@([\w][\w.-]*)/g);
   const mentioned: string[] = [];
   const members = ctx.getCrewMembers();
-  for (const match of matches) {
-    const name = match[1]!.toLowerCase();
+
+  const pushIfFound = (name: string) => {
+    const key = name.toLowerCase();
+    if (key === 'file' || key === 'crew') return;
     const found = members.find(
-      (m) => m.crew.callsign.toLowerCase() === name
-        || m.crew.name.toLowerCase() === name
-        || m.crew.name.toLowerCase().replace(/\s+/g, '_') === name
-        || m.crew.id.toLowerCase() === name,
+      (m) => m.crew.callsign.toLowerCase() === key
+        || m.crew.name.toLowerCase() === key
+        || m.crew.name.toLowerCase().replace(/\s+/g, '_') === key
+        || m.crew.id.toLowerCase() === key,
     );
     if (found && !mentioned.includes(found.crew.id)) {
       mentioned.push(found.crew.id);
     }
+  };
+
+  for (const key of parseCrewMentionKeys(normalized)) {
+    pushIfFound(key);
   }
+
+  // Legacy bare @callsign (and still useful when models emit @callsign)
+  for (const match of normalized.matchAll(/(?<!\w)@([\w][\w.-]*)/g)) {
+    pushIfFound(match[1]!);
+  }
+
   return mentioned;
 }

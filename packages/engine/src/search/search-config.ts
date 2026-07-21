@@ -1,20 +1,53 @@
-import type { AgentXConfig, WebSearchPaidProviderId, WebSearchToolsConfig } from '@agentx/shared';
+import type { AgentXConfig, WebSearchPaidProviderId, WebSearchProviderId, WebSearchToolsConfig } from '@agentx/shared';
 
-export type ResolvedWebSearchProvider = 'duckduckgo' | WebSearchPaidProviderId;
+export type ResolvedWebSearchProvider = WebSearchProviderId;
 
 export interface ResolvedWebSearchRuntime {
   duckduckgo: boolean;
   brave?: string;
   exa?: string;
   tavily?: string;
+  /** Normalized try-order (all known providers; inactive skipped by listActive). */
+  providerOrder: ResolvedWebSearchProvider[];
 }
 
-const DEFAULT_RUNTIME: ResolvedWebSearchRuntime = { duckduckgo: true };
+export const DEFAULT_WEB_SEARCH_PROVIDER_ORDER: ResolvedWebSearchProvider[] = [
+  'duckduckgo',
+  'brave',
+  'exa',
+  'tavily',
+];
 
-let runtime: ResolvedWebSearchRuntime = { ...DEFAULT_RUNTIME };
+const DEFAULT_RUNTIME: ResolvedWebSearchRuntime = {
+  duckduckgo: true,
+  providerOrder: [...DEFAULT_WEB_SEARCH_PROVIDER_ORDER],
+};
+
+let runtime: ResolvedWebSearchRuntime = { ...DEFAULT_RUNTIME, providerOrder: [...DEFAULT_WEB_SEARCH_PROVIDER_ORDER] };
 
 export function getWebSearchRuntime(): Readonly<ResolvedWebSearchRuntime> {
   return runtime;
+}
+
+export function normalizeWebSearchProviderOrder(
+  order?: WebSearchProviderId[] | null,
+): ResolvedWebSearchProvider[] {
+  const out: ResolvedWebSearchProvider[] = [];
+  const seen = new Set<ResolvedWebSearchProvider>();
+  for (const id of order ?? []) {
+    if (!DEFAULT_WEB_SEARCH_PROVIDER_ORDER.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  for (const id of DEFAULT_WEB_SEARCH_PROVIDER_ORDER) {
+    if (!seen.has(id)) out.push(id);
+  }
+  return out;
+}
+
+function isProviderReady(rt: ResolvedWebSearchRuntime, id: ResolvedWebSearchProvider): boolean {
+  if (id === 'duckduckgo') return rt.duckduckgo;
+  return Boolean(rt[id as WebSearchPaidProviderId]);
 }
 
 export function resolveWebSearchRuntime(config?: WebSearchToolsConfig | null): ResolvedWebSearchRuntime {
@@ -30,16 +63,12 @@ export function resolveWebSearchRuntime(config?: WebSearchToolsConfig | null): R
     ...(braveKey ? { brave: braveKey } : {}),
     ...(exaKey ? { exa: exaKey } : {}),
     ...(tavilyKey ? { tavily: tavilyKey } : {}),
+    providerOrder: normalizeWebSearchProviderOrder(ws.providerOrder),
   };
 }
 
 export function listActiveWebSearchProviders(rt: ResolvedWebSearchRuntime = runtime): ResolvedWebSearchProvider[] {
-  const out: ResolvedWebSearchProvider[] = [];
-  if (rt.duckduckgo) out.push('duckduckgo');
-  if (rt.brave) out.push('brave');
-  if (rt.exa) out.push('exa');
-  if (rt.tavily) out.push('tavily');
-  return out;
+  return rt.providerOrder.filter((id) => isProviderReady(rt, id));
 }
 
 export function applyWebSearchConfigFromAgentConfig(cfg: AgentXConfig | null | undefined): ResolvedWebSearchRuntime {
@@ -53,6 +82,7 @@ export function defaultWebSearchToolsConfig(): WebSearchToolsConfig {
     brave: { enabled: false },
     exa: { enabled: false },
     tavily: { enabled: false },
+    providerOrder: [...DEFAULT_WEB_SEARCH_PROVIDER_ORDER],
   };
 }
 
@@ -87,5 +117,8 @@ export function mergeWebSearchToolsConfig(
       enabled: inc.tavily?.enabled ?? ex.tavily?.enabled ?? base.tavily!.enabled,
       apiKey: inc.tavily?.apiKey !== undefined ? inc.tavily.apiKey : ex.tavily?.apiKey,
     },
+    providerOrder: normalizeWebSearchProviderOrder(
+      inc.providerOrder ?? ex.providerOrder ?? base.providerOrder,
+    ),
   };
 }

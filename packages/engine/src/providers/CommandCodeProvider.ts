@@ -7,12 +7,10 @@ import {
 import { OpenAICompatibleProvider } from './OpenAICompatibleProvider.js';
 
 /**
- * CommandCode Provider API exposes two native shapes on one key:
- * - OpenAI Chat Completions at /provider/v1/chat/completions
- * - Anthropic Messages at /provider/v1/messages
- *
- * Model listing uses the OpenAI-compat /models path; per-model protocol is
- * attached from API metadata when present, otherwise from the documented catalog split.
+ * Multi-protocol aggregator provider: one API key, dual native transports
+ * (chat-completions and messages). Model listing uses the chat-completions
+ * /models path; per-model protocol comes from API metadata when present,
+ * otherwise from catalog heuristics.
  */
 export class CommandCodeProvider extends OpenAICompatibleProvider {
   constructor(apiKey: string, baseUrl?: string) {

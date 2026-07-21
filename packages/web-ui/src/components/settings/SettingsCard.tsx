@@ -22,10 +22,10 @@ export function SettingsCard({ title, subtitle, accent, active, children, sx }: 
       <Box sx={settingsScanlineSx} />
       <Box sx={{ position: 'relative', zIndex: 1 }}>
         {title && (
-          <Typography sx={{ ...settingsOverlineSx, mb: subtitle ? 0.25 : 1.5 }}>{title}</Typography>
+          <Typography sx={{ ...settingsOverlineSx, mb: subtitle ? 0.2 : 1 }}>{title}</Typography>
         )}
         {subtitle && (
-          <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>{subtitle}</Typography>
+          <Typography sx={{ ...settingsHelperSx, mb: 1 }}>{subtitle}</Typography>
         )}
         {children}
       </Box>

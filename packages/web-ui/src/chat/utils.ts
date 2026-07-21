@@ -1,6 +1,15 @@
 /** Client-side text helpers (mirrors @agentx/shared). */
 
-import { attachDeepSearchPartsFromTools, attachChartPartsFromTools, normalizeMessageForUi, normalizeVoiceAssistantContent, type MessagePart } from '@agentx/shared/browser';
+import {
+  attachDeepSearchPartsFromTools,
+  attachChartPartsFromTools,
+  normalizeMessageForUi,
+  normalizeVoiceAssistantContent,
+  repairStreamTextGlitches,
+  type MessagePart,
+} from '@agentx/shared/browser';
+
+export { repairStreamTextGlitches };
 
 /** Ensure status/step labels are always renderable strings (avoids React #31). */
 export function coerceDisplayLabel(value: unknown, fallback = 'Working...'): string {
@@ -65,32 +74,6 @@ export function stripToolNoise(content: string, options?: { trim?: boolean }): s
   for (const re of TOOL_NOISE) out = out.replace(re, '');
   out = out.replace(/\n{3,}/g, '\n\n');
   return options?.trim === false ? out : out.trim();
-}
-
-/**
- * Repair common stream concatenation glitches for display/restore.
- * Keep in sync with @agentx/shared/utils/stream-text.ts
- */
-export function repairStreamTextGlitches(text: string): string {
-  if (!text || text.length < 4) return text;
-
-  let out = text;
-  out = out.replace(/^([A-Za-z]{1,30})\1(?=\s|[a-z])/g, '$1');
-
-  const minClause = 24;
-  const maxScan = Math.floor(out.length / 2);
-  for (let len = maxScan; len >= minClause; len--) {
-    const tail = out.slice(-len);
-    const firstIdx = out.indexOf(tail);
-    if (firstIdx > 0 && firstIdx + len <= out.length - len) {
-      let trimAt = out.length - len;
-      while (trimAt > 0 && /[\s:;,]/.test(out[trimAt - 1]!)) trimAt--;
-      out = out.slice(0, trimAt);
-      break;
-    }
-  }
-
-  return out;
 }
 
 function partsTextLead(message: { parts?: Array<{ type: string; content?: string }> }): string {
@@ -266,10 +249,23 @@ export function mapRestoreHistoryMessage(m: Record<string, unknown>): Record<str
         return p;
       })
       : undefined);
+  const meta = typeof m.metadata === 'string'
+    ? (() => { try { return JSON.parse(m.metadata) as Record<string, unknown>; } catch { return {}; } })()
+    : (m.metadata && typeof m.metadata === 'object' ? m.metadata as Record<string, unknown> : {});
+  const thinking = normalized?.thinking
+    || (typeof m.thinking === 'string' ? m.thinking : undefined)
+    || (typeof meta['thinking'] === 'string' ? meta['thinking'] : undefined);
+  const subAgents = normalized?.subAgents
+    || (Array.isArray(m.subAgents) ? m.subAgents : undefined)
+    || (Array.isArray(meta['subAgents']) ? meta['subAgents'] : undefined);
   return {
     ...m,
     content,
     parts,
     toolCalls: normalized?.toolCalls ?? toolCalls,
+    ...(thinking ? { thinking } : {}),
+    ...(subAgents ? { subAgents } : {}),
+    ...(typeof meta['thinkingStartedAt'] === 'number' ? { thinkingStartedAt: meta['thinkingStartedAt'] } : {}),
+    ...(typeof meta['thinkingDoneAt'] === 'number' ? { thinkingDoneAt: meta['thinkingDoneAt'] } : {}),
   };
 }

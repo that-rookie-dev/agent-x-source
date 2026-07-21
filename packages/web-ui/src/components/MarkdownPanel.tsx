@@ -225,8 +225,10 @@ export function MarkdownPanel() {
             </Typography>
           ) : (
             groupMarkdownDocumentsByDay(items).map((group, groupIdx) => (
-              <Box key={group.dayKey}>
-                <DateGroupDivider label={group.label} first={groupIdx === 0} />
+              <Box key={group.dayKey || `ungrouped-${groupIdx}`}>
+                {group.label ? (
+                  <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                ) : null}
                 {group.items.map((item) => (
                   <MarkdownListItem
                     key={item.id}

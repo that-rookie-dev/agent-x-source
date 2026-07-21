@@ -1,8 +1,5 @@
 import type { CrewVoiceSessionInfo } from '../../api';
-import {
-  formatMarkdownDateGroupLabel,
-  localDayKeyFromIso,
-} from '../../markdown/markdown-list-groups';
+import { groupByPersistedListDay } from '../../markdown/markdown-list-groups';
 
 export interface CallSessionDayGroup {
   dayKey: string;
@@ -22,26 +19,12 @@ export function sortCallsLatestFirst(rows: CrewVoiceSessionInfo[]): CrewVoiceSes
   return [...rows].sort((a, b) => callTimestamp(b) - callTimestamp(a));
 }
 
-/** Group call history by local calendar day (newest day / newest call first). */
+/**
+ * Group call history by persisted list-day fields.
+ * Day key/label are written at session create — not derived here.
+ */
 export function groupCallSessionsByDay(
   items: CrewVoiceSessionInfo[],
-  now = new Date(),
 ): CallSessionDayGroup[] {
-  const sorted = sortCallsLatestFirst(items);
-  const byDay = new Map<string, CrewVoiceSessionInfo[]>();
-  for (const item of sorted) {
-    const iso = item.updatedAt ?? item.createdAt ?? new Date(0).toISOString();
-    const key = localDayKeyFromIso(iso);
-    const bucket = byDay.get(key) ?? [];
-    bucket.push(item);
-    byDay.set(key, bucket);
-  }
-
-  return [...byDay.keys()]
-    .sort((a, b) => b.localeCompare(a))
-    .map((dayKey) => ({
-      dayKey,
-      label: formatMarkdownDateGroupLabel(dayKey, now),
-      items: byDay.get(dayKey)!,
-    }));
+  return groupByPersistedListDay(sortCallsLatestFirst(items));
 }

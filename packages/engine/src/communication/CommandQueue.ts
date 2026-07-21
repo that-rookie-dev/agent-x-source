@@ -18,7 +18,9 @@ export class CommandQueue {
   private isProcessing = false;
 
   setMaxConcurrent(max: number): void {
-    this.maxConcurrent = max;
+    this.maxConcurrent = Math.max(1, max);
+    // Raising capacity must wake waiters — otherwise Quiet→Max would stall until a release.
+    this.processNext();
   }
 
   enqueue(

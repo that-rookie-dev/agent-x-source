@@ -2,49 +2,40 @@ import { Router } from 'express';
 import { resolve, join, dirname, basename } from 'node:path';
 import { readdir, stat, rename, readFile, writeFile, mkdir, rm, unlink } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
-import { generateId, getDefaultWorkspaceDir, getHomeDir, getLogger } from '@agentx/shared';
-import { getEngine } from '../../engine.js';
-import { UPLOADS_DIR, upload, validateUploadedFile, pathExists, getSessionDir } from './shared.js';
+import { generateId, getHomeDir, getLogger, isPathInsideRoot } from '@agentx/shared';
+import { UPLOADS_DIR, upload, validateUploadedFile, pathExists } from './shared.js';
+import {
+  getWorkspaceInfo,
+  setWorkspacePath,
+  type WorkspaceMigrateMode,
+} from '../../workspace.js';
 
 export function createFilesRouter(): Router {
   const r = Router();
 
-  r.get('/api/cwd', (_req, res) => {
-    const eng = getEngine();
-    const sess = eng.sessionManager.getActiveSession();
-    const scopePath = sess?.scopePath ?? null;
-    res.json({ cwd: scopePath });
-  });
-
-  r.get('/api/cwd/default', (_req, res) => {
-    res.json({ path: getDefaultWorkspaceDir() });
-  });
-
-  r.post('/api/cwd', async (req, res) => {
+  /** Global Agent-X Workspace (not per-session). */
+  r.get('/api/workspace', (_req, res) => {
     try {
-      const { path } = req.body as { path: string };
-      if (!path || typeof path !== 'string') { res.status(400).json({ error: 'path-required' }); return; }
-      const resolved = resolve(path);
-      const eng = getEngine();
-      const sess = eng.sessionManager.getActiveSession();
-      if (sess) {
-        eng.sessionManager.updateSession({ scopePath: resolved });
-        const ctxPath = join(getSessionDir(sess.id), 'context.json');
-        try {
-          let ctx: Record<string, unknown> = {};
-          if (await pathExists(ctxPath)) {
-            ctx = JSON.parse(await readFile(ctxPath, 'utf-8'));
-          }
-          ctx['scopePath'] = resolved;
-          await mkdir(dirname(ctxPath), { recursive: true });
-          await writeFile(ctxPath, JSON.stringify(ctx, null, 2));
-        } catch (e) { /* best-effort */ }
-      }
-      const agent = eng.agent;
-      if (agent && typeof agent.setScopePath === 'function') agent.setScopePath(resolved);
-      res.json({ cwd: resolved });
+      res.json(getWorkspaceInfo());
     } catch (e: unknown) {
-      getLogger().error('POST_API_CWD', e instanceof Error ? e : String(e));    res.status(500).json({ error: e instanceof Error ? e.message : 'scope-update-failed' });
+      getLogger().error('GET_API_WORKSPACE', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'workspace-failed' });
+    }
+  });
+
+  r.post('/api/workspace', async (req, res) => {
+    try {
+      const body = req.body as { path?: string; mode?: WorkspaceMigrateMode };
+      if (!body?.path || typeof body.path !== 'string') {
+        res.status(400).json({ error: 'path-required' });
+        return;
+      }
+      const mode = body.mode === 'copy' || body.mode === 'move' ? body.mode : 'switch';
+      const result = await setWorkspacePath(body.path, mode);
+      res.json(result);
+    } catch (e: unknown) {
+      getLogger().error('POST_API_WORKSPACE', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: e instanceof Error ? e.message : 'workspace-update-failed' });
     }
   });
 
@@ -63,6 +54,112 @@ export function createFilesRouter(): Router {
       res.json({ current: absPath, parent: hasParent ? parent : null, dirs });
     } catch (e) {
       getLogger().error('GET_API_FILESYSTEM_DIRS', e instanceof Error ? e : String(e));    res.status(500).json({ error: 'dir-read-failed' });
+    }
+  });
+
+  /** Workspace file search for composer @ picker (scoped under active workspace). */
+  r.get('/api/filesystem/files', async (req, res) => {
+    try {
+      const workspace = getWorkspaceInfo().path;
+      const q = String(req.query['q'] ?? '').trim().toLowerCase();
+      const limit = Math.min(Math.max(Number(req.query['limit']) || 40, 1), 80);
+      const ignore = new Set([
+        'node_modules', '.git', 'dist', 'build', '.next', 'coverage',
+        '__pycache__', '.turbo', '.cache', 'vendor', '.venv', 'venv',
+        'graphify-out', '.pgvector-build',
+      ]);
+      const out: Array<{ name: string; path: string; relativePath: string }> = [];
+
+      const walk = async (dir: string, depth: number): Promise<void> => {
+        if (out.length >= limit || depth > 6) return;
+        let entries;
+        try {
+          entries = await readdir(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (out.length >= limit) return;
+          const name = entry.name;
+          if (name.startsWith('.') || ignore.has(name)) continue;
+          const full = join(dir, name);
+          if (entry.isDirectory()) {
+            await walk(full, depth + 1);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          if (!isPathInsideRoot(full, workspace)) continue;
+          const relativePath = full.slice(workspace.length).replace(/^[/\\]/, '');
+          if (q && !relativePath.toLowerCase().includes(q) && !name.toLowerCase().includes(q)) continue;
+          out.push({ name, path: full, relativePath });
+        }
+      };
+
+      await walk(workspace, 0);
+      out.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+      res.json({ workspace, files: out.slice(0, limit) });
+    } catch (e) {
+      getLogger().error('GET_API_FILESYSTEM_FILES', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: 'file-search-failed' });
+    }
+  });
+
+  /**
+   * Workspace directory browser for composer @ picker.
+   * `path` is a workspace-relative folder (empty / "." = workspace root).
+   */
+  r.get('/api/filesystem/browse', async (req, res) => {
+    try {
+      const workspace = getWorkspaceInfo().path;
+      const ignore = new Set([
+        'node_modules', '.git', 'dist', 'build', '.next', 'coverage',
+        '__pycache__', '.turbo', '.cache', 'vendor', '.venv', 'venv',
+        'graphify-out', '.pgvector-build',
+      ]);
+      const rawRel = String(req.query['path'] ?? '').trim().replace(/\\/g, '/');
+      const rel = (!rawRel || rawRel === '.') ? '' : rawRel.replace(/^\/+/, '').replace(/\/+$/, '');
+      const abs = rel ? resolve(workspace, rel) : resolve(workspace);
+      if (!isPathInsideRoot(abs, workspace)) {
+        res.status(400).json({ error: 'path-outside-workspace' });
+        return;
+      }
+      const st = await stat(abs);
+      if (!st.isDirectory()) {
+        res.status(400).json({ error: 'not-a-directory' });
+        return;
+      }
+
+      const entries = await readdir(abs, { withFileTypes: true });
+      const dirs: Array<{ name: string; path: string; relativePath: string }> = [];
+      const files: Array<{ name: string; path: string; relativePath: string }> = [];
+      for (const entry of entries) {
+        const name = entry.name;
+        if (name.startsWith('.') || ignore.has(name)) continue;
+        const full = join(abs, name);
+        if (!isPathInsideRoot(full, workspace)) continue;
+        const relativePath = full.slice(workspace.length).replace(/^[/\\]/, '');
+        if (entry.isDirectory()) dirs.push({ name, path: full, relativePath });
+        else if (entry.isFile()) files.push({ name, path: full, relativePath });
+      }
+      dirs.sort((a, b) => a.name.localeCompare(b.name));
+      files.sort((a, b) => a.name.localeCompare(b.name));
+
+      const parentRelative = rel.includes('/')
+        ? rel.slice(0, rel.lastIndexOf('/'))
+        : (rel ? '' : null);
+
+      res.json({
+        workspace,
+        current: abs,
+        relativePath: rel || '.',
+        parentRelative,
+        name: rel ? basename(abs) : (basename(workspace) || 'workspace'),
+        dirs,
+        files,
+      });
+    } catch (e) {
+      getLogger().error('GET_API_FILESYSTEM_BROWSE', e instanceof Error ? e : String(e));
+      res.status(500).json({ error: 'browse-failed' });
     }
   });
 

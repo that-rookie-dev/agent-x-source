@@ -1,9 +1,18 @@
 import type { ToolExecutionContext, ToolResult } from '@agentx/shared';
 import { resolveMemoryFabricSearchSessionFilter } from '@agentx/shared';
-import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
+import { getMemoryFabricInstance, type MemoryNode } from '../../neural/MemoryFabric.js';
 import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
 import { CHAT_MEMORY_TAG } from '../../neural/ChatTurnMemoryIngester.js';
 import { USER_PROFILE_TAG } from '../../neural/UserChatMemoryIngester.js';
+import {
+  getRetrievalSettings,
+  applyScoreGate,
+  heuristicRerank,
+  toEvidenceUnit,
+  packEvidenceBlocks,
+  EMPTY_EVIDENCE_MARKER,
+  type EvidenceUnit,
+} from '../../neural/retrieval/index.js';
 import { knowledgeBaseSearch } from './knowledge-base-search.js';
 
 type CortexScope = 'session' | 'profile' | 'both';
@@ -13,8 +22,37 @@ function parseScope(raw: unknown): CortexScope {
   return 'both';
 }
 
+async function retrieve(
+  fabric: NonNullable<ReturnType<typeof getMemoryFabricInstance>>,
+  embedding: number[],
+  query: string,
+  opts: { limit: number; tag?: string; sessionId?: string | null },
+): Promise<MemoryNode[]> {
+  const settings = getRetrievalSettings();
+  const overFetch = Math.max(opts.limit, settings.vectorOverFetch);
+  const raw = settings.hybridEnabled
+    ? await fabric.hybridSearch(embedding, query, {
+        limit: overFetch,
+        tag: opts.tag,
+        sessionId: opts.sessionId,
+        vectorLimit: overFetch,
+        lexicalLimit: overFetch,
+      })
+    : await fabric.vectorSearch(embedding, {
+        limit: overFetch,
+        tag: opts.tag,
+        sessionId: opts.sessionId,
+      });
+  let next = applyScoreGate(raw, {
+    minScore: settings.minScoreMemory,
+    maxPerSource: settings.maxChunksPerSource,
+  });
+  if (settings.rerankEnabled) next = heuristicRerank(query, next);
+  return next.slice(0, opts.limit);
+}
+
 /**
- * Vector search over Neural Cortex chat/profile memory (no graph walk).
+ * Vector/hybrid search over Neural Cortex chat/profile memory (gated + citeable).
  */
 export async function cortexMemorySearch(
   args: Record<string, unknown>,
@@ -29,6 +67,7 @@ export async function cortexMemorySearch(
     return knowledgeBaseSearch(args, context);
   }
 
+  const settings = getRetrievalSettings();
   const topK = typeof args['limit'] === 'number' ? Math.min(Math.max(1, args['limit']), 20) : 8;
   const scope = parseScope(args['scope']);
   const sessionFilter = resolveMemoryFabricSearchSessionFilter(context.sessionId, context.contextKind);
@@ -36,66 +75,69 @@ export async function cortexMemorySearch(
 
   try {
     const embedding = await embedder.embed(query);
-    const parts: string[] = [];
-
-    const fmtNode = (n: { category?: string; label?: string; content?: string; sourceId?: string }, i: number): string => {
-      const cat = n.category ?? '?';
-      const label = n.label ?? '';
-      const content = (n.content ?? '').replace(/\n+/g, ' ').slice(0, 400);
-      const src = n.sourceId ? ` [src:${n.sourceId.slice(0, 8)}]` : '';
-      return `[${i + 1}] (${cat}) ${label}${src}\n${content}${content.length >= 400 ? '…' : ''}`;
-    };
-
-    let count = 0;
+    const collected: MemoryNode[] = [];
+    let candidatesIn = 0;
 
     if (scope === 'session' || scope === 'both') {
-      const chatNodes = await fabric.vectorSearch(embedding, {
+      const chatNodes = await retrieve(fabric, embedding, query, {
         limit: topK,
         tag: CHAT_MEMORY_TAG,
         sessionId: sessionFilter,
       });
-      if (chatNodes.length > 0) {
-        parts.push('=== SESSION MEMORY ===');
-        chatNodes.forEach((n, i) => parts.push(fmtNode(n, i)));
-        count += chatNodes.length;
-      }
+      candidatesIn += chatNodes.length;
+      collected.push(...chatNodes);
 
       if (!isSuper && scope === 'session') {
-        const sessionNodes = await fabric.vectorSearch(embedding, {
+        const sessionNodes = await retrieve(fabric, embedding, query, {
           limit: topK,
           sessionId: sessionFilter,
         });
         const extra = sessionNodes.filter((n) => n.tag !== CHAT_MEMORY_TAG && n.tag !== USER_PROFILE_TAG);
-        if (extra.length > 0) {
-          parts.push('\n=== SESSION CONTEXT ===');
-          extra.slice(0, topK).forEach((n, i) => parts.push(fmtNode(n, i)));
-          count += extra.length;
-        }
+        candidatesIn += extra.length;
+        collected.push(...extra.slice(0, topK));
       }
     }
 
     if ((scope === 'profile' || scope === 'both') && isSuper) {
-      const profileNodes = await fabric.vectorSearch(embedding, {
+      const profileNodes = await retrieve(fabric, embedding, query, {
         limit: Math.max(3, Math.floor(topK / 2)),
         tag: USER_PROFILE_TAG,
         sessionId: null,
       });
-      if (profileNodes.length > 0) {
-        parts.push('\n=== USER PROFILE ===');
-        profileNodes.forEach((n, i) => parts.push(fmtNode(n, i)));
-        count += profileNodes.length;
-      }
+      candidatesIn += profileNodes.length;
+      collected.push(...profileNodes);
     }
 
-    if (parts.length === 0) {
+    const seen = new Set<string>();
+    const units: EvidenceUnit[] = [];
+    for (let i = 0; i < collected.length; i++) {
+      const n = collected[i]!;
+      if (!n.id || seen.has(n.id)) continue;
+      seen.add(n.id);
+      const u = toEvidenceUnit(n, i);
+      if (u) units.push(u);
+    }
+
+    if (units.length === 0) {
       return {
         success: true,
-        output: 'No matching cortex memories. Chat turns are embedded after each conversation.',
+        output: EMPTY_EVIDENCE_MARKER,
         metadata: { count: 0 },
       };
     }
 
-    return { success: true, output: parts.join('\n\n'), metadata: { count } };
+    const packed = packEvidenceBlocks(units, {
+      maxChars: settings.maxEvidenceCharsCompact,
+      maxLineChars: settings.maxEvidenceLineChars,
+      logLabel: 'cortex_memory_search',
+      candidatesIn,
+    });
+
+    return {
+      success: true,
+      output: `Cortex memory matches (${packed.count}). Cite [E#] when using these facts.\n\n${packed.text}`,
+      metadata: { count: packed.count, evidenceIds: packed.evidenceIds },
+    };
   } catch (e) {
     return {
       success: false,

@@ -24,6 +24,8 @@ vi.mock('../src/engine.js', () => ({
   ensureChannelAgent: vi.fn(),
   getAutonomyStatus: vi.fn(),
   applyRuntimeSettings: vi.fn(),
+  applyPerformanceSettings: vi.fn(),
+  applyPerformanceGovernor: vi.fn(),
   setEngineDEK: vi.fn(),
 }));
 

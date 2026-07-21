@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { sanitizeForJson, stripToolNoise } from '../src/utils/text-sanitize.js';
 import {
   assignPartsToAssistantMessage,
+  appendThinkingDeltaToParts,
   buildPartsFromDbRows,
   normalizeMessageForUi,
   partsCorruptedByCrossTurn,
+  sealTrailingThinkingPart,
 } from '../src/utils/message-parts.js';
 
 describe('text-sanitize', () => {
@@ -134,5 +136,98 @@ describe('message-parts', () => {
       }],
     });
     expect(result.parts?.some((p) => p.type === 'questionnaire')).toBe(true);
+  });
+
+  it('restores thinking from metadata and reasoning-delta rows', () => {
+    const fromMeta = normalizeMessageForUi({
+      role: 'assistant',
+      content: 'Final answer',
+      metadata: { thinking: 'I should check the files first.' },
+    });
+    expect(fromMeta.thinking).toBe('I should check the files first.');
+    expect(fromMeta.parts?.filter((p) => p.type === 'thinking')).toHaveLength(1);
+
+    const fromRows = normalizeMessageForUi(
+      { role: 'assistant', content: 'Final answer' },
+      [
+        { type: 'reasoning-delta', content: 'Step one. ' },
+        { type: 'reasoning-delta', content: 'Step two.' },
+      ],
+    );
+    expect(fromRows.thinking).toBe('Step one. Step two.');
+    expect(fromRows.parts?.filter((p) => p.type === 'thinking')).toHaveLength(1);
+  });
+
+  it('keeps separate thinking parts around tools in chronological order', () => {
+    const result = normalizeMessageForUi(
+      { role: 'assistant', content: 'Done' },
+      [
+        { type: 'reasoning-delta', content: 'Plan A. ' },
+        { type: 'tool-call', tool_call_id: 't1', tool_name: 'shell_exec', tool_args: '{}' },
+        { type: 'tool-result', tool_call_id: 't1', tool_result: 'ok', tool_success: 1 },
+        { type: 'reasoning-delta', content: 'Plan B.' },
+        { type: 'text-delta', content: 'Done' },
+      ],
+    );
+    const types = (result.parts ?? []).map((p) => p.type);
+    expect(types).toEqual(['thinking', 'tool', 'thinking', 'text']);
+    expect(result.parts?.[0]?.content).toBe('Plan A. ');
+    expect(result.parts?.[2]?.content).toBe('Plan B.');
+  });
+
+  it('restores subagent parts from message_parts and metadata', () => {
+    const fromRows = normalizeMessageForUi(
+      { role: 'assistant', content: 'Done' },
+      [{
+        type: 'subagent',
+        tool_call_id: 'child-1',
+        content: 'Research competitors',
+        tool_args: JSON.stringify({ name: 'Sub-Agent', status: 'done', kind: 'sub_agent' }),
+        tool_result: 'Found three.',
+        tool_success: 1,
+      }],
+    );
+    expect(fromRows.parts?.some((p) => p.type === 'subagent' && p.agent?.id === 'child-1')).toBe(true);
+    expect(fromRows.subAgents?.[0]?.task).toBe('Research competitors');
+
+    const fromMeta = normalizeMessageForUi({
+      role: 'assistant',
+      content: 'Done',
+      metadata: {
+        subAgents: [{ id: 'child-2', name: 'Sub-Agent', task: 'Draft outline', status: 'done' }],
+      },
+    });
+    expect(fromMeta.subAgents?.[0]?.id).toBe('child-2');
+    expect(fromMeta.parts?.some((p) => p.type === 'subagent' && p.agent?.id === 'child-2')).toBe(true);
+  });
+
+  it('merges mid-sentence thinking instead of splitting into a new Thought', () => {
+    let parts = appendThinkingDeltaToParts([], 'The');
+    parts = sealTrailingThinkingPart(parts); // incomplete → stays unsealed
+    expect(parts[0]?.['sealed']).toBeFalsy();
+    parts = appendThinkingDeltaToParts(parts, ' web app uses pnpm');
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.content).toBe('The web app uses pnpm');
+
+    // Forced seal of a short fragment, then lowercase continuation must merge.
+    parts = [
+      { type: 'thinking' as const, id: 't1', content: 'The', sealed: true },
+    ];
+    parts = appendThinkingDeltaToParts(parts, ' web app uses pnpm workspaces');
+    expect(parts).toHaveLength(1);
+    expect(parts[0]?.content).toBe('The web app uses pnpm workspaces');
+    expect(parts[0]?.['sealed']).toBe(false);
+  });
+
+  it('keeps short complete sentences unsealed until a paragraph-sized thought accumulates', () => {
+    const short = 'Looks good.';
+    let parts = appendThinkingDeltaToParts([], short);
+    parts = sealTrailingThinkingPart(parts);
+    expect(parts[0]?.['sealed']).toBeFalsy();
+
+    const paragraph = `${'Analyzing the request carefully. '.repeat(8)}Done.`;
+    parts = appendThinkingDeltaToParts([], paragraph);
+    parts = sealTrailingThinkingPart(parts);
+    expect(parts[0]?.['sealed']).toBe(true);
   });
 });

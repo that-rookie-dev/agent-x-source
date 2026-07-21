@@ -14,7 +14,7 @@ import { voiceDisabledReason } from '../../voice/support';
 import { VoiceWaveform } from './VoiceWaveform';
 import { CommsSpinner } from './CommsSpinner';
 import type { ParticlePhase } from './VoiceParticleField';
-import { voice as voiceApi, providers as providersApi, models as modelsApi } from '../../api';
+import { voice as voiceApi, providers as providersApi, models as modelsApi, modelBenchmark } from '../../api';
 import type { ConfiguredProvider, ModelInfo, VoiceConfig } from '../../api';
 import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
 
@@ -363,7 +363,7 @@ export function VoiceAgentHeaderControls({
     return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
   }, []);
 
-  // Load models when provider changes (local engine only)
+  // Load cleared (benchmarked) models when provider changes (local engine only)
   useEffect(() => {
     if (engine !== 'stt_llm_tts') return;
     const providerId = voiceProvider || defaultProvider;
@@ -372,8 +372,13 @@ export function VoiceAgentHeaderControls({
     setLoadingModels(true);
     void (async () => {
       try {
-        const m = await providersApi.models(providerId);
-        if (!cancelled) setModels(m);
+        const [all, cleared] = await Promise.all([
+          providersApi.models(providerId),
+          modelBenchmark.cleared(providerId).catch(() => ({ models: [] as Array<{ modelId: string }> })),
+        ]);
+        if (cancelled) return;
+        const allowed = new Set(cleared.models.map((m) => m.modelId));
+        setModels(all.filter((m) => allowed.has(m.id)));
       } catch { /* ignore */ }
       finally { if (!cancelled) setLoadingModels(false); }
     })();
@@ -559,6 +564,11 @@ export function VoiceAgentHeaderControls({
                 >
                   <em>Use default ({defaultModel ? defaultModel.split('/').pop() : '—'})</em>
                 </MenuItem>
+                {models.length === 0 && (
+                  <MenuItem disabled sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}>
+                    No cleared models — run a benchmark in Providers
+                  </MenuItem>
+                )}
                 {models.map((m) => (
                   <MenuItem
                     key={m.id}

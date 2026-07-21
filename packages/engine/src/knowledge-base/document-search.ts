@@ -1,6 +1,12 @@
 import type { EmbeddingProvider, KnowledgeSearchResult } from '@agentx/shared';
 import type { MemoryFabric, MemoryNode } from '../neural/MemoryFabric.js';
 import type { KnowledgeBaseSourceStore } from './KnowledgeBaseSourceStore.js';
+import {
+  getRetrievalSettings,
+  applyScoreGate,
+  heuristicRerank,
+  expandEvidenceNeighborhood,
+} from '../neural/retrieval/index.js';
 
 function looksLikeIndexOrToc(content: string): boolean {
   const text = content.trim();
@@ -49,16 +55,42 @@ export async function searchKnowledgeBaseDocuments(
   topK = 5,
   sourceId?: string,
 ): Promise<KnowledgeSearchResult[]> {
+  const settings = getRetrievalSettings();
   const embedding = await embedder.embed(query);
-  const vectorHits = await fabric.vectorSearch(embedding, {
-    limit: Math.max(topK * 4, 20),
-    category: 'source_doc',
-  });
+  const overFetch = Math.max(topK * 4, settings.vectorOverFetch);
+  const vectorHits = settings.hybridEnabled
+    ? await fabric.hybridSearch(embedding, query, {
+        limit: overFetch,
+        category: 'source_doc',
+        vectorLimit: overFetch,
+        lexicalLimit: overFetch,
+      })
+    : await fabric.vectorSearch(embedding, {
+        limit: overFetch,
+        category: 'source_doc',
+      });
 
   let filtered = vectorHits.filter((n) => n.unitType === 'chunk' || !n.unitType);
   if (sourceId) {
     filtered = filtered.filter((n) => n.sourceId === sourceId);
   }
+  filtered = applyScoreGate(filtered, {
+    minScore: settings.minScoreKb,
+    maxPerSource: settings.maxChunksPerSource,
+  });
+  if (settings.rerankEnabled) {
+    filtered = heuristicRerank(query, filtered);
+  }
+  filtered = filtered.slice(0, settings.rerankKeep);
+  const expandTop = Math.min(topK, settings.graphExpandOnlyOnTopHits, filtered.length);
+  filtered = await expandEvidenceNeighborhood(fabric, filtered.slice(0, expandTop), {
+    mode: 'order',
+    minScore: settings.minScoreKb,
+  });
+  filtered = applyScoreGate(filtered, {
+    minScore: settings.minScoreKb,
+    maxPerSource: settings.maxChunksPerSource,
+  }).slice(0, Math.min(topK, settings.injectKeep));
 
   const dense: KnowledgeSearchResult[] = [];
   const nameCache = new Map<string, string>();
@@ -72,7 +104,7 @@ export async function searchKnowledgeBaseDocuments(
     dense.push(nodeToHit(node, nameCache.get(sid)!, 'chunk'));
   }
 
-  return pageAwareRerank(dense, fabric, sourceStore, topK);
+  return pageAwareRerank(dense, fabric, sourceStore, Math.min(topK, settings.injectKeep));
 }
 
 async function pageAwareRerank(

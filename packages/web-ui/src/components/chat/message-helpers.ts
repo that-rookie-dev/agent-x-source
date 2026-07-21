@@ -1,40 +1,36 @@
 import type { UIMessage, PartEntry, SubAgent } from '../../chat/types';
-import { formatProviderErrorMessage } from '@agentx/shared/browser';
 
-export function formatWarningMessage(raw: unknown): string {
-  const text = typeof raw === 'string' ? raw : (raw instanceof Error ? raw.message : String(raw ?? ''));
-  if (/api\s+error|provider|429|quota|billing|rate.?limit|unauthorized|forbidden|invalid_request/i.test(text)
-    || text.trimStart().startsWith('{')) {
-    return formatProviderErrorMessage(text);
-  }
-  const trimmed = text.trim();
-  return trimmed.length > 500 ? `${trimmed.slice(0, 497)}…` : trimmed;
+export function updateLastMessage(prev: UIMessage[], patch: Partial<UIMessage>): UIMessage[] {
+  if (prev.length === 0) return prev;
+  const last = prev[prev.length - 1]!;
+  return [...prev.slice(0, -1), { ...last, ...patch }];
 }
 
-// Replace a warning if one with the same tool name (doom loop) exists, else append
-export function replaceWarning(prev: string[], newMsg: string): string[] {
-  const msg = formatWarningMessage(newMsg);
-  if (!msg || msg === '{' || msg === '{\\' || /^[{[\s\\]+$/.test(msg)) return prev;
-  // Detect doom-loop style: "toolName called Nx consecutively" or "[DOOM LOOP DETECTED] toolName"
-  const doomMatch = msg.match(/(\[DOOM LOOP DETECTED\])?\s*(\S+?)\s*(?:called|repeated)/i);
-  if (doomMatch) {
-    const toolName = doomMatch[2];
-    const idx = prev.findIndex(w => w.includes(toolName) && /(called|repeated)\s+\d+\s*x?/i.test(w));
-    if (idx !== -1) {
-      const copy = [...prev];
-      copy[idx] = msg;
-      return copy;
-    }
-  }
-  return prev.includes(msg) ? prev : [...prev, msg];
+export function replaceWarning(prev: string[], next: string): string[] {
+  const without = prev.filter((w) => w !== next);
+  return [...without, next];
 }
 
-/** Helper to immutably update the last assistant message (avoids React mutation anti-pattern). */
-export function updateLastMessage(msgs: UIMessage[], updates: Partial<UIMessage>): UIMessage[] {
-  if (msgs.length === 0) return msgs;
-  const last = msgs[msgs.length - 1];
-  if (last?.role !== 'assistant') return msgs;
-  return [...msgs.slice(0, -1), { ...last, ...updates }];
+function tasksLikelyMatch(a: string, b: string): boolean {
+  const left = a.trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const aSlice = left.slice(0, 80);
+  const bSlice = right.slice(0, 80);
+  return aSlice.includes(bSlice) || bSlice.includes(aSlice);
+}
+
+function bindAgent(a: SubAgent, childSessionId: string, label: string, kind: 'sub_agent' | 'crew_worker', task: string): SubAgent {
+  return {
+    ...a,
+    id: childSessionId,
+    name: label || a.name,
+    kind,
+    task: task || a.task,
+    status: a.status === 'done' || a.status === 'error' ? a.status : 'running',
+    sessionBound: true,
+  };
 }
 
 export function attachChildSessionToAssistant(
@@ -48,25 +44,57 @@ export function attachChildSessionToAssistant(
   const last = prev[prev.length - 1];
   if (last?.role !== 'assistant') return prev;
   const existing = last.subAgents ?? [];
-  if (existing.some((a) => a.id === childSessionId)) return prev;
-  const upgraded = existing.map((a) =>
-    (a.id === 'subagent' || a.id === childSessionId)
-      ? { ...a, id: childSessionId, name: label, kind, task: task || a.task, status: 'running' as const }
-      : a,
+  if (existing.some((a) => a.id === childSessionId)) {
+    // Refresh label/task on an already-attached card.
+    const subAgents = existing.map((a) =>
+      a.id === childSessionId ? bindAgent(a, childSessionId, label, kind, task) : a,
+    );
+    const parts = (last.parts ?? []).map((p) =>
+      p.type === 'subagent' && p.agent?.id === childSessionId
+        ? { ...p, agent: bindAgent(p.agent!, childSessionId, label, kind, task) }
+        : p,
+    );
+    return updateLastMessage(prev, { subAgents, parts });
+  }
+
+  // Upgrade a running placeholder to the real child session id.
+  // Prefer task match; never remap an already-bound card (parallel spawn safety).
+  const candidates = existing
+    .map((a, index) => ({ a, index }))
+    .filter(({ a }) => a.status === 'running' && a.kind !== 'crew_worker' && a.id !== childSessionId && !a.sessionBound);
+
+  let matchIndex = -1;
+  if (task) {
+    matchIndex = candidates.findIndex(({ a }) => tasksLikelyMatch(a.task || '', task));
+  }
+  if (matchIndex < 0 && candidates.length === 1) {
+    matchIndex = 0;
+  }
+
+  if (matchIndex < 0) {
+    // Ambiguous parallel spawn or no placeholder — append a new card.
+    const agent: SubAgent = { id: childSessionId, name: label, task, status: 'running', kind, sessionBound: true };
+    const subAgents: SubAgent[] = [...existing, agent];
+    const nextParts: PartEntry[] = [
+      ...(last.parts ?? []),
+      { type: 'subagent', id: childSessionId, agent },
+    ];
+    return updateLastMessage(prev, { subAgents, parts: nextParts });
+  }
+
+  const targetId = candidates[matchIndex]!.a.id;
+  const subAgents = existing.map((a) =>
+    a.id === targetId ? bindAgent(a, childSessionId, label, kind, task) : a,
   );
-  const hasMatch = upgraded.some((a) => a.id === childSessionId);
-  const subAgents: SubAgent[] = hasMatch
-    ? upgraded
-    : [...existing, { id: childSessionId, name: label, task, status: 'running' as const, kind }];
   const parts = (last.parts ?? []).map((p) =>
-    p.type === 'subagent' && (p.agent?.id === 'subagent' || p.agent?.id === childSessionId)
-      ? { ...p, id: childSessionId, agent: { ...p.agent!, id: childSessionId, name: label, kind, task: task || p.agent!.task, status: 'running' as const } }
+    p.type === 'subagent' && p.agent?.id === targetId
+      ? { ...p, id: childSessionId, agent: bindAgent(p.agent, childSessionId, label, kind, task) }
       : p,
   );
   const hasPart = parts.some((p) => p.type === 'subagent' && p.agent?.id === childSessionId);
   const nextParts: PartEntry[] = hasPart
     ? parts
-    : [...(last.parts ?? []), { type: 'subagent' as const, id: childSessionId, agent: { id: childSessionId, name: label, task, status: 'running' as const, kind } }];
+    : [...parts, { type: 'subagent' as const, id: childSessionId, agent: { id: childSessionId, name: label, task, status: 'running' as const, kind, sessionBound: true } }];
   return updateLastMessage(prev, { subAgents, parts: nextParts });
 }
 

@@ -167,24 +167,25 @@ export function KnowledgeTab() {
                   )}
                 </Box>
 
-                <Button
-                  variant="contained"
-                  size="small"
-                  disabled={state.installed || state.installing}
-                  startIcon={state.installing ? <CircularProgress size={12} sx={{ color: 'inherit' }} /> : <DownloadIcon sx={{ fontSize: 14 }} />}
-                  onClick={() => void install(meta.id)}
-                  sx={{
-                    minWidth: 90,
-                    bgcolor: state.installed ? colors.accent.green : colors.accent.blue,
-                    color: colors.bg.primary,
-                    fontSize: '0.65rem',
-                    textTransform: 'none',
-                    '&:hover': { bgcolor: state.installed ? colors.accent.green : alphaColor(colors.accent.blue, 0.85) },
-                    '&.Mui-disabled': { bgcolor: alphaColor(colors.accent.blue, 0.25), color: colors.text.dim },
-                  }}
-                >
-                  {state.installing ? 'Installing…' : state.installed ? 'Installed' : 'Install'}
-                </Button>
+                {!state.installed && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={state.installing}
+                    startIcon={state.installing ? <CircularProgress size={12} sx={{ color: 'inherit' }} /> : <DownloadIcon sx={{ fontSize: 14 }} />}
+                    onClick={() => void install(meta.id)}
+                    sx={{
+                      minWidth: 90,
+                      border: `1px solid ${colors.accent.blue}`,
+                      color: colors.accent.blue,
+                      fontSize: '0.65rem',
+                      textTransform: 'none',
+                      '&:hover': { borderColor: colors.accent.blue, bgcolor: alphaColor(colors.accent.blue, 0.12) },
+                    }}
+                  >
+                    {state.installing ? 'Installing…' : 'Install'}
+                  </Button>
+                )}
               </Box>
             );
           })}

@@ -38,7 +38,7 @@ export interface ModelReasoningInfo {
   control?: 'reasoning_effort' | 'thinking_level' | 'thinking_budget' | 'output_config.effort';
 }
 
-/** Transport shape for multi-protocol gateways (e.g. CommandCode Provider API). */
+/** Transport shape for multi-protocol aggregator / gateway provider APIs. */
 export type ModelApiProtocol = 'openai-chat' | 'anthropic-messages';
 
 export interface ModelInfo {

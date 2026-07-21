@@ -1,9 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { getConfigDir, getDataDir, getCacheDir } from '../src/utils/paths.js';
+import { getConfigDir, getDataDir, getCacheDir, isPathInsideRoot } from '../src/utils/paths.js';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
+import { mkdtempSync, writeFileSync, symlinkSync, mkdirSync } from 'node:fs';
 
 const HOME = homedir();
+
+describe('isPathInsideRoot', () => {
+  it('accepts files inside the root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-root-'));
+    const file = join(root, 'a.txt');
+    writeFileSync(file, 'x');
+    expect(isPathInsideRoot(file, root)).toBe(true);
+  });
+
+  it('rejects sibling prefix tricks', () => {
+    expect(isPathInsideRoot('/tmp/workspace-evil/x', '/tmp/workspace')).toBe(false);
+  });
+
+  it('rejects paths outside the root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-root-'));
+    const outside = mkdtempSync(join(tmpdir(), 'ax-out-'));
+    const file = join(outside, 'b.txt');
+    writeFileSync(file, 'x');
+    expect(isPathInsideRoot(file, root)).toBe(false);
+  });
+
+  it('rejects symlink escapes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-root-'));
+    mkdirSync(root, { recursive: true });
+    const outside = mkdtempSync(join(tmpdir(), 'ax-out-'));
+    const target = join(outside, 'secret.txt');
+    writeFileSync(target, 'secret');
+    const link = join(root, 'link.txt');
+    try {
+      symlinkSync(target, link);
+    } catch {
+      return;
+    }
+    expect(isPathInsideRoot(link, root)).toBe(false);
+  });
+
+  it('rejects null bytes', () => {
+    expect(isPathInsideRoot('/tmp/ws/\0evil', '/tmp/ws')).toBe(false);
+  });
+});
 
 describe('getConfigDir', () => {
   it('uses XDG_CONFIG_HOME when set', () => {

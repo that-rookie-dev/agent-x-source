@@ -15,6 +15,7 @@
 import { RagDocument } from './RagDocument.js';
 import { makeTextUnit, type TextUnit, type TextUnitSource } from './TextUnit.js';
 import { sanitizeIngestText } from './sanitizeIngestText.js';
+import { RETRIEVAL_DEFAULTS } from './retrieval/defaults.js';
 
 export type ContentType = 'chat_turn' | 'markdown_doc' | 'plain_text' | 'code_block' | 'list' | 'table';
 
@@ -143,8 +144,8 @@ function segmentMarkdownDoc(text: string, options: SegmentOptions): TextUnit[] {
     title: options.documentId ?? 'document',
     kind: 'markdown',
   }, {
-    chunkSize: options.chunkSize ?? 800,
-    chunkOverlap: options.chunkOverlap ?? 100,
+    chunkSize: options.chunkSize ?? RETRIEVAL_DEFAULTS.chunkTargetChars,
+    chunkOverlap: options.chunkOverlap ?? RETRIEVAL_DEFAULTS.chunkOverlapChars,
     splitByHeading: true,
     preserveParagraphs: true,
   });
@@ -161,8 +162,9 @@ function segmentMarkdownDoc(text: string, options: SegmentOptions): TextUnit[] {
     const charEnd = effectiveStart + chunk.content.length;
     charOffset = charEnd;
 
-    // Extract heading path from the chunk label/content.
-    const headingPath = extractHeadingPath(chunk.content);
+    const headingPath = chunk.headingPath.length > 0
+      ? chunk.headingPath
+      : extractHeadingPath(chunk.content);
 
     const source: TextUnitSource = {
       documentId: options.documentId,

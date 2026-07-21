@@ -296,6 +296,10 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
           open={Boolean(dashboardComms.session.permissionPrompt)}
           prompt={dashboardComms.session.permissionPrompt}
           onRespond={dashboardComms.session.respondToPermission}
+          onSwitchToBypass={() => {
+            dashboardComms.session.setToggles({ bypassChip: true });
+            dashboardComms.session.respondToPermission('approve_all');
+          }}
         />
       </VoiceCommsContext.Provider>
     </VoiceContext.Provider>

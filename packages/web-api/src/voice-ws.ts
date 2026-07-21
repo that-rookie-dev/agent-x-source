@@ -42,6 +42,7 @@ import { refreshAgentPersona } from './chat-helpers.js';
 import type { ClientSituation } from '@agentx/shared';
 import { updateDuplexEndpointing } from './voice/duplex-endpointing.js';
 import { resolveCrewPrivateHostForAgent } from './host-crew-session.js';
+import { seedCallDividerClockFromStore } from './voice/seed-call-divider-clock.js';
 
 const SAMPLE_RATE = 16_000;
 /** Minimum interval between streaming STT preview passes (PTT + duplex). */
@@ -557,7 +558,10 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
   const keepAgent = !!existingAgent
     && existingAgent.sessionId === chatSessionId
     && (!existingAgent.processing || existingAgent.isAwaitingClarification());
-  if (keepAgent) return true;
+  if (keepAgent) {
+    seedCallDividerClockFromStore(chatSessionId);
+    return true;
+  }
 
   destroyAgent();
   const session = eng.sessionManager.restoreSession(chatSessionId);
@@ -572,6 +576,7 @@ async function ensureChatSessionActive(chatSessionId: string): Promise<boolean> 
         new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
       ]);
     } catch { /* best-effort */ }
+    seedCallDividerClockFromStore(chatSessionId);
   }
   ensureSubscribed();
   return true;

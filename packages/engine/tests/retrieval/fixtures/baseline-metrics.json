@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "precisionAt5": 0.96,
+  "abstainAccuracy": 1.0,
+  "medianEvidenceChars": 889,
+  "prefetchP50Ms": 0.06,
+  "maxPrecisionDropPts": 5,
+  "frozenAt": "2026-07-21",
+  "notes": "Frozen from synthetic-corpus × golden-queries offline eval (evalRunner). CI fails if Precision@5 drops > maxPrecisionDropPts."
+}

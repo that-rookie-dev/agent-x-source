@@ -221,6 +221,22 @@ export function splitMarkdownSections(content: string): string[] {
   return normalized ? [normalized] : [];
 }
 
+/**
+ * Cheap streaming-safe prose check — no full normalize pass.
+ * Prefer this on hot stream paths; use isPlainTextMarkdown for settled content.
+ */
+export function isLikelyPlainProse(content: string): boolean {
+  if (!content?.trim()) return false;
+  if (content.includes('```')) return false;
+  if (/^#{1,6}\s/m.test(content)) return false;
+  if (/^>\s?/m.test(content)) return false;
+  if (/^[-*+]\s+/m.test(content)) return false;
+  if (/^\d+\.\s+/m.test(content)) return false;
+  if (/\n---\n/.test(content)) return false;
+  if (/\|.+\|/.test(content) && /\n\|?\s*:?-{2,}/.test(content)) return false;
+  return true;
+}
+
 /** True when assistant content is prose only — no tables, code blocks, lists, headings, or diagram fences. */
 export function isPlainTextMarkdown(content: string): boolean {
   if (!content?.trim()) return false;

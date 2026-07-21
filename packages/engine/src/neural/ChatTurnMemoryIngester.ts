@@ -2,10 +2,13 @@
  * Persists conversation turns into MemoryFabric as vector-indexed nodes (tag: chat_memory).
  * Super sessions write to the global bucket (session_id NULL); all other sessions write
  * under their own session_id so reads never bleed across sessions.
+ *
+ * Parallelism is owned by the Performance background pool — jobs always queue, never drop.
  */
 import type { EmbeddingProvider } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import type { MemoryFabric } from './MemoryFabric.js';
+import { getBackgroundTaskPool } from '../runtime/BackgroundTaskPool.js';
 
 export const CHAT_MEMORY_TAG = 'chat_memory';
 
@@ -13,36 +16,24 @@ const MIN_CHARS = 8;
 const MAX_USER = 900;
 const MAX_ASSISTANT = 1_400;
 
-type TurnJob = {
-  userMessage: string;
-  assistantResponse: string;
-  sourceSessionId: string;
-  storageSessionId?: string;
-};
-
 function turnContent(userMessage: string, assistantResponse: string): string {
   const user = userMessage.trim().slice(0, MAX_USER);
   const assistant = assistantResponse.trim().slice(0, MAX_ASSISTANT);
   return `User: ${user}\n\nAssistant: ${assistant}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export class ChatTurnMemoryIngester {
-  private pending = 0;
-  private readonly maxConcurrent = 2;
-  private readonly queue: TurnJob[] = [];
-  private draining = false;
-
   constructor(
     private fabric: MemoryFabric,
     private embedder: EmbeddingProvider,
   ) {}
 
-  /** Queue a turn for durable embedding; never drops on concurrency pressure. */
-  ingestTurn(
+  /**
+   * Embed a turn into chat_memory.
+   * Resolves when the job finishes (or is skipped). Under pressure the background
+   * pool queues — it never drops.
+   */
+  async ingestTurn(
     userMessage: string,
     assistantResponse: string,
     sourceSessionId: string,
@@ -51,43 +42,19 @@ export class ChatTurnMemoryIngester {
     const user = userMessage.trim();
     const assistant = assistantResponse.trim();
     if (user.length < MIN_CHARS || assistant.length < MIN_CHARS) {
-      return Promise.resolve(false);
+      return false;
     }
-    this.queue.push({
-      userMessage: user,
-      assistantResponse: assistant,
-      sourceSessionId,
-      storageSessionId,
-    });
-    void this.drainQueue();
-    return Promise.resolve(true);
+    return getBackgroundTaskPool().run(() =>
+      this.embedJob(user, assistant, sourceSessionId, storageSessionId),
+    );
   }
 
-  private async drainQueue(): Promise<void> {
-    if (this.draining) return;
-    this.draining = true;
-    try {
-      while (this.queue.length > 0) {
-        while (this.pending >= this.maxConcurrent) {
-          await sleep(40);
-        }
-        const job = this.queue.shift()!;
-        this.pending++;
-        void this.embedJob(job).finally(() => {
-          this.pending--;
-        });
-      }
-      while (this.pending > 0) {
-        await sleep(40);
-      }
-    } finally {
-      this.draining = false;
-      if (this.queue.length > 0) void this.drainQueue();
-    }
-  }
-
-  private async embedJob(job: TurnJob): Promise<boolean> {
-    const { userMessage, assistantResponse, sourceSessionId, storageSessionId } = job;
+  private async embedJob(
+    userMessage: string,
+    assistantResponse: string,
+    sourceSessionId: string,
+    storageSessionId?: string,
+  ): Promise<boolean> {
     try {
       const label = userMessage.slice(0, 80);
       if (await this.fabric.hasChatMemoryTurn(sourceSessionId, label)) {

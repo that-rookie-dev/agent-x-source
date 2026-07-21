@@ -23,7 +23,6 @@ contextBridge.exposeInMainWorld('agentx', {
     ipcRenderer.invoke('file:writeBytes', filePath, data) as Promise<{ ok: boolean }>,
   checkNodeRuntime: () =>
     ipcRenderer.invoke('permissions:checkNodeRuntime') as Promise<{ node?: string; npx?: string; ok: boolean }>,
-  defaultWorkspace: () => ipcRenderer.invoke('path:defaultWorkspace') as Promise<string>,
   requestNotifications: () => ipcRenderer.invoke('permissions:requestNotifications'),
   showNotification: (payload: { title?: string; body: string; subtitle?: string }) =>
     ipcRenderer.invoke('notifications:show', payload) as Promise<{ ok: boolean; reason?: string }>,

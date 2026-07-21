@@ -1,6 +1,6 @@
 {
   "name": "agent-x",
-  "version": "0.9.12",
+  "version": "0.9.13",
   "private": true,
   "type": "module",
   "description": "Agent-X — Your AI Wingman",
@@ -9,8 +9,13 @@
     "build": "pnpm run setup:env && pnpm -r run build",
     "dev": "pnpm run setup:env && pnpm --filter @agentx/web-api run dev",
     "test": "vitest run",
+    "test:retrieval": "vitest run --run packages/engine/tests/retrieval",
+    "eval:retrieval": "node scripts/retrieval-eval.mjs",
+    "check:retrieval-reindex": "node scripts/retrieval-reindex-check.mjs",
     "prestart": "vitest run --run packages/engine/tests/platform-parity.test.ts",
     "check:platform": "vitest run --run packages/engine/tests/platform-parity.test.ts",
+    "check:retrieval": "vitest run --run packages/engine/tests/retrieval",
+
     "verify:integrations": "vitest run --run packages/engine/tests/integrations.test.ts packages/engine/tests/integrations-e2e.test.ts",
     "verify:integrations-catalog": "tsx scripts/verify-integrations-catalog.mjs",
     "test:watch": "vitest",

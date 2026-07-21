@@ -17,6 +17,21 @@ import {
 import type { UIMessage, FileAttachment } from '../../chat/types';
 import type { ChatInputBarHandle } from '../ChatInputBar';
 
+function toUiMessageAttachments(
+  refs: Array<{ id: string; name: string; mimeType?: string; storageId?: string; originalPath?: string }>,
+  locals: FileAttachment[],
+): NonNullable<UIMessage['attachments']> {
+  return refs.map((a) => {
+    const local = locals.find((l) => l.id === a.id || (a.storageId != null && l.storageId === a.storageId));
+    return {
+      id: a.storageId ?? a.id,
+      name: a.name,
+      mimeType: a.mimeType,
+      placement: local?.placement ?? 'chip',
+      originalPath: a.originalPath ?? local?.originalPath,
+    };
+  });
+}
 export interface UseChatSendInputs {
   // State values
   messages: UIMessage[];
@@ -103,8 +118,8 @@ export function useChatSend({
     if (isCrewPrivateSessionRef.current) return false;
     if (!shouldOfferCrewRosterPicker(evaluation)) return false;
 
-    const trimmed = sanitizeForJson(text.trim());
-    if (!trimmed) return false;
+    const cleaned = sanitizeForJson(text);
+    if (!cleaned.trim()) return false;
     const sessionId = await ensureSession();
     if (!sessionId) return false;
 
@@ -112,14 +127,14 @@ export function useChatSend({
       m.parts?.some((p) =>
         p.type === 'crew_roster_picker'
         && p.crewRosterPicker?.status === 'pending'
-        && p.crewRosterPicker.pendingUserText === trimmed,
+        && p.crewRosterPicker.pendingUserText === cleaned,
       ),
     );
     if (alreadyPending) return true;
 
     try {
       const persisted = await crewSuggestions.offerRosterPicker(sessionId, {
-        userText: trimmed,
+        userText: cleaned,
         evaluation,
         attachments: attachmentsRef.current.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
         userMessageId: opts?.userMessageId,
@@ -129,7 +144,7 @@ export function useChatSend({
         id: persisted.pickerPartId,
         status: 'pending' as const,
         evaluation,
-        pendingUserText: trimmed,
+        pendingUserText: cleaned,
       };
       const pickerMsg: UIMessage = {
         id: persisted.pickerMessageId,
@@ -147,7 +162,7 @@ export function useChatSend({
         if (prev.some((message) => message.id === persisted.pickerMessageId)) return prev;
         return mergeCrewRosterPickerIntoMessages(
           prev,
-          trimmed,
+          cleaned,
           pickerMsg,
           persisted,
           opts,
@@ -171,6 +186,20 @@ export function useChatSend({
     const refs: TurnAttachment[] = [];
     const updated: FileAttachment[] = [];
     for (const a of attachmentsRef.current) {
+      // Workspace path refs — no upload; engine reads originalPath.
+      if (a.originalPath) {
+        refs.push({
+          id: a.id,
+          name: a.name,
+          mimeType: a.mimeType,
+          type: a.kind === 'folder'
+            ? 'folder'
+            : (a.mimeType.startsWith('image/') ? 'image' : 'file'),
+          source: 'workspace',
+          originalPath: a.originalPath,
+        });
+        continue;
+      }
       if (a.storageId && a.uploaded) {
         refs.push({
           id: a.id,
@@ -180,6 +209,10 @@ export function useChatSend({
           type: a.mimeType.startsWith('image/') ? 'image' : 'file',
           source: 'upload',
         });
+        continue;
+      }
+      if (!a.dataUrl) {
+        updated.push(a);
         continue;
       }
       try {
@@ -217,10 +250,12 @@ export function useChatSend({
       primaryCrewId?: string;
       skipUserMessage?: boolean;
       userMessagePersisted?: boolean;
+      todoDisposition?: 'continue' | 'skip' | 'defer';
     },
   ) => {
-    const trimmed = sanitizeForJson(text.trim());
-    if ((!trimmed && attachmentsRef.current.length === 0) && !options?.skipUserMessage) return;
+    // Preserve authoring whitespace/newlines for the model; only use trim for emptiness.
+    const cleaned = sanitizeForJson(text);
+    if ((!cleaned.trim() && attachmentsRef.current.length === 0) && !options?.skipUserMessage) return;
     if (!currentProviderRef.current || !currentModelRef.current) return;
     rateLimitSeenRef.current = false;
     const sessionId = await ensureSession();
@@ -236,13 +271,13 @@ export function useChatSend({
     if (!options?.skipUserMessage) {
       const userId = crypto.randomUUID();
       const placeholderId = crypto.randomUUID();
-      outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
+      outgoingTurnRef.current = { userId, userContent: cleaned, placeholderId };
       const userMsg: UIMessage = {
         id: userId,
         role: 'user',
-        content: trimmed,
+        content: cleaned,
         streaming: false,
-        attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
+        attachments: toUiMessageAttachments(attachmentRefs, attachmentsRef.current),
       };
       setMessages((prev) => [
         ...prev,
@@ -263,7 +298,7 @@ export function useChatSend({
     try {
       const clientSituation = await collectClientSituation();
       const result = await chat.send(
-        trimmed,
+        cleaned,
         fileRefs,
         undefined,
         delegateCrewIds,
@@ -275,6 +310,7 @@ export function useChatSend({
         options?.userMessagePersisted === true,
         clientSituation,
         crewSuggestionRequestedRef.current,
+        options?.todoDisposition,
       );
       // One-shot: reset the crew suggestion toggle after the request is dispatched.
       if (crewSuggestionRequestedRef.current) {
@@ -287,11 +323,11 @@ export function useChatSend({
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           const next = last?.role === 'assistant' && last.streaming ? prev.slice(0, -1) : prev;
-          existingUserId = next.find((m) => m.role === 'user' && m.content === trimmed)?.id;
+          existingUserId = next.find((m) => m.role === 'user' && m.content === cleaned)?.id;
           return next;
         });
         crewSuggestionHandledRef.current = true;
-        await attachCrewRosterPickerRef.current(trimmed, result.evaluation, existingUserId
+        await attachCrewRosterPickerRef.current(cleaned, result.evaluation, existingUserId
           ? { userMessageId: existingUserId }
           : undefined);
         return;
@@ -329,7 +365,7 @@ export function useChatSend({
     // Only run the crew suggestion gate when the user explicitly requests it via the toggle.
     if (!crewSuggestionRequestedRef.current) return false;
     if (isCrewPrivateSessionRef.current || coreSessionRef.current) return false;
-    if (/(?<!\w)@([\w][\w.-]*)/.test(trimmed)) return false;
+    if (/(?<!\w)@(?:crew:[^\s]+|file:[^\s]+|[\w][\w.-]*)/.test(trimmed)) return false;
     if (crewGateInFlightRef.current) return false;
 
     const sessionId = await ensureSession();
@@ -345,7 +381,10 @@ export function useChatSend({
       role: 'user',
       content: sanitizeForJson(trimmed),
       streaming: false,
-      attachments: attachmentsRef.current.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })),
+      attachments: toUiMessageAttachments(
+        attachmentsRef.current.map((a) => ({ id: a.id, name: a.name, mimeType: a.mimeType, storageId: a.storageId })),
+        attachmentsRef.current,
+      ),
     };
 
     setMessages((prev) => [...prev, userMsg, evalAssistant]);
@@ -391,13 +430,21 @@ export function useChatSend({
   ]);
 
   // ─── handleSend ───
-  const handleSend = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if ((!trimmed && attachmentsRef.current.length === 0)) return;
+  const handleSend = useCallback(async (
+    text: string,
+    options?: { todoDisposition?: 'continue' | 'skip' | 'defer' },
+  ) => {
+    if ((!text.trim() && attachmentsRef.current.length === 0)) return;
     crewSuggestionHandledRef.current = false;
 
-    if (await runCrewSuggestionGate(trimmed)) return;
-    await executeSend(trimmed);
+    // Disposition already chosen — don't re-run crew gate for this handoff.
+    if (options?.todoDisposition) {
+      await executeSend(text, undefined, { todoDisposition: options.todoDisposition });
+      return;
+    }
+
+    if (await runCrewSuggestionGate(text)) return;
+    await executeSend(text);
   }, [executeSend, runCrewSuggestionGate, crewSuggestionHandledRef, pendingSendTextRef, attachmentsRef]);
 
   // ─── handleResend ───
@@ -632,22 +679,22 @@ export function useChatSend({
 
   // ─── handleStopAndSend ───
   const handleStopAndSend = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed && attachmentsRef.current.length === 0) return;
+    const cleaned = sanitizeForJson(text);
+    if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
     const sessionId = await ensureSession();
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
     beginTurnUi();
     const userId = crypto.randomUUID();
     const placeholderId = crypto.randomUUID();
-    outgoingTurnRef.current = { userId, userContent: trimmed, placeholderId };
-    const userMsg: UIMessage = { id: userId, role: 'user', content: trimmed, streaming: false, attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })) };
+    outgoingTurnRef.current = { userId, userContent: cleaned, placeholderId };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: cleaned, streaming: false, attachments: toUiMessageAttachments(attachmentRefs, attachmentsRef.current) };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     setAttachments([]);
     try {
-      const result = await chat.stopAndSend(trimmed, fileRefs);
+      const result = await chat.stopAndSend(cleaned, fileRefs);
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       if (result?.message) {
@@ -665,35 +712,35 @@ export function useChatSend({
 
   // ─── handleAddToQueue ───
   const handleAddToQueue = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed && attachmentsRef.current.length === 0) return;
+    const cleaned = sanitizeForJson(text);
+    if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
     const sessionId = currentSessionIdRef.current;
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
     const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
-    try { await chat.queue(trimmed, fileRefs); } catch { /* ignore */ }
+    try { await chat.queue(cleaned, fileRefs); } catch { /* ignore */ }
     setAttachments([]);
   }, [setAttachments, attachmentsRef, currentSessionIdRef, uploadAttachments]);
 
   // ─── handleSteer ───
   const handleSteer = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed && attachmentsRef.current.length === 0) return;
+    const cleaned = sanitizeForJson(text);
+    if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
     const sessionId = await ensureSession();
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
     beginTurnUi();
     const userId = crypto.randomUUID();
     const placeholderId = crypto.randomUUID();
-    const userContent = `↑ ${trimmed}`;
+    const userContent = `↑ ${cleaned}`;
     outgoingTurnRef.current = { userId, userContent, placeholderId };
-    const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false, attachments: attachmentRefs.map((a) => ({ id: a.storageId ?? a.id, name: a.name, mimeType: a.mimeType })) };
+    const userMsg: UIMessage = { id: userId, role: 'user', content: userContent, streaming: false, attachments: toUiMessageAttachments(attachmentRefs, attachmentsRef.current) };
     setMessages((prev) => [...prev, userMsg, { id: placeholderId, role: 'assistant', content: '', streaming: true }]);
     requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
     const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     setAttachments([]);
     try {
-      const result = await chat.steer(trimmed, fileRefs);
+      const result = await chat.steer(cleaned, fileRefs);
       if (result?.turnId) activeTurnIdRef.current = result.turnId;
       if (result?.async) return;
       if (result?.message) {
@@ -730,12 +777,15 @@ export function useChatSend({
     Array.from(files).forEach((file) => {
       const reader = new FileReader();
       reader.onload = () => {
+        const id = crypto.randomUUID();
+        // + / drag-drop → chip row only (not inlined into composer text).
         setAttachments((prev) => [...prev, {
-          id: crypto.randomUUID(),
+          id,
           name: file.name,
           mimeType: file.type || guessMimeType(file.name),
           dataUrl: reader.result as string,
           uploaded: false,
+          placement: 'chip',
         }]);
       };
       reader.readAsDataURL(file);
@@ -743,8 +793,12 @@ export function useChatSend({
   }, [setAttachments]);
 
   // ─── handleRemoveAttachment ───
-  const handleRemoveAttachment = useCallback((idx: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  const handleRemoveAttachment = useCallback((idOrIdx: string | number) => {
+    if (typeof idOrIdx === 'number') {
+      setAttachments((prev) => prev.filter((_, i) => i !== idOrIdx));
+      return;
+    }
+    setAttachments((prev) => prev.filter((a) => a.id !== idOrIdx));
   }, [setAttachments]);
 
   return {

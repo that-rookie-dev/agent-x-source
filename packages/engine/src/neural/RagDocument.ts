@@ -2,14 +2,25 @@
  * Robust PDF/RAG document ingestion with semantic chunking.
  *
  * Splits documents by paragraphs and headings, preserving section boundaries
- * and an overlap window. Produces a source document node plus chunk nodes
- * linked by CONTAINS / NEXT_STEP edges.
+ * and an overlap window. Produces chunks with contextualized embedText
+ * (Title › Section › body). Order edges are created at ingest time as FOLLOWS.
  */
+
+import {
+  buildEmbedText,
+  pushHeadingPath,
+  headingLevel,
+  RETRIEVAL_DEFAULTS,
+} from './retrieval/index.js';
 
 export interface Chunk {
   index: number;
   label: string;
+  /** Display / stored body (section text). */
   content: string;
+  /** Text embedded at ingest — includes title + heading path. */
+  embedText: string;
+  headingPath: string[];
   embedding?: number[];
 }
 
@@ -23,6 +34,7 @@ export interface RagDocumentMetadata {
 export interface RagDocumentOptions {
   chunkSize?: number;
   chunkOverlap?: number;
+  chunkMinChars?: number;
   /** When true, headings split chunks. */
   splitByHeading?: boolean;
   /** When true, a line break is added before chunk boundaries to preserve structure. */
@@ -38,8 +50,9 @@ export class RagDocument {
     this.text = text;
     this.metadata = { ...metadata };
     this.options = {
-      chunkSize: options.chunkSize ?? 800,
-      chunkOverlap: options.chunkOverlap ?? 100,
+      chunkSize: options.chunkSize ?? RETRIEVAL_DEFAULTS.chunkTargetChars,
+      chunkOverlap: options.chunkOverlap ?? RETRIEVAL_DEFAULTS.chunkOverlapChars,
+      chunkMinChars: options.chunkMinChars ?? RETRIEVAL_DEFAULTS.chunkMinChars,
       splitByHeading: options.splitByHeading ?? true,
       preserveParagraphs: options.preserveParagraphs ?? true,
     };
@@ -49,40 +62,81 @@ export class RagDocument {
     const units = this.splitIntoUnits();
     const chunks: Chunk[] = [];
     let buffer = '';
+    let bufferPath: string[] = [];
+    let headingPath: string[] = [];
     let index = 0;
 
-    for (const unit of units) {
-      const next = this.options.preserveParagraphs ? buffer + '\n\n' + unit : buffer + ' ' + unit;
-      if (buffer.length > 0 && (this.isHeading(unit) || next.length > this.options.chunkSize)) {
-        chunks.push(this.makeChunk(index++, buffer.trim()));
-        buffer = this.options.chunkOverlap > 0 ? this.tailOverlap(buffer) : '';
+    const flush = (force = false) => {
+      const trimmed = buffer.trim();
+      if (!trimmed) {
+        buffer = '';
+        return;
       }
-      buffer = buffer ? buffer + '\n\n' + unit : unit;
+      if (!force && trimmed.length < this.options.chunkMinChars) {
+        return;
+      }
+      if (trimmed.length > this.options.chunkSize) {
+        for (const piece of this.forceSplit(trimmed, this.options.chunkSize, this.options.chunkOverlap)) {
+          chunks.push(this.makeChunk(index++, piece.trim(), bufferPath));
+        }
+      } else {
+        chunks.push(this.makeChunk(index++, trimmed, bufferPath));
+      }
+      buffer = this.options.chunkOverlap > 0 ? this.tailOverlap(trimmed) : '';
+      // Keep path for overlap continuation under same section.
+    };
+
+    for (const unit of units) {
+      const level = headingLevel(unit);
+      if (level != null) {
+        // Always close the previous section on a heading boundary (even if short).
+        if (buffer.trim()) flush(true);
+        headingPath = pushHeadingPath(headingPath, unit);
+        bufferPath = [...headingPath];
+        // Headings alone are not chunks; attach to following body.
+        continue;
+      }
+
+      const next = this.options.preserveParagraphs
+        ? (buffer ? `${buffer}\n\n${unit}` : unit)
+        : (buffer ? `${buffer} ${unit}` : unit);
+
+      if (buffer.length > 0 && next.length > this.options.chunkSize) {
+        flush(true);
+        bufferPath = [...headingPath];
+      }
+
+      buffer = buffer
+        ? (this.options.preserveParagraphs ? `${buffer}\n\n${unit}` : `${buffer} ${unit}`)
+        : unit;
+      if (!bufferPath.length) bufferPath = [...headingPath];
     }
 
     if (buffer.trim()) {
-      // If the final buffer is a single oversized unit (no headings/paragraphs
-      // to split on), force-split it by sentences, then by character boundaries
-      // so one chunk doesn't swallow the entire document.
-      if (buffer.length > this.options.chunkSize) {
-        for (const piece of this.forceSplit(buffer, this.options.chunkSize, this.options.chunkOverlap)) {
-          chunks.push(this.makeChunk(index++, piece.trim()));
-        }
-      } else {
-        chunks.push(this.makeChunk(index, buffer.trim()));
+      flush(true);
+    }
+
+    // Merge trailing tiny chunk into previous when possible.
+    if (chunks.length >= 2) {
+      const last = chunks[chunks.length - 1]!;
+      const prev = chunks[chunks.length - 2]!;
+      if (
+        last.content.length < this.options.chunkMinChars
+        && prev.content.length + last.content.length <= this.options.chunkSize
+        && samePath(prev.headingPath, last.headingPath)
+      ) {
+        const mergedContent = `${prev.content}\n\n${last.content}`.trim();
+        chunks[chunks.length - 2] = this.makeChunk(prev.index, mergedContent, prev.headingPath);
+        chunks.pop();
       }
     }
 
-    return chunks;
+    // Re-index after merges.
+    return chunks.map((c, i) => ({ ...c, index: i, label: `${this.metadata.title || 'Document'} chunk ${i + 1}` }));
   }
 
-  /**
-   * Force-split an oversized text block into chunks <= chunkSize.
-   * First tries sentence boundaries, then falls back to hard character splits.
-   */
   private forceSplit(text: string, chunkSize: number, overlap: number): string[] {
     const pieces: string[] = [];
-    // Try sentence-level splitting first.
     const sentences = text.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) ?? [text];
     let buf = '';
     for (const sentence of sentences) {
@@ -91,7 +145,6 @@ export class RagDocument {
         pieces.push(buf.trim());
         buf = overlap > 0 ? buf.slice(-overlap).trim() : '';
       }
-      // If a single sentence is longer than chunkSize, hard-split it.
       if (sentence.length > chunkSize) {
         if (buf.trim()) { pieces.push(buf.trim()); buf = ''; }
         for (let i = 0; i < sentence.length; i += chunkSize - overlap) {
@@ -117,7 +170,7 @@ export class RagDocument {
     const lines = text.split('\n');
     let buffer: string[] = [];
     for (const line of lines) {
-      if (this.isHeading(line)) {
+      if (headingLevel(line) != null) {
         if (buffer.length > 0) {
           units.push(buffer.join('\n').trim());
           buffer = [];
@@ -133,21 +186,26 @@ export class RagDocument {
     return units.filter((u) => u.length > 0);
   }
 
-  private isHeading(line: string): boolean {
-    return /^#{1,6}\s+/.test(line.trim()) || /^[A-Z][A-Za-z0-9\s]{2,80}\n*$/.test(line.trim()) && line.trim().length < 80;
-  }
-
   private tailOverlap(buffer: string): string {
     const tail = buffer.slice(-this.options.chunkOverlap).trim();
     const sentenceBreak = tail.lastIndexOf('. ');
     return sentenceBreak > 0 ? tail.slice(sentenceBreak + 2) : tail;
   }
 
-  private makeChunk(index: number, content: string): Chunk {
+  private makeChunk(index: number, content: string, headingPath: string[]): Chunk {
+    const title = this.metadata.title || 'Document';
+    const path = headingPath.length ? headingPath : [];
     return {
       index,
-      label: `${this.metadata.title || 'Document'} chunk ${index + 1}`,
+      label: `${title} chunk ${index + 1}`,
       content,
+      embedText: buildEmbedText({ title, headingPath: path, body: content }),
+      headingPath: [...path],
     };
   }
+}
+
+function samePath(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
 }

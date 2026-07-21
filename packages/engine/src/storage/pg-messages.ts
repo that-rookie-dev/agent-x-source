@@ -137,12 +137,44 @@ export function insertMessage(
   const now = new Date().toISOString();
   const existingIdx = msgs.findIndex((m) => m.id === id);
   const platformMessageIdsJson = msg.platformMessageIds != null ? JSON.stringify(msg.platformMessageIds) : null;
+
+  const parseMeta = (raw: unknown): Record<string, unknown> => {
+    if (!raw) return {};
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
+    }
+    if (typeof raw === 'object') return { ...(raw as Record<string, unknown>) };
+    return {};
+  };
+  const prevMeta = existingIdx >= 0 ? parseMeta(msgs[existingIdx]!['metadata']) : {};
+  const incomingMeta = parseMeta(msg.metadata);
+  // Merge so later sparse writes (provider/model only) never wipe thinking/subAgents.
+  const mergedMeta: Record<string, unknown> = { ...prevMeta, ...incomingMeta };
+  if (typeof msg.thinking === 'string' && msg.thinking.trim()) {
+    mergedMeta['thinking'] = msg.thinking;
+  } else if (typeof prevMeta['thinking'] === 'string' && !incomingMeta['thinking']) {
+    mergedMeta['thinking'] = prevMeta['thinking'];
+  }
+  for (const key of ['thinkingStartedAt', 'thinkingDoneAt', 'subAgents'] as const) {
+    if (incomingMeta[key] == null && prevMeta[key] != null) mergedMeta[key] = prevMeta[key];
+  }
+  const metadataOut = Object.keys(mergedMeta).length > 0 ? mergedMeta : undefined;
+
+  // Prefer richer parts (with subagent/tool entries) over sparse overwrites.
+  const prevParts = existingIdx >= 0 ? msgs[existingIdx]!['parts'] : undefined;
+  let partsOut = msg.parts ?? (Array.isArray(prevParts) ? prevParts as Array<Record<string, unknown>> : undefined);
+  if (msg.parts && Array.isArray(prevParts) && Array.isArray(msg.parts)) {
+    const prevHasSub = (prevParts as Array<Record<string, unknown>>).some((p) => p['type'] === 'subagent');
+    const nextHasSub = msg.parts.some((p) => p['type'] === 'subagent');
+    if (prevHasSub && !nextHasSub) partsOut = prevParts as Array<Record<string, unknown>>;
+  }
+
   const row = {
     id, sessionId: msg.sessionId, role: msg.role, content: msg.content,
     toolCalls: msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : undefined,
     tokenCount: msg.tokenCount ?? 0, createdAt: msg.createdAt ?? now,
-    parts: msg.parts,
-    metadata: msg.metadata,
+    parts: partsOut,
+    metadata: metadataOut,
     attachments: msg.attachments,
     platformMessageId: msg.platformMessageId ?? null,
     platformMessageIds: msg.platformMessageIds ?? null,
@@ -154,8 +186,8 @@ export function insertMessage(
       ...prev,
       ...row,
       createdAt: prev.createdAt,
-      parts: msg.parts ?? prev.parts,
-      metadata: msg.metadata ?? prev.metadata,
+      parts: partsOut ?? prev.parts,
+      metadata: metadataOut ?? prev.metadata,
       attachments: msg.attachments ?? prev.attachments,
       platformMessageId: msg.platformMessageId ?? prev.platformMessageId ?? null,
       platformMessageIds: msg.platformMessageIds ?? prev.platformMessageIds ?? null,
@@ -174,7 +206,10 @@ export function insertMessage(
        token_count = EXCLUDED.token_count,
        plan = COALESCE(EXCLUDED.plan, messages.plan),
        parts = COALESCE(EXCLUDED.parts, messages.parts),
-       metadata = COALESCE(EXCLUDED.metadata, messages.metadata),
+       metadata = (
+         COALESCE(NULLIF(messages.metadata, '')::jsonb, '{}'::jsonb)
+         || COALESCE(NULLIF(EXCLUDED.metadata, '')::jsonb, '{}'::jsonb)
+       )::text,
        attachments = COALESCE(EXCLUDED.attachments, messages.attachments),
        platform_message_id = COALESCE(EXCLUDED.platform_message_id, messages.platform_message_id),
        platform_message_ids = COALESCE(EXCLUDED.platform_message_ids, messages.platform_message_ids),
@@ -184,8 +219,8 @@ export function insertMessage(
       msg.toolCalls != null ? JSON.stringify(msg.toolCalls) : null,
       msg.tokenCount ?? 0,
       msg.plan || null,
-      msg.parts ? JSON.stringify(msg.parts) : null,
-      msg.metadata ? JSON.stringify(msg.metadata) : null,
+      partsOut ? JSON.stringify(partsOut) : null,
+      metadataOut ? JSON.stringify(metadataOut) : null,
       msg.attachments ? JSON.stringify(msg.attachments) : null,
       msg.platformMessageId ?? null,
       platformMessageIdsJson,

@@ -11,6 +11,7 @@ import type { EmbeddingProvider } from '@agentx/shared';
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { getLogger } from '@agentx/shared';
 import type { MemoryFabric } from './MemoryFabric.js';
+import { getBackgroundTaskPool } from '../runtime/BackgroundTaskPool.js';
 
 export const USER_PROFILE_TAG = 'user_profile';
 
@@ -97,9 +98,6 @@ function parseExtraction(response: string): UserChatMemoryFact[] {
 }
 
 export class UserChatMemoryIngester {
-  private pending = 0;
-  private readonly maxConcurrent = 2;
-
   constructor(
     private fabric: MemoryFabric,
     private embedder: EmbeddingProvider,
@@ -113,10 +111,8 @@ export class UserChatMemoryIngester {
    */
   async ingestTurn(userMessage: string, assistantResponse: string, sourceSessionId: string): Promise<number> {
     if (!shouldExtractUserChatMemory(userMessage)) return 0;
-    if (this.pending >= this.maxConcurrent) return 0;
-
-    this.pending++;
-    try {
+    // Always queue through the Performance background pool — never drop under pressure.
+    return getBackgroundTaskPool().run(async () => {
       const facts = await this.extractFacts(userMessage, assistantResponse);
       if (facts.length === 0) return 0;
 
@@ -149,9 +145,7 @@ export class UserChatMemoryIngester {
         getLogger().info('USER_CHAT_MEMORY', `Stored ${stored} user-profile memory node(s) from session ${sourceSessionId.slice(0, 8)}`);
       }
       return stored;
-    } finally {
-      this.pending--;
-    }
+    });
   }
 
   private async extractFacts(userMessage: string, assistantResponse: string): Promise<UserChatMemoryFact[]> {

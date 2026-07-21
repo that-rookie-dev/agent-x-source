@@ -4,14 +4,10 @@ import ImageOutlinedIcon from '@mui/icons-material/ImageOutlined';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { colors, alphaColor } from '../../theme';
 
+import { openExternalUrl } from '../../utils/open-external-url';
+
 export function openSearchResultUrl(url: string) {
-  if (!url) return;
-  const bridge = typeof window !== 'undefined' ? window.agentx : undefined;
-  if (bridge?.openExternal) {
-    void bridge.openExternal(url);
-    return;
-  }
-  window.open(url, '_blank', 'noopener,noreferrer');
+  openExternalUrl(url);
 }
 
 export function HasImageChip() {

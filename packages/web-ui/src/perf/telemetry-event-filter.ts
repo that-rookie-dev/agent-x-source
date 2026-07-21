@@ -44,6 +44,8 @@ const CHAT_HOT_EVENT_TYPES = new Set([
   'operation_list_files',
   'operation_command_executed',
   'subagent_event',
+  'background_task_complete',
+  'todo_update',
   'crew_worker_progress',
   'crew_worker_spawned',
   'crew_worker_complete',

@@ -1,8 +1,8 @@
-import { join, resolve, normalize } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import { getConfigDir, getDataDir, getCacheDir } from '../platform.js';
+import { join, resolve, normalize, sep } from 'node:path';
+import { mkdirSync, existsSync, realpathSync } from 'node:fs';
+import { getConfigDir, getDataDir, getCacheDir, getDefaultWorkspaceDir } from '../platform.js';
 
-export { getConfigDir, getDataDir, getCacheDir } from '../platform.js';
+export { getConfigDir, getDataDir, getCacheDir, getDefaultWorkspaceDir } from '../platform.js';
 
 export function getConfigPath(): string {
   return join(getConfigDir(), 'config.json');
@@ -21,10 +21,35 @@ export function getMarkdownDocumentsDir(): string {
   return join(getDataDir(), 'markdown');
 }
 
+/**
+ * True when `targetPath` resolves inside `rootPath` (prefix-safe, symlink-aware).
+ * Rejects null bytes and `../` escapes that leave the root.
+ */
+export function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  if (!targetPath || !rootPath) return false;
+  if (targetPath.includes('\0') || rootPath.includes('\0')) return false;
+
+  const root = normalize(resolve(rootPath));
+  const target = normalize(resolve(targetPath));
+  const rootPrefix = root.endsWith(sep) ? root : root + sep;
+  const lexicalOk = target === root || target.startsWith(rootPrefix);
+  if (!lexicalOk) return false;
+
+  // Symlink escape: real path must also stay inside the real root.
+  try {
+    const realRoot = existsSync(root) ? normalize(realpathSync(root)) : root;
+    const realRootPrefix = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    if (!existsSync(target)) return true;
+    const realTarget = normalize(realpathSync(target));
+    return realTarget === realRoot || realTarget.startsWith(realRootPrefix);
+  } catch {
+    return false;
+  }
+}
+
+/** @deprecated Prefer isPathInsideRoot — kept for callers; now delegates to the safe helper. */
 export function isWithinScope(targetPath: string, scopePath: string): boolean {
-  const normalizedTarget = join(targetPath);
-  const normalizedScope = join(scopePath);
-  return normalizedTarget.startsWith(normalizedScope);
+  return isPathInsideRoot(targetPath, scopePath);
 }
 
 /**
@@ -38,6 +63,39 @@ export function getAgentFilesDir(): string {
     mkdirSync(dir, { recursive: true });
   } catch { /* ignore */ }
   return dir;
+}
+
+/**
+ * Ensure the built-in workspace directory exists and return its absolute path.
+ * This is the default Agent-X Workspace until the user picks a custom folder.
+ */
+export function ensureBuiltinWorkspaceDir(): string {
+  const dir = resolve(getDefaultWorkspaceDir());
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch { /* ignore */ }
+  return dir;
+}
+
+/**
+ * Resolve the active Agent-X Workspace from config (custom path) or the built-in default.
+ */
+export function resolveWorkspacePath(workspacePath?: string | null): string {
+  const custom = typeof workspacePath === 'string' ? workspacePath.trim() : '';
+  if (custom) {
+    const resolved = resolve(custom);
+    try {
+      mkdirSync(resolved, { recursive: true });
+    } catch { /* ignore */ }
+    return resolved;
+  }
+  return ensureBuiltinWorkspaceDir();
+}
+
+/** True when path is the built-in app-data workspace (not a user-chosen folder). */
+export function isBuiltinWorkspacePath(path: string): boolean {
+  if (!path) return false;
+  return resolve(path) === resolve(getDefaultWorkspaceDir());
 }
 
 /**
@@ -58,5 +116,5 @@ export function isAgentInternalPath(targetPath: string): boolean {
   if (!targetPath) return false;
   const normalized = normalize(resolve(targetPath));
   const internal = [getAgentFilesDir(), getAgentTempDir(), getDataDir(), getCacheDir()];
-  return internal.some((dir) => normalized === dir || normalized.startsWith(dir + '/'));
+  return internal.some((dir) => normalized === dir || normalized.startsWith(dir + sep) || normalized.startsWith(dir + '/'));
 }

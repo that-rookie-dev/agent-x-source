@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { getLogger, getDataDir, getConfigDir, getCacheDir } from '@agentx/shared';
 import type { AgentXConfig, PermissionRule } from '@agentx/shared';
-import { getEngine, clearEngineDurable, setStorageProgressCallback, applyRuntimeSettings } from '../../engine.js';
+import { getEngine, clearEngineDurable, setStorageProgressCallback, applyPerformanceSettings } from '../../engine.js';
 import {
   validateWebSearchProvider,
   isWebSearchAvailableForChat,
@@ -355,7 +355,7 @@ export function createSettingsRouter(): Router {
       const merged: AgentXConfig = { ...current, permissions: validatedPermissions };
       eng.configManager.save(merged);
       eng.configManager.reload();
-      applyRuntimeSettings(merged);
+      applyPerformanceSettings(merged);
       const executor = eng.toolkit?.executor;
       if (executor && typeof (executor as { setUserConfigRules?: (rules: PermissionRule[]) => void }).setUserConfigRules === 'function') {
         (executor as { setUserConfigRules: (rules: PermissionRule[]) => void }).setUserConfigRules(permissionsToRules(validatedPermissions));

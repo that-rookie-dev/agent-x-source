@@ -1,8 +1,7 @@
 // useChatTokens.ts — extracted from useChatSessionState.tsx
-// Owns token usage state, context data, and context refresh logic.
-// Self-contained: only needs currentSessionId, currentModel, and modelList.
+// Owns token usage state for the right sidebar.
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { ModelInfo } from '../../api';
 
 export interface UseChatTokensInputs {
@@ -11,7 +10,7 @@ export interface UseChatTokensInputs {
   modelList: ModelInfo[];
 }
 
-export function useChatTokens({ currentSessionId, currentModel, modelList }: UseChatTokensInputs) {
+export function useChatTokens({ currentSessionId: _currentSessionId, currentModel, modelList }: UseChatTokensInputs) {
   // ─── Token state ───
   const [tokenUsed, setTokenUsed] = useState(0);
   const [tokenInput, setTokenInput] = useState(0);
@@ -26,50 +25,6 @@ export function useChatTokens({ currentSessionId, currentModel, modelList }: Use
   const tokenOutputRef = useRef(0);
   const tokenReservedRef = useRef(0);
 
-  // ─── Context data state ───
-  const [contextData, setContextData] = useState('');
-  const [rebuildingContext, setRebuildingContext] = useState(false);
-
-  // ─── Stable refs for handler dependencies ───
-  const currentSessionIdRef = useRef(currentSessionId);
-  const rebuildingContextRef = useRef(rebuildingContext);
-
-  useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
-  useEffect(() => { rebuildingContextRef.current = rebuildingContext; }, [rebuildingContext]);
-
-  // ─── applyContextPayload ───
-  const applyContextPayload = useCallback((d: { context?: string; compaction?: string }) => {
-    const parts: string[] = [];
-    if (d.compaction?.trim()) parts.push(`[Compaction summaries]\n${d.compaction.trim()}`);
-    if (d.context?.trim()) parts.push(`[Conversation]\n${d.context.trim()}`);
-    setContextData(parts.length > 0 ? parts.join('\n\n') : '');
-  }, []);
-
-  // ─── refreshContext ───
-  const refreshContext = useCallback(() => {
-    if (!currentSessionIdRef.current) return;
-    fetch(`/api/sessions/${currentSessionIdRef.current}/context`, { credentials: 'include' })
-      .then(r => r.json())
-      .then(applyContextPayload)
-      .catch(() => {});
-  }, [applyContextPayload]);
-
-  // ─── refreshContextRef (kept in sync for telemetry/handleEvent) ───
-  const refreshContextRef = useRef(refreshContext);
-  useEffect(() => { refreshContextRef.current = refreshContext; }, [refreshContext]);
-
-  // ─── handleRebuildContext ───
-  const handleRebuildContext = useCallback(async () => {
-    if (!currentSessionIdRef.current || rebuildingContextRef.current) return;
-    setRebuildingContext(true);
-    try {
-      const r = await fetch(`/api/sessions/${currentSessionIdRef.current}/context/rebuild`, { method: 'POST', credentials: 'include' });
-      const d = await r.json();
-      if (d.ok) refreshContext();
-    } catch { /* ignore */ }
-    setRebuildingContext(false);
-  }, [refreshContext, setRebuildingContext]);
-
   // ─── Update tokenTotal when model's context window is known ───
   useEffect(() => {
     if (!currentModel || modelList.length === 0) return;
@@ -81,16 +36,6 @@ export function useChatTokens({ currentSessionId, currentModel, modelList }: Use
       tokenReservedRef.current = reserve;
     }
   }, [currentModel, modelList]);
-
-  // ─── Refresh context data when session loads or changes ───
-  useEffect(() => {
-    if (!currentSessionId) return;
-    refreshContext();
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') refreshContext();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [currentSessionId, refreshContext]);
 
   // ─── Token percentage (computed) ───
   const tokenPercent = tokenTotal > 0 ? Math.min((tokenUsed / tokenTotal) * 100, 100) : 0;
@@ -109,12 +54,5 @@ export function useChatTokens({ currentSessionId, currentModel, modelList }: Use
     tokenInputRef,
     tokenOutputRef,
     tokenReservedRef,
-    // Context
-    contextData, setContextData,
-    rebuildingContext, setRebuildingContext,
-    applyContextPayload,
-    refreshContext,
-    refreshContextRef,
-    handleRebuildContext,
   };
 }

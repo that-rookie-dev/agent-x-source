@@ -1,7 +1,7 @@
 import { getLogger } from '@agentx/shared';
 import { ProviderFactory } from '@agentx/engine';
 import { getEngine } from '../engine.js';
-import { isCrewCallEventText } from '../voice-speakable.js';
+import { isCallTranscriptMarkerText } from '../voice-speakable.js';
 import {
   REMIND_RECENT_MAX_MESSAGES,
   summaryNeedsDailyRebuild,
@@ -55,7 +55,7 @@ function filterSpeakable(messages: VoiceHistoryMessage[]): VoiceHistoryMessage[]
     if (m.role !== 'user' && m.role !== 'assistant') return false;
     const text = (m.content ?? '').trim();
     if (!text) return false;
-    if (isCrewCallEventText(text)) return false;
+    if (isCallTranscriptMarkerText(text)) return false;
     return true;
   });
 }

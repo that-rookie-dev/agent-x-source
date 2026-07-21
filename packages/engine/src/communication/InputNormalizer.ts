@@ -16,6 +16,11 @@ export class InputNormalizer {
     this.asciiOnly = value;
   }
 
+  /** Bind the active workspace root used to sandbox source=workspace attachments. */
+  setWorkspaceRoot(root: string | null | undefined): void {
+    this.attachmentResolver.setWorkspaceRoot(root);
+  }
+
   async sanitize(turn: InternalUserTurn): Promise<NormalizedTurn> {
     const warnings: NormalizationWarning[] = [];
 

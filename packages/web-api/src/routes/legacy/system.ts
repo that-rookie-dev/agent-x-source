@@ -8,9 +8,9 @@ import { Router } from 'express';
 import os from 'node:os';
 import { join } from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolveRuntimeSettings, getLogger, normalizeClientSituation } from '@agentx/shared';
+import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolvePerformanceSettings, buildPerformanceShowcase, getLogger, normalizeClientSituation } from '@agentx/shared';
 import type { AgentXConfig } from '@agentx/shared';
-import { getEngine, destroyAgent, clearEngine, applyRuntimeSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
+import { getEngine, destroyAgent, clearEngine, applyPerformanceSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
 import { redactConfigForClient, mergeConfigPreservingSecrets, REDACTED_SECRET } from '../../config-redaction.js';
 import { mergeVoiceConfig, getBackgroundTaskPool, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, getLogCollector } from '@agentx/engine';
 import { applyChannelsConfig } from '../../channels-sync.js';
@@ -88,27 +88,39 @@ export function createSystemRouter(): Router {
     }
   });
 
-  r.get('/api/runtime/status', (_req, res) => {
+  const performanceStatusHandler = (_req: import('express').Request, res: import('express').Response) => {
     try {
       const eng = getEngine();
       const cfg = eng.configManager.load();
-      const resolved = resolveRuntimeSettings(cfg.runtime);
+      const showcase = buildPerformanceShowcase(cfg.performance);
+      const resolved = resolvePerformanceSettings(cfg.performance);
       const pool = getBackgroundTaskPool();
       res.json({
         configured: resolved,
-        cpuCores: os.cpus().length,
+        showcase,
+        cpuCores: showcase.host.cpuCores,
         backgroundPool: { running: pool.running, pending: pool.pending },
+        /** ONNX / storage hydrate still need process restart; concurrency retunes live on save. */
+        restartRequiredForOnnx: true,
+        liveConcurrency: true,
         restartRequired: true,
       });
     } catch {
+      const showcase = buildPerformanceShowcase(null);
       res.json({
-        configured: resolveRuntimeSettings(null),
-        cpuCores: os.cpus().length,
+        configured: resolvePerformanceSettings(null),
+        showcase,
+        cpuCores: showcase.host.cpuCores,
         backgroundPool: { running: 0, pending: 0 },
+        restartRequiredForOnnx: true,
+        liveConcurrency: true,
         restartRequired: true,
       });
     }
-  });
+  };
+  r.get('/api/performance/status', performanceStatusHandler);
+  /** @deprecated Prefer /api/performance/status */
+  r.get('/api/runtime/status', performanceStatusHandler);
 
   r.put('/api/config', (req, res) => {
     const eng = getEngine();
@@ -176,7 +188,7 @@ export function createSystemRouter(): Router {
         return;
       }
       eng.configManager.save(merged);
-      applyRuntimeSettings(merged);
+      applyPerformanceSettings(merged);
       applyWebSearchConfigFromAgentConfig(merged);
       void applyChannelsConfig(merged).catch((e: unknown) => {
         getLogger().warn('CHANNELS', `Failed to apply channel config: ${e instanceof Error ? e.message : String(e)}`);

@@ -9,6 +9,7 @@ import { colors, alphaColor } from '../../theme';
 import { models, providers, type ModelInfo } from '../../api';
 import { ExecutionStatusChip } from '../../chat/ExecutionStatusChip';
 import { BypassPermissionsToggle } from './BypassPermissionsToggle';
+import { useChatMessagesContext, useChatTurnControlContext } from './ChatSessionProvider';
 
 export interface ProviderProfile {
   id: string;
@@ -36,8 +37,6 @@ export interface ChatToolbarProps {
   currentProviderId: string;
   setTokenTotal: (n: number) => void;
   setTokenReserved: (n: number) => void;
-  streaming: boolean;
-  turnActivity: { stage: string; step: number; elapsedMs: number } | null;
 }
 
 export function ChatToolbar(props: ChatToolbarProps) {
@@ -49,8 +48,10 @@ export function ChatToolbar(props: ChatToolbarProps) {
     modelMenuAnchor, setModelMenuAnchor,
     currentModel, modelList, loadingModels, currentProviderId,
     setTokenTotal, setTokenReserved,
-    streaming, turnActivity,
   } = props;
+  // Subscribe here (not in ChatInputArea) so stream chunks don't re-render the composer.
+  const { streaming } = useChatTurnControlContext();
+  const { turnActivity } = useChatMessagesContext();
 
   return (
     <>
@@ -88,10 +89,15 @@ export function ChatToolbar(props: ChatToolbarProps) {
           })()}
           onClick={(e) => setProviderMenuAnchor(e.currentTarget)}
           sx={{
-            fontSize: '0.55rem', height: 20, cursor: 'pointer',
-            bgcolor: 'transparent', border: 'none',
+            fontSize: '0.55rem',
+            height: 20,
+            cursor: 'pointer',
+            bgcolor: colors.bg.tertiary,
+            border: `1px solid ${colors.border.default}`,
+            borderRadius: '10px',
             color: currentProvider ? colors.text.secondary : colors.text.dim,
             '&:hover': { bgcolor: colors.bg.primary },
+            '& .MuiChip-label': { px: 1 },
           }}
         />
       </Tooltip>
@@ -123,11 +129,16 @@ export function ChatToolbar(props: ChatToolbarProps) {
           size="small"
           label={currentModel || 'Model'}
           onClick={(e) => setModelMenuAnchor(e.currentTarget)}
-            sx={{
-              fontSize: '0.55rem', height: 20, cursor: 'pointer',
-              bgcolor: 'transparent', border: 'none',
-              color: currentModel ? colors.accent.blue : colors.text.dim,
-              '&:hover': { bgcolor: colors.bg.primary },
+          sx={{
+            fontSize: '0.55rem',
+            height: 20,
+            cursor: 'pointer',
+            bgcolor: colors.bg.tertiary,
+            border: `1px solid ${currentModel ? alphaColor(colors.accent.blue, '40') : colors.border.default}`,
+            borderRadius: '10px',
+            color: currentModel ? colors.accent.blue : colors.text.dim,
+            '&:hover': { bgcolor: colors.bg.primary },
+            '& .MuiChip-label': { px: 1 },
           }}
         />
       </Tooltip>
@@ -137,7 +148,9 @@ export function ChatToolbar(props: ChatToolbarProps) {
         {loadingModels && <MenuItem disabled sx={{ fontSize: '0.65rem' }}><CircularProgress size={12} sx={{ mr: 1 }} />Loading...</MenuItem>}
         {!loadingModels && modelList.length === 0 && (
           <MenuItem disabled sx={{ fontSize: '0.65rem', color: colors.text.dim }}>
-            {currentProvider ? 'No models found' : 'Select a provider first'}
+            {currentProvider
+              ? 'No cleared models — run a benchmark in Providers'
+              : 'Select a provider first'}
           </MenuItem>
         )}
         {modelList.filter(Boolean).map((m) => {

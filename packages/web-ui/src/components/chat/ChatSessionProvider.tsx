@@ -24,6 +24,14 @@ const MESSAGE_KEYS = [
 type MessageKey = typeof MESSAGE_KEYS[number];
 type Messages = Pick<ChatSessionStateReturn, MessageKey>;
 
+/** Low-churn turn flags for the composer — must NOT include `messages` (stream chunks). */
+const TURN_CONTROL_KEYS = [
+  'streaming', 'sessionRestoring',
+] as const;
+
+type TurnControlKey = typeof TURN_CONTROL_KEYS[number];
+type TurnControl = Pick<ChatSessionStateReturn, TurnControlKey>;
+
 // ─── Token keys ───
 const TOKEN_KEYS = [
   'tokenUsed', 'tokenInput', 'tokenOutput', 'tokenReserved',
@@ -120,6 +128,8 @@ const COMPOSER_KEYS = [
   'attachments',
   'webSearchAvailable', 'webSearchForce', 'crewSuggestionRequested',
   'inputClearSignal',
+  /** Needed so the composer can gate sends on leftover incomplete TASKS. */
+  'todoItems',
 ] as const;
 
 type ComposerKey = typeof COMPOSER_KEYS[number];
@@ -141,19 +151,10 @@ const BYPASS_PERMISSIONS_KEYS = [
 type BypassPermissionsKey = typeof BYPASS_PERMISSIONS_KEYS[number];
 type BypassPermissions = Pick<ChatSessionStateReturn, BypassPermissionsKey>;
 
-// ─── Crew add / search keys ───
-const CREW_ADD_KEYS = [
-  'crewAddOpen', 'crewAddQuery', 'crewAddResults', 'crewAddLoading',
-] as const;
-
-type CrewAddKey = typeof CREW_ADD_KEYS[number];
-type CrewAdd = Pick<ChatSessionStateReturn, CrewAddKey>;
-
 // ─── Sidebar keys ───
 const SIDEBAR_KEYS = [
-  'contextExpanded', 'contextData', 'rebuildingContext',
   'tokenExpanded', 'tasksExpanded', 'missionExpanded',
-  'todoItems', 'cwd',
+  'todoItems',
 ] as const;
 
 type SidebarKey = typeof SIDEBAR_KEYS[number];
@@ -162,7 +163,6 @@ type Sidebar = Pick<ChatSessionStateReturn, SidebarKey>;
 // ─── Modal keys ───
 const MODAL_KEYS = [
   'searchOpen', 'checkpointsOpen',
-  'folderPickerOpen', 'folderPickerCallback', 'folderConsentOpen', 'folderPickerLoading',
   'stepCapPrompt',
   'crewDossierOpen', 'crewDossierCrew',
   'clearSessionModalOpen', 'clearSessionBusy',
@@ -191,23 +191,20 @@ const SETTER_KEYS = [
   'setProviderList', 'setModelList', 'setLoadingModels', 'setConfigLoaded',
   'setCrewList',
   'setBypassPermissions', 'toggleBypassPermissions', 'revokeSessionPermissions', 'setToolPermission',
-  'setCwd',
   'setProviderMenuAnchor', 'setModelMenuAnchor',
   'setConnState', 'setLastEventAt',
   'setSearchOpen', 'setCheckpointsOpen',
-  'setFolderPickerOpen', 'setFolderPickerCallback', 'setFolderConsentOpen', 'setFolderPickerLoading',
   'setStepCapPrompt',
   'setCrewDossierOpen', 'setCrewDossierCrew',
   'setClearSessionModalOpen', 'setClearSessionBusy',
   'setWebSearchAvailable', 'setWebSearchForce', 'setCrewSuggestionRequested',
-  'setTodoItems', 'setContextData', 'setRebuildingContext',
-  'setContextExpanded', 'setTokenExpanded', 'setTasksExpanded', 'setMissionExpanded',
-  'setCrewAddQuery', 'setCrewAddResults', 'setCrewAddOpen', 'setCrewAddLoading',
+  'setTodoItems',
+  'setTokenExpanded', 'setTasksExpanded', 'setMissionExpanded',
   'messagesContainerRef', 'bottomRef', 'fileInputRef', 'inputBarRef',
   'isCrewPrivateRef', 'crewPrivateHostRef', 'currentSessionIdRef', 'viewSessionIdRef',
-  'cwdRef', 'chatReturnToRef', 'pendingFolderActionRef', 'tokenReservedRef',
+  'chatReturnToRef', 'tokenReservedRef',
   'pendingSendTextRef', 'jumpSuppressScrollTopRef',
-  'scrollMessagesToBottom', 'ensureSession', 'ensureDefaultCwd',
+  'scrollMessagesToBottom', 'loadOlderMessages', 'resetToLatestMessages', 'ensureSession',
 ] as const;
 
 type SetterKey = typeof SETTER_KEYS[number];
@@ -217,7 +214,7 @@ type Setters = Pick<ChatSessionStateReturn, SetterKey>;
 const INPUT_HANDLER_KEYS = [
   'handleSend', 'handleCancel', 'handleStopAndSend', 'handleAddToQueue', 'handleSteer',
   'handleFileSelect', 'handleRemoveAttachment',
-  'handlePermissionRespond', 'handlePermissionRespondBatch',
+  'handlePermissionRespond', 'handlePermissionRespondBatch', 'handleSwitchToBypassMode',
   'handleWebSearchToggle', 'handleCrewSuggestionToggle',
 ] as const;
 
@@ -228,25 +225,17 @@ type InputHandlers = Pick<ChatSessionStateReturn, InputHandlerKey>;
 const THREAD_HANDLER_KEYS = [
   'handleResend', 'handleQuestionnaireRespond',
   'handleCrewRosterPickerSubmit', 'handleCrewRosterPickerSkip',
-  'handleTurnFeedback', 'handleSaveMarkdown', 'handleViewCrewDossier',
+  'handleTurnFeedback', 'handleSaveMarkdown', 'handleViewCrewDossier', 'handleViewCrewByCallsign',
 ] as const;
 
 type ThreadHandlerKey = typeof THREAD_HANDLER_KEYS[number];
 type ThreadHandlers = Pick<ChatSessionStateReturn, ThreadHandlerKey>;
 
-// ─── Crew handler keys ───
-const CREW_HANDLER_KEYS = [
-  'handleCrewAddSearch', 'handleCrewAddSelect', 'handleCrewRemove', 'handleRebuildContext',
-] as const;
-
-type CrewHandlerKey = typeof CREW_HANDLER_KEYS[number];
-type CrewHandlers = Pick<ChatSessionStateReturn, CrewHandlerKey>;
-
 // ─── Navigation handler keys ───
 const NAVIGATION_HANDLER_KEYS = [
   'handleShowSessions', 'handleSelectSession', 'handleNewSession',
   'handleArchiveSession', 'handleDeleteSessionContent', 'handleDeleteSession',
-  'handleFolderConsentConfirm', 'openChildSession',
+  'openChildSession',
 ] as const;
 
 type NavigationHandlerKey = typeof NAVIGATION_HANDLER_KEYS[number];
@@ -260,6 +249,7 @@ type ModalActions = Pick<ChatSessionStateReturn, ModalActionKey>;
 
 // ─── Contexts ───
 export const ChatMessagesContext = createContext<Messages | undefined>(undefined);
+export const ChatTurnControlContext = createContext<TurnControl | undefined>(undefined);
 export const ChatTokenContext = createContext<Tokens | undefined>(undefined);
 export const ChatCrewContext = createContext<Crew | undefined>(undefined);
 export const ChatConnectionContext = createContext<Connection | undefined>(undefined);
@@ -274,13 +264,11 @@ export const ChatInputGateContext = createContext<InputGate | undefined>(undefin
 export const ChatComposerContext = createContext<Composer | undefined>(undefined);
 export const ChatCrewListContext = createContext<CrewList | undefined>(undefined);
 export const ChatBypassPermissionsContext = createContext<BypassPermissions | undefined>(undefined);
-export const ChatCrewAddContext = createContext<CrewAdd | undefined>(undefined);
 export const ChatSidebarContext = createContext<Sidebar | undefined>(undefined);
 export const ChatModalContext = createContext<Modal | undefined>(undefined);
 export const ChatSessionSettersContext = createContext<Setters | undefined>(undefined);
 export const ChatInputHandlersContext = createContext<InputHandlers | undefined>(undefined);
 export const ChatThreadHandlersContext = createContext<ThreadHandlers | undefined>(undefined);
-export const ChatCrewHandlersContext = createContext<CrewHandlers | undefined>(undefined);
 export const ChatNavigationHandlersContext = createContext<NavigationHandlers | undefined>(undefined);
 export const ChatModalActionsContext = createContext<ModalActions | undefined>(undefined);
 
@@ -292,6 +280,11 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
     return Object.fromEntries(MESSAGE_KEYS.map((k) => [k, state[k]])) as Messages;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, MESSAGE_KEYS.map((k) => state[k]));
+
+  const turnControl = useMemo(() => {
+    return Object.fromEntries(TURN_CONTROL_KEYS.map((k) => [k, state[k]])) as TurnControl;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, TURN_CONTROL_KEYS.map((k) => state[k]));
 
   const tokens = useMemo(() => {
     return Object.fromEntries(TOKEN_KEYS.map((k) => [k, state[k]])) as Tokens;
@@ -364,11 +357,6 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, BYPASS_PERMISSIONS_KEYS.map((k) => state[k]));
 
-  const crewAdd = useMemo(() => {
-    return Object.fromEntries(CREW_ADD_KEYS.map((k) => [k, state[k]])) as CrewAdd;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, CREW_ADD_KEYS.map((k) => state[k]));
-
   const sidebar = useMemo(() => {
     return Object.fromEntries(SIDEBAR_KEYS.map((k) => [k, state[k]])) as Sidebar;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -395,11 +383,6 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, THREAD_HANDLER_KEYS.map((k) => state[k]));
 
-  const crewHandlers = useMemo(() => {
-    return Object.fromEntries(CREW_HANDLER_KEYS.map((k) => [k, state[k]])) as CrewHandlers;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, CREW_HANDLER_KEYS.map((k) => state[k]));
-
   const navigationHandlers = useMemo(() => {
     return Object.fromEntries(NAVIGATION_HANDLER_KEYS.map((k) => [k, state[k]])) as NavigationHandlers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -412,6 +395,7 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
 
   return (
     <ChatMessagesContext.Provider value={messages}>
+      <ChatTurnControlContext.Provider value={turnControl}>
       <ChatTokenContext.Provider value={tokens}>
         <ChatCrewContext.Provider value={crew}>
           <ChatConnectionContext.Provider value={connection}>
@@ -426,25 +410,21 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
                             <ChatComposerContext.Provider value={composer}>
                               <ChatCrewListContext.Provider value={crewList}>
                                 <ChatBypassPermissionsContext.Provider value={bypassPermissions}>
-                                  <ChatCrewAddContext.Provider value={crewAdd}>
                                     <ChatSidebarContext.Provider value={sidebar}>
                                       <ChatModalContext.Provider value={modal}>
                                         <ChatSessionSettersContext.Provider value={setters}>
                                           <ChatInputHandlersContext.Provider value={inputHandlers}>
                                             <ChatThreadHandlersContext.Provider value={threadHandlers}>
-                                              <ChatCrewHandlersContext.Provider value={crewHandlers}>
                                                 <ChatNavigationHandlersContext.Provider value={navigationHandlers}>
                                                   <ChatModalActionsContext.Provider value={modalActions}>
                                                     {children}
                                                   </ChatModalActionsContext.Provider>
                                                 </ChatNavigationHandlersContext.Provider>
-                                              </ChatCrewHandlersContext.Provider>
                                             </ChatThreadHandlersContext.Provider>
                                           </ChatInputHandlersContext.Provider>
                                         </ChatSessionSettersContext.Provider>
                                       </ChatModalContext.Provider>
                                     </ChatSidebarContext.Provider>
-                                  </ChatCrewAddContext.Provider>
                                 </ChatBypassPermissionsContext.Provider>
                               </ChatCrewListContext.Provider>
                             </ChatComposerContext.Provider>
@@ -459,6 +439,7 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
           </ChatConnectionContext.Provider>
         </ChatCrewContext.Provider>
       </ChatTokenContext.Provider>
+      </ChatTurnControlContext.Provider>
     </ChatMessagesContext.Provider>
   );
 }
@@ -467,6 +448,13 @@ export function ChatSessionProvider({ sessionId, coreSession, children }: ChatSe
 export function useChatMessagesContext() {
   const ctx = useContext(ChatMessagesContext);
   if (!ctx) throw new Error('useChatMessagesContext must be used within ChatSessionProvider');
+  return ctx;
+}
+
+/** Streaming / restore flags for the composer — stable across stream chunks. */
+export function useChatTurnControlContext() {
+  const ctx = useContext(ChatTurnControlContext);
+  if (!ctx) throw new Error('useChatTurnControlContext must be used within ChatSessionProvider');
   return ctx;
 }
 
@@ -568,13 +556,6 @@ export function useChatBypassPermissionsContext() {
   return ctx;
 }
 
-/** Access crew add / search values. */
-export function useChatCrewAddContext() {
-  const ctx = useContext(ChatCrewAddContext);
-  if (!ctx) throw new Error('useChatCrewAddContext must be used within ChatSessionProvider');
-  return ctx;
-}
-
 /** Access sidebar values. */
 export function useChatSidebarContext() {
   const ctx = useContext(ChatSidebarContext);
@@ -607,13 +588,6 @@ export function useChatInputHandlersContext() {
 export function useChatThreadHandlersContext() {
   const ctx = useContext(ChatThreadHandlersContext);
   if (!ctx) throw new Error('useChatThreadHandlersContext must be used within ChatSessionProvider');
-  return ctx;
-}
-
-/** Access crew handlers. */
-export function useChatCrewHandlersContext() {
-  const ctx = useContext(ChatCrewHandlersContext);
-  if (!ctx) throw new Error('useChatCrewHandlersContext must be used within ChatSessionProvider');
   return ctx;
 }
 

@@ -25,13 +25,14 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
   const {
     messagesContainerRef, bottomRef,
     setToolEnablePrompt, setShowJumpPill,
-    scrollMessagesToBottom, jumpSuppressScrollTopRef,
+    jumpSuppressScrollTopRef,
+    loadOlderMessages, resetToLatestMessages,
   } = useChatSessionSettersContext();
   // Thread handlers.
   const {
     handleResend, handleQuestionnaireRespond,
     handleCrewRosterPickerSubmit, handleCrewRosterPickerSkip,
-    handleViewCrewDossier, handleTurnFeedback, handleSaveMarkdown,
+    handleViewCrewDossier, handleViewCrewByCallsign, handleTurnFeedback, handleSaveMarkdown,
   } = useChatThreadHandlersContext();
   // Navigation handlers.
   const { openChildSession } = useChatNavigationHandlersContext();
@@ -42,8 +43,11 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
     const el = messagesContainerRef.current;
     if (el) jumpSuppressScrollTopRef.current = el.scrollTop;
     setShowJumpPill(false);
-    scrollMessagesToBottom('smooth');
-  }, [messagesContainerRef, jumpSuppressScrollTopRef, setShowJumpPill, scrollMessagesToBottom]);
+    void resetToLatestMessages();
+  }, [messagesContainerRef, jumpSuppressScrollTopRef, setShowJumpPill, resetToLatestMessages]);
+  const handleLoadOlder = useCallback(() => {
+    void loadOlderMessages();
+  }, [loadOlderMessages]);
 
   return (
     <Box
@@ -66,6 +70,7 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
         streaming={streaming}
         loadingOlderMessages={loadingOlderMessages}
         hasOlderMessages={hasOlderMessages}
+        onLoadOlderMessages={handleLoadOlder}
         loadingSteps={loadingSteps}
         freezeMessageLayout={freezeMessageLayout || loadingOlderMessages || sessionRestoring || !initialScrollDone}
         pendingFeedbackMessageId={sessionRestoring ? null : pendingFeedbackMessageId}
@@ -78,6 +83,7 @@ export const ChatThreadArea = React.memo(function ChatThreadArea() {
         onCrewRosterPickerSubmit={handleCrewRosterPickerSubmit}
         onCrewRosterPickerSkip={handleCrewRosterPickerSkip}
         onViewCrewDossier={handleViewCrewDossier}
+        onViewCrewByCallsign={handleViewCrewByCallsign}
         onTurnFeedback={handleTurnFeedback}
         onSaveMarkdown={handleSaveMarkdown}
       />

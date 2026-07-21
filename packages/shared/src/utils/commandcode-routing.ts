@@ -9,7 +9,7 @@ export const COMMANDCODE_OPENAI_V1_BASE = 'https://api.commandcode.ai/provider/v
  */
 export const COMMANDCODE_ANTHROPIC_ROOT = 'https://api.commandcode.ai/provider';
 
-/** Native API transport shapes exposed by the CommandCode Provider API. */
+/** Native API transport shapes exposed by this multi-protocol provider API. */
 export type CommandCodeApiProtocol = 'openai-chat' | 'anthropic-messages';
 
 const API_PROTOCOL_FIELD_ALIASES = [
@@ -45,7 +45,7 @@ function normalizeProtocolToken(raw: string): CommandCodeApiProtocol | undefined
   return undefined;
 }
 
-/** Read per-model protocol metadata when CommandCode (or a proxy) exposes it on /models records. */
+/** Read per-model protocol metadata when the provider (or a proxy) exposes it on /models records. */
 export function readCommandCodeProtocolFromApiRecord(
   record: Record<string, unknown>,
 ): CommandCodeApiProtocol | undefined {

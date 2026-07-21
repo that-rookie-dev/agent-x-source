@@ -34,7 +34,10 @@ export function getHomeDir(): string {
   return HOME;
 }
 
-/** Default Agent-X workspace — user's Desktop folder. */
+/**
+ * Built-in Agent-X workspace — lives inside the app data directory so it
+ * needs no user folder permission (e.g. ~/.local/share/agentx/workspace).
+ */
 export function getDefaultWorkspaceDir(): string {
-  return join(HOME, 'Desktop');
+  return join(getDataDir(), 'workspace');
 }

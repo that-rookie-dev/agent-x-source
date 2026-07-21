@@ -96,11 +96,30 @@ export function Console() {
   const navigate = useNavigate();
   const { unreadNotificationCount } = useAppLive();
   const activePanel = (sessionId ? 'chat' : (panel || 'dashboard')) as PanelId;
+  // Keep the last chat session mounted (hidden) so an active turn's streaming
+  // bubble / tools / sub-agent cards survive navigating to other Console panels.
+  const [keptChatSessionId, setKeptChatSessionId] = useState<string | undefined>(sessionId);
+  useEffect(() => {
+    if (sessionId) setKeptChatSessionId(sessionId);
+  }, [sessionId]);
+  const showChat = activePanel === 'chat';
+  // While viewing chat: honor the URL (thread vs session list).
+  // While on other panels: keep the last thread mounted (hidden) so mid-turn UI survives.
+  const panelSessionId = showChat ? sessionId : keptChatSessionId;
+  const mountChat = showChat || Boolean(keptChatSessionId);
   useEffect(() => {
     if (panel === 'health') navigate('/console/agent-x', { replace: true });
     // Legacy RAG Studio route — product was decommissioned in favor of Knowledge Base.
     if (panel === 'rag-studio') navigate('/console/knowledge-base', { replace: true });
   }, [panel, navigate]);
+
+  // Chat stays mounted while Settings changes model — resync when returning to chat.
+  useEffect(() => {
+    if (!showChat) return;
+    void import('../runtime-config-sync.js').then(({ emitRuntimeConfigChanged }) => {
+      emitRuntimeConfigChanged({ kind: 'chat-visible' });
+    });
+  }, [showChat]);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsPosition, setLogsPosition] = useState<'bottom' | 'right'>('bottom');
   const [panelSize, setPanelSize] = useState(BOTTOM_PANEL_DEFAULT_HEIGHT);
@@ -193,22 +212,38 @@ export function Console() {
         <Sidebar active={activePanel} onNavigate={handleNavigate} highlightCrews={false} unreadNotificationCount={unreadNotificationCount} />
         <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', flexDirection: isVertical ? 'row' : 'column' }}>
           <Box sx={{ flex: 1, overflow: 'hidden' }}>
-            <PanelErrorBoundary key={activePanel}>
+            <PanelErrorBoundary>
               <Suspense fallback={<ChatPanelFallback />}>
-                {activePanel === 'dashboard' && <BentoDashboardPanel />}
-                {activePanel === 'chat' && <ChatPanel sessionId={sessionId} />}
-                {activePanel === 'calls' && <CallsPanel />}
-                {activePanel === 'agent-x' && <AgentXCoreChat />}
-                {activePanel === 'tools' && <ToolsPanel />}
-                {activePanel === 'plugins' && <PluginsPanel />}
-                {activePanel === 'settings' && <SettingsPanel />}
-                {activePanel === 'automation' && <AutomationPanel />}
-                {activePanel === 'orchestrator' && <OrchestratorPanel />}
-                {activePanel === 'crews' && <CrewsPanel />}
-                {activePanel === 'mcp-store' && <McpStorePage />}
-                {activePanel === 'notifications' && <NotificationsPanel />}
-                {activePanel === 'markdown' && <MarkdownPanel />}
-                {activePanel === 'knowledge-base' && <KnowledgeBasePanel />}
+                {/* Chat stays mounted (hidden) across panel switches so mid-turn UI is preserved. */}
+                {mountChat && (
+                  <Box
+                    sx={{
+                      height: '100%',
+                      display: showChat ? 'flex' : 'none',
+                      flexDirection: 'column',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <ChatPanel sessionId={panelSessionId} />
+                  </Box>
+                )}
+                {!showChat && (
+                  <>
+                    {activePanel === 'dashboard' && <BentoDashboardPanel />}
+                    {activePanel === 'calls' && <CallsPanel />}
+                    {activePanel === 'agent-x' && <AgentXCoreChat />}
+                    {activePanel === 'tools' && <ToolsPanel />}
+                    {activePanel === 'plugins' && <PluginsPanel />}
+                    {activePanel === 'settings' && <SettingsPanel />}
+                    {activePanel === 'automation' && <AutomationPanel />}
+                    {activePanel === 'orchestrator' && <OrchestratorPanel />}
+                    {activePanel === 'crews' && <CrewsPanel />}
+                    {activePanel === 'mcp-store' && <McpStorePage />}
+                    {activePanel === 'notifications' && <NotificationsPanel />}
+                    {activePanel === 'markdown' && <MarkdownPanel />}
+                    {activePanel === 'knowledge-base' && <KnowledgeBasePanel />}
+                  </>
+                )}
               </Suspense>
             </PanelErrorBoundary>
           </Box>

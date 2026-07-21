@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { decideCallDivider } from '@agentx/shared/browser';
 import { crewChat, sessions } from '../../api';
 import { useVoiceOptional } from '../voice/VoiceProvider';
 import { useVoiceCommsSession } from '../../hooks/useVoiceCommsSession';
@@ -90,11 +91,35 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
     if (!trimmed) return;
     setTranscript((prev) => {
       const last = prev[prev.length - 1];
-      if (last && last.role === role && last.text === trimmed) return prev;
-      if (last && last.role === role && role !== 'system' && trimmed.startsWith(last.text)) {
+      if (last && last.role === role && last.text === trimmed && !last.divider) return prev;
+      if (last && last.role === role && role !== 'system' && !last.divider && trimmed.startsWith(last.text)) {
         return [...prev.slice(0, -1), { ...last, text: trimmed, at: Date.now() }];
       }
-      return [...prev.slice(-60), { id: crypto.randomUUID(), role, text: trimmed, at: Date.now() }];
+      const at = Date.now();
+      const next: CrewCallTranscriptLine[] = [];
+      // Spoken turns only — mirror server write-time divider (O(1), not a full rebuild).
+      if (role === 'operator' || role === 'crew') {
+        let prevSpokenAt: number | null = null;
+        for (let i = prev.length - 1; i >= 0; i--) {
+          const line = prev[i]!;
+          if (!line.divider && (line.role === 'operator' || line.role === 'crew')) {
+            prevSpokenAt = line.at;
+            break;
+          }
+        }
+        const divider = decideCallDivider(prevSpokenAt, at);
+        if (divider) {
+          next.push({
+            id: crypto.randomUUID(),
+            role: 'system',
+            text: divider.label,
+            at,
+            divider: divider.variant,
+          });
+        }
+      }
+      next.push({ id: crypto.randomUUID(), role, text: trimmed, at });
+      return [...prev, ...next].slice(-60);
     });
   }, []);
 
@@ -313,6 +338,17 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
   const endCall = useCallback(() => {
     setPhase((prev) => (prev === 'idle' ? prev : 'ending'));
     setMinimized(false);
+    const sid = sessionId;
+    const elapsed = (() => {
+      const running = runningSinceRef.current;
+      const live = running != null ? Date.now() - running : 0;
+      return accruedMsRef.current + live;
+    })();
+    if (sid && elapsed > 0) {
+      void crewChat.persistVoiceDivider(sid, { variant: 'duration', elapsedMs: elapsed }).catch(() => {
+        /* best-effort — history still has spoken turns */
+      });
+    }
     if (endingTimerRef.current) window.clearTimeout(endingTimerRef.current);
     endingTimerRef.current = window.setTimeout(() => {
       setPhase('idle');
@@ -335,7 +371,7 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
       startGuardRef.current = false;
       endingTimerRef.current = null;
     }, 280);
-  }, [voice]);
+  }, [voice, sessionId]);
 
   const holdCall = useCallback(() => {
     if (phase !== 'linked') return;
@@ -505,6 +541,10 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
         open={Boolean(comms.session.permissionPrompt)}
         prompt={comms.session.permissionPrompt}
         onRespond={comms.session.respondToPermission}
+        onSwitchToBypass={() => {
+          comms.session.setToggles({ bypassChip: true });
+          comms.session.respondToPermission('approve_all');
+        }}
       />
     </CrewCallContext.Provider>
   );

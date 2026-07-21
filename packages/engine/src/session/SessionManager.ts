@@ -1,6 +1,12 @@
 import type { Session, SessionStatus, SessionEvent, StorableTokenLog, StorableSession } from '@agentx/shared';
 import type { StorageAdapter } from '@agentx/shared';
-import { generateSessionId, generateId, crewVoiceSessionId, isCrewVoiceSessionId } from '@agentx/shared';
+import {
+  buildListDayDivider,
+  generateSessionId,
+  generateId,
+  crewVoiceSessionId,
+  isCrewVoiceSessionId,
+} from '@agentx/shared';
 import { TokenTracker } from './TokenTracker.js';
 import { normalizeSessionUpdates, EMPTY_SESSION_KPIS, hostCrewSnapshotFromInput, hostCrewSnapshotPatch } from './session-field-utils.js';
 import type { SessionListKpis } from './session-field-utils.js';
@@ -50,6 +56,8 @@ export class SessionManager {
       hostCrewColor: session.hostCrewColor ?? null,
       hostCrewCatalogId: session.hostCrewCatalogId ?? null,
       hostCrewCategoryId: session.hostCrewCategoryId ?? null,
+      listDayKey: session.listDayKey ?? null,
+      listDayLabel: session.listDayLabel ?? null,
     });
   }
 
@@ -321,6 +329,8 @@ export class SessionManager {
     title?: string,
   ): Session {
     const contextWindow = 128_000;
+    const now = new Date().toISOString();
+    const { dayKey: listDayKey, dayLabel: listDayLabel } = buildListDayDivider(now);
     return {
       id: id ?? generateSessionId(),
       title: title ?? (parentId ? 'Background work' : 'New Session'),
@@ -332,8 +342,10 @@ export class SessionManager {
       tokenUsed: 0,
       tokenAvailable: contextWindow,
       bypassPermissions: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      listDayKey,
+      listDayLabel,
+      createdAt: now,
+      updatedAt: now,
     };
   }
 

@@ -1,11 +1,13 @@
 import type { AgentXConfig, PermissionRule, ToolResult } from '@agentx/shared';
 import { generateSubSessionId, getLogger } from '@agentx/shared';
 import { Agent } from './Agent.js';
+import type { SessionManager } from '../session/SessionManager.js';
 import { AgentEventBus } from '../EventBus.js';
 import type { ToolExecutor } from '../tools/ToolExecutor.js';
 import type { ToolRegistry } from '../tools/ToolRegistry.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
 import type { CrewMissionContext } from './CrewMissionContext.js';
+import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { randomUUID } from 'node:crypto';
 
 const logger = getLogger();
@@ -133,6 +135,20 @@ export class SmartSubAgent {
         label: this.displayName ?? (this.childSessionKind === 'crew_worker' ? 'Crew worker' : 'Sub-Agent'),
       });
 
+      const parentSessionManager = (this.parentAgent as unknown as {
+        sessionManager?: SessionManager;
+      }).sessionManager;
+
+      const onPart: PartPersistFn = (sessionId, part) => {
+        try {
+          const store = parentSessionManager?.getStorageAdapter?.();
+          if (store && typeof store.insertPart === 'function') {
+            // PartPersistFn and StorageAdapter.insertPart share the same shape at runtime.
+            (store.insertPart as (sid: string, p: typeof part) => void)(sessionId, part);
+          }
+        } catch { /* best-effort */ }
+      };
+
       subAgent = new Agent({
         config: this.config,
         sessionId: this.sessionId,
@@ -144,6 +160,7 @@ export class SmartSubAgent {
         toolRegistry,
         toolExecutor,
         eventBus: subEventBus,
+        onPart,
         missionContextProvider: this.missionContext
           ? () => ({
             revision: this.missionContext!.contextRevision,
@@ -152,9 +169,15 @@ export class SmartSubAgent {
           : undefined,
       });
 
-      // Wire up session-based persistence so the child session is replayable
-      const sessionManager = (this.parentAgent as unknown as { sessionManager?: { store?: { insertMessage?: (msg: Record<string, unknown>) => void; insertPart?: (sid: string, part: Record<string, unknown>) => void } } }).sessionManager;
-      const childStore = sessionManager?.store;
+      // Critical: without SessionManager the child never persists user/assistant messages,
+      // so the dedicated sub-agent panel stays empty.
+      if (parentSessionManager) {
+        subAgent.setSessionManager(parentSessionManager);
+      }
+
+      const childStore = parentSessionManager?.getStorageAdapter?.() as
+        | { insertPart?: (sid: string, part: Record<string, unknown>) => void }
+        | undefined;
 
       // Persist tool parts in real-time as the child agent runs, and forward to parent UI
       subEventBus.on((event) => {
@@ -185,9 +208,22 @@ export class SmartSubAgent {
           }
         }
 
-        // Forward completion events to parent UI
-        if (evType === 'message_received' || evType === 'tool_executing' || evType === 'tool_complete') {
-          (this.parentAgent as unknown as { emit?: (event: unknown) => void }).emit?.(event);
+        // Forward to parent UI tagged with subagentId so the sub-agent drawer can stream live
+        // (main chat only shows "waiting for sub-agent" — not these details).
+        if (
+          evType === 'message_received'
+          || evType === 'tool_executing'
+          || evType === 'tool_complete'
+          || evType === 'tool_output'
+          || evType === 'thinking_delta'
+          || evType === 'reasoning_delta'
+          || evType === 'stream_chunk'
+        ) {
+          (this.parentAgent as unknown as { emit?: (event: unknown) => void }).emit?.({
+            type: 'subagent_event',
+            subagentId: this.sessionId,
+            parentEvent: event,
+          });
         }
 
         // Capture tool calls for the result

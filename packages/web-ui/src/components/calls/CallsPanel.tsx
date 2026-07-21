@@ -36,6 +36,7 @@ import {
   mapCallHistoryMessages,
   type CrewCallTranscriptLine,
 } from '../crew-call';
+import { CallTranscriptDivider } from '../crew-call/CallTranscriptDivider';
 import { groupCallSessionsByDay, sortCallsLatestFirst } from './call-list-groups';
 
 const MONO = "'JetBrains Mono', monospace";
@@ -202,12 +203,13 @@ const CallRow = memo(function CallRow({
 
 function TranscriptBody({
   lines,
-  callsign,
+  speakerName,
   accent,
   loading,
 }: {
   lines: CrewCallTranscriptLine[];
-  callsign: string;
+  /** Display name of the crew member (not callsign). */
+  speakerName: string;
   accent: string;
   loading: boolean;
 }) {
@@ -252,14 +254,26 @@ function TranscriptBody({
       }}
     >
       {lines.map((line) => {
+        if (line.divider) {
+          return (
+            <CallTranscriptDivider
+              key={line.id}
+              label={line.text}
+              variant={line.divider}
+              mutedColor={colors.text.dim}
+              lineColor={alphaColor(colors.text.dim, 0.25)}
+              monoFont={MONO}
+            />
+          );
+        }
         const color =
           line.role === 'operator' ? colors.accent.cyan
             : line.role === 'crew' ? accent
               : colors.text.dim;
-        const label = line.role === 'operator' ? 'YOU' : line.role === 'crew' ? callsign.toUpperCase() : 'SYS';
+        const label = line.role === 'operator' ? 'You' : line.role === 'crew' ? speakerName : 'System';
         return (
           <Box key={line.id} sx={{ contain: 'layout style' }}>
-            <Typography sx={{ fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.1em', color, mb: 0.2 }}>
+            <Typography sx={{ fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.06em', color, mb: 0.2 }}>
               {label}
             </Typography>
             <Typography sx={{ fontFamily: MONO, fontSize: '0.7rem', color: colors.text.secondary, lineHeight: 1.45 }}>
@@ -590,8 +604,10 @@ export function CallsPanel() {
               </Box>
             ) : (
               grouped.map((group, groupIdx) => (
-                <Box key={group.dayKey}>
-                  <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                <Box key={group.dayKey || `ungrouped-${groupIdx}`}>
+                  {group.label ? (
+                    <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                  ) : null}
                   {group.items.map((row) => (
                     <CallRow
                       key={row.id}
@@ -708,7 +724,7 @@ export function CallsPanel() {
 
               <TranscriptBody
                 lines={transcript}
-                callsign={selected.hostCrewCallsign ?? 'crew'}
+                speakerName={selected.hostCrewName?.trim() || selected.hostCrewCallsign || 'Crew'}
                 accent={selectedAccent}
                 loading={transcriptLoading}
               />

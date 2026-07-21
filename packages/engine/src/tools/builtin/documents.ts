@@ -1,24 +1,8 @@
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname, isAbsolute } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
-import { isAgentInternalPath } from '@agentx/shared';
-
-/**
- * Resolve a user-supplied filename against the agent's scope path.
- * Strips leading "/" from absolute paths so they are treated as relative
- * to the workspace, preventing EROFS errors when the agent passes "/file.md".
- * App-internal paths (data/tmp/files) are preserved as-is so internal file
- * processing can use absolute paths to the Agent-X sandbox directories.
- */
-function resolveScopedPath(scopePath: string, file: string): string {
-  if (isAbsolute(file) && isAgentInternalPath(file)) {
-    return resolve(file);
-  }
-  const safe = isAbsolute(file) ? file.slice(1) : file;
-  return resolve(scopePath, safe);
-}
+import { resolveScopedPath } from './filesystem.js';
 
 /**
  * Create a CSV file from structured data.

@@ -2,8 +2,7 @@
  * Search & similarity helpers extracted from MemoryFabric (REFACTOR-5).
  *
  * Standalone functions for vector search, weighted retrieval, context
- * assembly, and duplicate detection. The MemoryFabric class delegates to
- * these to keep the main module focused on storage orchestration.
+ * assembly, hybrid lexical search, and duplicate detection.
  */
 import type { Pool } from 'pg';
 import { toHalfvecLiteral } from './VectorQuantizer.js';
@@ -14,6 +13,8 @@ import type {
   GraphWalkResult,
   ContextAssemblyResult,
 } from './MemoryFabric.js';
+import { getRetrievalSettings } from './retrieval/settings.js';
+import { mergeRrf } from './retrieval/hybrid.js';
 
 /** Context required by the search helpers. */
 export interface SearchContext {
@@ -22,14 +23,60 @@ export interface SearchContext {
   isHalfvecAvailable: () => Promise<boolean>;
   /** Fire (touch) a neuron — update access count and last-accessed timestamp. */
   fireNeuron: (nodeId: string) => Promise<void>;
+  /** Batch-touch neurons (preferred on hot paths). */
+  fireNeurons?: (nodeIds: string[]) => Promise<void>;
   /** Graph walk from a set of start nodes. */
   graphWalk: (options: GraphWalkOptions) => Promise<GraphWalkResult>;
 }
 
+let contentTsvAvailable: boolean | null = null;
+
+async function hasContentTsv(pool: Pool): Promise<boolean> {
+  if (contentTsvAvailable != null) return contentTsvAvailable;
+  try {
+    const { rows } = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'memory_nodes' AND column_name = 'content_tsv'
+       ) AS exists`,
+    );
+    contentTsvAvailable = !!rows[0]?.exists;
+  } catch {
+    contentTsvAvailable = false;
+  }
+  return contentTsvAvailable;
+}
+
+/** Reset FTS availability cache (tests / after migration). */
+export function resetContentTsvCache(): void {
+  contentTsvAvailable = null;
+}
+
+async function touchNeurons(ctx: SearchContext, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  if (ctx.fireNeurons) {
+    await ctx.fireNeurons(ids);
+    return;
+  }
+  await Promise.all(ids.map((id) => ctx.fireNeuron(id)));
+}
+
+function sessionFilterSql(sessionId: string | null | undefined): string {
+  if (sessionId === null) return 'AND n.session_id IS NULL';
+  if (sessionId) return `AND n.session_id = '${sessionId.replace(/'/g, "''")}'`;
+  return '';
+}
+
+const NODE_SELECT = `n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
+            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
+            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
+            n.heading_path AS "headingPath", n.unit_type AS "unitType", n.provenance AS "provenance",
+            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"`;
+
 export async function vectorSearch(
   ctx: SearchContext,
   embedding: number[],
-  options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {},
+  options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; touch?: boolean } = {},
 ): Promise<MemoryNode[]> {
   const limit = options.limit ?? 10;
   const useHalfvec = await ctx.isHalfvecAvailable();
@@ -38,19 +85,10 @@ export async function vectorSearch(
   const embeddingColumn = useHalfvec ? 'embedding_halfvec' : 'embedding';
   const vectorCast = useHalfvec ? 'halfvec' : 'vector';
   const vectorValue = useHalfvec ? halfvecLiteral : vectorLiteral;
-
-  let sessionFilter = '';
-  if (options.sessionId === null) {
-    sessionFilter = 'AND n.session_id IS NULL';
-  } else if (options.sessionId) {
-    sessionFilter = `AND n.session_id = '${options.sessionId}'`;
-  }
+  const sessionFilter = sessionFilterSql(options.sessionId);
 
   const { rows } = await ctx.pool.query<MemoryNode>(
-    `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt",
+    `SELECT ${NODE_SELECT},
             n.${embeddingColumn} <=> $1::${vectorCast} AS distance
      FROM memory_nodes n
      LEFT JOIN neuron_activity a ON a.node_id = n.id
@@ -64,10 +102,107 @@ export async function vectorSearch(
      LIMIT $2`,
     [vectorValue, limit],
   );
-  for (const row of rows) {
-    await ctx.fireNeuron(row.id);
+  if (options.touch !== false) {
+    await touchNeurons(ctx, rows.map((r) => r.id));
   }
   return rows;
+}
+
+/**
+ * Full-text lexical search over content_tsv (GIN). Returns empty when column absent.
+ */
+export async function lexicalSearch(
+  ctx: SearchContext,
+  query: string,
+  options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; touch?: boolean } = {},
+): Promise<MemoryNode[]> {
+  const q = query.trim();
+  if (!q) return [];
+  if (!(await hasContentTsv(ctx.pool))) return [];
+
+  const limit = options.limit ?? getRetrievalSettings().lexicalOverFetch;
+  const sessionFilter = sessionFilterSql(options.sessionId);
+
+  try {
+    const { rows } = await ctx.pool.query<MemoryNode & { score: number }>(
+      `SELECT ${NODE_SELECT},
+              ts_rank_cd(n.content_tsv, plainto_tsquery('english', $1)) AS score,
+              NULL::float8 AS distance
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.status = 'active'
+         AND n.content_tsv @@ plainto_tsquery('english', $1)
+         ${options.category ? `AND n.category = '${options.category}'` : ''}
+         ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
+         ${sessionFilter}
+         ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
+       ORDER BY score DESC
+       LIMIT $2`,
+      [q, limit],
+    );
+    if (options.touch !== false) {
+      await touchNeurons(ctx, rows.map((r) => r.id));
+    }
+    return rows;
+  } catch {
+    // Column/index race during migration — degrade to empty lexical set.
+    contentTsvAvailable = false;
+    return [];
+  }
+}
+
+/**
+ * Hybrid vector ∪ lexical via RRF. Falls back to vector-only when FTS unavailable or disabled.
+ */
+export async function hybridSearch(
+  ctx: SearchContext,
+  embedding: number[],
+  query: string,
+  options: {
+    limit?: number;
+    category?: MemoryNodeCategory;
+    agentId?: string;
+    tag?: string;
+    sessionId?: string | null;
+    vectorLimit?: number;
+    lexicalLimit?: number;
+  } = {},
+): Promise<MemoryNode[]> {
+  const settings = getRetrievalSettings();
+  const limit = options.limit ?? 10;
+  const vectorLimit = options.vectorLimit ?? Math.max(limit, settings.vectorOverFetch);
+  const lexicalLimit = options.lexicalLimit ?? Math.max(limit, settings.lexicalOverFetch);
+
+  const vectorHits = await vectorSearch(ctx, embedding, {
+    ...options,
+    limit: vectorLimit,
+    touch: false,
+  });
+
+  if (!settings.hybridEnabled) {
+    await touchNeurons(ctx, vectorHits.slice(0, limit).map((r) => r.id));
+    return vectorHits.slice(0, limit);
+  }
+
+  const lexicalHits = await lexicalSearch(ctx, query, {
+    ...options,
+    limit: lexicalLimit,
+    touch: false,
+  });
+
+  if (!lexicalHits.length) {
+    await touchNeurons(ctx, vectorHits.slice(0, limit).map((r) => r.id));
+    return vectorHits.slice(0, limit);
+  }
+
+  const merged = mergeRrf(
+    vectorHits.map((n) => ({ ...n, id: n.id })),
+    lexicalHits.map((n) => ({ ...n, id: n.id, score: (n as MemoryNode & { score?: number }).score })),
+    { limit },
+  );
+
+  await touchNeurons(ctx, merged.map((r) => r.id));
+  return merged;
 }
 
 /**
@@ -88,10 +223,7 @@ export async function searchWeighted(
   const vectorValue = useHalfvec ? halfvecLiteral : vectorLiteral;
 
   const { rows } = await ctx.pool.query<MemoryNode & { score: number; edgeWeight: number }>(
-    `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt",
+    `SELECT ${NODE_SELECT},
             1 - (n.${embeddingColumn} <=> $1::${vectorCast}) AS score,
             COALESCE((
               SELECT AVG(e.weight) FROM memory_edges e
@@ -110,9 +242,7 @@ export async function searchWeighted(
      LIMIT $2`,
     [vectorValue, limit],
   );
-  for (const row of rows) {
-    await ctx.fireNeuron(row.id);
-  }
+  await touchNeurons(ctx, rows.map((r) => r.id));
   return rows;
 }
 
@@ -122,16 +252,14 @@ export async function assembleContext(
   embedding: number[],
   options: { agentId?: string; episodicLimit?: number; semanticLimit?: number; graphDepth?: number } = {},
 ): Promise<ContextAssemblyResult> {
-  const episodicLimit = options.episodicLimit ?? 5;
+  const settings = getRetrievalSettings();
+  const episodicLimit = options.episodicLimit ?? settings.episodicLimit;
   const semanticLimit = options.semanticLimit ?? 10;
-  const graphDepth = options.graphDepth ?? 3;
+  const graphDepth = options.graphDepth ?? settings.graphExpandDepth;
 
   // Tier 1: short-term episodic memory of the active session.
   const { rows: episodic } = await ctx.pool.query<MemoryNode>(
-    `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+    `SELECT ${NODE_SELECT}
      FROM memory_nodes n
      LEFT JOIN neuron_activity a ON a.node_id = n.id
      WHERE n.session_id = $1
@@ -144,10 +272,7 @@ export async function assembleContext(
   // Tier 2: semantic vector match across the active agent's memory.
   const agentFilter = options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : '';
   const { rows: semantic } = await ctx.pool.query<MemoryNode>(
-    `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt",
+    `SELECT ${NODE_SELECT},
             n.embedding <=> $1::vector AS distance
      FROM memory_nodes n
      LEFT JOIN neuron_activity a ON a.node_id = n.id
@@ -159,20 +284,23 @@ export async function assembleContext(
     [`[${embedding.join(',')}]`, semanticLimit],
   );
 
-  // Tier 3: graph walk from the semantic hits.
-  const startNodeIds = semantic.map((n) => n.id);
-  const graphResult = startNodeIds.length
-    ? await ctx.graphWalk({ startNodeIds, maxDepth: graphDepth })
+  // Tier 3: controlled graph walk (depth default 1; order+semantic edge types).
+  const startNodeIds = semantic.slice(0, settings.graphExpandOnlyOnTopHits).map((n) => n.id);
+  const graphResult = startNodeIds.length && graphDepth > 0
+    ? await ctx.graphWalk({
+        startNodeIds,
+        maxDepth: graphDepth,
+        maxFanOut: 2,
+        minWeight: 0.2,
+        relationshipTypes: ['FOLLOWS', 'PRECEDES', 'NEXT_STEP', 'RELATED_TO', 'SYNONYM'],
+      })
     : { nodeIds: [], edges: [] };
 
   const graphNodeIds = graphResult.nodeIds.filter((id) => !startNodeIds.includes(id));
   const graph: MemoryNode[] = [];
   if (graphNodeIds.length) {
     const { rows } = await ctx.pool.query<MemoryNode>(
-      `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-              n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-              n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-              COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+      `SELECT ${NODE_SELECT}
        FROM memory_nodes n
        LEFT JOIN neuron_activity a ON a.node_id = n.id
        WHERE n.id = ANY($1::uuid[])
@@ -192,10 +320,7 @@ export async function findDuplicate(
   category?: MemoryNodeCategory,
 ): Promise<MemoryNode | null> {
   const { rows } = await ctx.pool.query<MemoryNode>(
-    `SELECT n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
-            n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
-            n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
-            COALESCE(a.access_count, 0)::integer AS "accessCount", a.last_accessed_at AS "lastAccessedAt"
+    `SELECT ${NODE_SELECT}
      FROM memory_nodes n
      LEFT JOIN neuron_activity a ON a.node_id = n.id
      WHERE n.embedding <=> $1::vector < $2

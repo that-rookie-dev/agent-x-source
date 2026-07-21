@@ -571,6 +571,8 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Button
+                      size="small"
+                      variant="outlined"
                       onClick={() => { void revokeXaiKey(); }}
                       sx={settingsBtnGhostSx}
                     >
@@ -597,6 +599,8 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
                   />
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Button
+                      size="small"
+                      variant="outlined"
                       onClick={() => { void validateXaiKey(); }}
                       disabled={xaiValidating || !xaiApiKeyInput.trim()}
                       sx={settingsBtnPrimarySx}
@@ -679,14 +683,21 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
               )}
             </Box>
 
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-              <Button
-                onClick={() => { void previewVoice(); }}
-                disabled={previewing || !hasXaiKey}
-                sx={settingsBtnGhostSx}
-              >
-                {previewing ? 'Generating…' : 'Test Voice'}
-              </Button>
+            <Box sx={{ mb: 1 }}>
+              <VoiceMicTestPanel
+                compact
+                leading={
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => { void previewVoice(); }}
+                    disabled={previewing || !hasXaiKey}
+                    sx={settingsBtnGhostSx}
+                  >
+                    {previewing ? 'Generating…' : 'Test Voice'}
+                  </Button>
+                }
+              />
             </Box>
           </>
           ) : null}
@@ -776,17 +787,21 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
           </Box>
 
           <Box sx={{ mt: 2, pt: 2, borderTop: `1px solid ${settingsTheme.border.default}` }}>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-              <Button
-                onClick={() => { void previewVoice(); }}
-                disabled={previewing || !kitReady}
-                sx={settingsBtnGhostSx}
-              >
-                {previewing ? 'Generating…' : 'Test Voice'}
-              </Button>
-            </Box>
-            <VoiceMicTestPanel compact />
-            <Typography sx={{ ...settingsHelperSx, mt: 1.5 }}>
+            <VoiceMicTestPanel
+              compact
+              leading={
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => { void previewVoice(); }}
+                  disabled={previewing || !kitReady}
+                  sx={settingsBtnGhostSx}
+                >
+                  {previewing ? 'Generating…' : 'Test Voice'}
+                </Button>
+              }
+            />
+            <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
               Use the footer mic or wake word for live voice. Run these checks before your first session.
             </Typography>
           </Box>
@@ -870,9 +885,11 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             </Box>
           )}
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            {!loading && engine === 'stt_llm_tts' && !kitReady && (
+          {!loading && engine === 'stt_llm_tts' && !kitReady && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
               <Button
+                size="small"
+                variant="outlined"
                 onClick={() => { void deployKit(); }}
                 disabled={deploying || Boolean(missingRuntime)}
                 sx={settingsBtnPrimarySx}
@@ -880,16 +897,8 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
                 {deploying ? <CircularProgress size={12} sx={{ mr: 0.75, color: colors.bg.primary }} /> : null}
                 {deploying ? 'Deploying…' : 'Initiate deployment'}
               </Button>
-            )}
-            <Button onClick={() => { void load(); }} disabled={loading} sx={settingsBtnGhostSx}>
-              {loading ? (
-                <>
-                  <CircularProgress size={12} sx={{ mr: 0.75, color: settingsTheme.text.dim }} />
-                  Checking…
-                </>
-              ) : 'Refresh'}
-            </Button>
-          </Box>
+            </Box>
+          )}
 
           {(deploying || deployStatus) && deployStatus && deployStatus.phase !== 'complete' && (
             <Box sx={{

@@ -322,7 +322,7 @@ export function createAiSdkTools(
     const mission = typeof args.mission === 'string' ? args.mission : '';
     const items = Array.isArray(args.items) ? args.items as string[] : undefined;
     const toolsList = Array.isArray(args.tools) ? args.tools as string[] : undefined;
-    const timeout = typeof args.timeout === 'number' ? args.timeout : 120_000;
+    const timeout = typeof args.timeout === 'number' ? args.timeout : 600_000;
     const background = args.background === true;
     const batchSize = Math.max(1, Math.min(typeof args.batchSize === 'number' ? args.batchSize : 10, 50));
 

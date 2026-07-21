@@ -17,6 +17,10 @@ export interface Session {
   hostCrewColor?: string | null;
   hostCrewCatalogId?: string | null;
   hostCrewCategoryId?: string | null;
+  /** Persisted list-section day key (`YYYY-MM-DD`), set at create. */
+  listDayKey?: string | null;
+  /** Persisted absolute day label for session list dividers. */
+  listDayLabel?: string | null;
   /** Runtime-only flag loaded from the session-local permission file. */
   bypassPermissions?: boolean;
   tokenUsed: number;

@@ -19,6 +19,7 @@ import {
 import type { Crew, CompletionRequest, SessionEvent, SessionListKpis, StorableMessage } from '@agentx/shared';
 import { EMPTY_SESSION_KPIS } from '@agentx/shared';
 import { getEngine, createAgent, destroyAgent, getOrCreateBoundSessionAgent } from '../../engine.js';
+import { getActiveWorkspacePath } from '../../workspace.js';
 import { getMemoryFabricInstance, ProviderFactory, getSubAgentServiceInstance, type Agent } from '@agentx/engine';
 import {
   loadSessionMessagesPage,
@@ -233,11 +234,30 @@ export function createSessionsRouter(): Router {
             createdAt: msg['createdAt'],
           };
         });
+      // Include tool parts for live sub-agent drawers (role=part rows + message_parts table).
+      const partRows = rawMessages
+        .filter((m) => m['role'] === 'part')
+        .map((m) => ({
+          type: (m as { type?: string }).type ?? 'part',
+          toolName: (m as { toolName?: string }).toolName,
+          toolSuccess: (m as { toolSuccess?: boolean }).toolSuccess,
+          content: typeof m['content'] === 'string' ? m['content'] : '',
+          toolResult: (m as { toolResult?: string }).toolResult,
+          createdAt: m['createdAt'],
+        }));
+      let adapterParts: Array<Record<string, unknown>> = [];
+      try {
+        const getParts = (store as { getParts?: (sid: string) => Array<Record<string, unknown>> }).getParts;
+        if (typeof getParts === 'function') {
+          adapterParts = getParts(sessionId) ?? [];
+        }
+      } catch { /* optional */ }
+      const parts = [...partRows, ...adapterParts].slice(-80);
       const session = eng.sessionManager.listSessions(9999).find((s) => s.id === sessionId);
       res.json({
         session: session ?? { id: sessionId, title: 'Background work', parentId: null },
         messages,
-        parts: [],
+        parts,
       });
     } catch (e: unknown) {
       getLogger().error('GET_API_SESSION_PREVIEW', e instanceof Error ? e : String(e));
@@ -409,20 +429,17 @@ export function createSessionsRouter(): Router {
     }
   });
 
-  r.post('/api/sessions', validate(createSessionSchema), (req, res) => {
+  r.post('/api/sessions', validate(createSessionSchema), (_req, res) => {
     try {
-      const body = req.body as { scopePath?: string } | undefined;
-      if (!body?.scopePath) {
-        res.status(400).json({ error: 'scopePath is required to create a session' });
-        return;
-      }
       destroyAgent();
       const eng = getEngine();
       const cfg = eng.configManager.load();
+      // All sessions share the global Agent-X Workspace (body.scopePath ignored).
+      const scopePath = getActiveWorkspacePath(cfg);
       const session = eng.sessionManager.createSession(
         cfg.provider.activeProvider,
         cfg.provider.activeModel,
-        resolve(body.scopePath),
+        scopePath,
       );
       createAgent(undefined, session);
       ensureSubscribed();
@@ -648,17 +665,47 @@ export function createSessionsRouter(): Router {
       // Expose current turn state so the UI can show a "turn active" indicator
       // when returning to a session whose agent is still processing in the
       // background (e.g. after navigating away mid-turn).
-      let turnState: { phase: string; stage?: string; step?: number; turnId?: string | null; startedAt?: number | null } | null = null;
+      let turnState: {
+        phase: string;
+        stage?: string;
+        step?: number;
+        turnId?: string | null;
+        startedAt?: number | null;
+        partialContent?: string;
+        activeParts?: Array<Record<string, unknown>>;
+      } | null = null;
       try {
-        const agent = eng.agent;
-        if (agent && agent.sessionId === sessionId) {
+        // Prefer the UI agent, then a bound per-session agent (background turns).
+        const agent =
+          (eng.agent && eng.agent.sessionId === sessionId ? eng.agent : null)
+          ?? eng.boundSessionAgents?.get(sessionId)
+          ?? null;
+        if (agent) {
           const snap = agent.getTurnStateSnapshot();
+          const phase = snap.phase;
+          const active = phase !== 'idle' && phase !== 'done' && phase !== 'cancelled';
+          let activeParts: Array<Record<string, unknown>> = [];
+          if (active) {
+            try {
+              const store = eng.sessionManager.getStorageAdapter?.();
+              const allParts = store?.getParts?.(sessionId) ?? [];
+              // Mid-turn parts are stored with message_id null until the assistant row is persisted.
+              activeParts = allParts.filter((p) => {
+                const mid = p['message_id'] ?? p['messageId'];
+                return mid == null || mid === '';
+              });
+            } catch { /* best-effort */ }
+          }
           turnState = {
-            phase: snap.phase,
+            phase,
             stage: snap.stage,
             step: snap.step,
             turnId: snap.turnId,
             startedAt: snap.startedAt,
+            ...(active ? {
+              partialContent: agent.getPartialTurnContent?.() ?? '',
+              activeParts,
+            } : {}),
           };
         }
       } catch { /* best-effort */ }

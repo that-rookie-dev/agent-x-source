@@ -15,6 +15,7 @@ import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor, StreamingMarkdown } from './ChatMarkdown';
 import { collectWebSourceUrls } from './web-source-urls';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
+import { ThoughtCollapse } from './ThoughtCollapse';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
 import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
@@ -146,6 +147,7 @@ function renderParts(
       return !!(p.deepSearch?.bundle || p.deepSearch?.progress || p.deepSearch?.running);
     }
     if (p.type === 'text') return !!p.content?.trim();
+    if (p.type === 'thinking') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
     if (p.type === 'chart') return !!p.chartJson;
     if (p.type === 'subagent') return !!p.agent;
@@ -160,15 +162,33 @@ function renderParts(
   const orderedAll = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(orderedAll);
   const ordered = orderedAll.filter((p) => p.type !== 'tool');
+  const lastThinkingId = [...ordered].reverse().find((p) => p.type === 'thinking')?.id;
+  const lastTextId = [...ordered].reverse().find((p) => p.type === 'text' && p.content?.trim())?.id;
 
   const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
+      case 'thinking':
+        if (!part.content?.trim()) return null;
+        return (
+          <ThoughtCollapse
+            key={part.id}
+            text={part.content}
+            live={streaming && part.id === lastThinkingId}
+          />
+        );
       case 'text':
         if (!part.content) return null;
         const textContent = stripVoiceChannelBlock(part.content);
         if (!textContent) return null;
         return streaming
-          ? <StreamingMarkdown key={part.id} content={textContent} webSources={webSources} />
+          ? (
+            <StreamingMarkdown
+              key={part.id}
+              content={textContent}
+              webSources={webSources}
+              live={part.id === lastTextId}
+            />
+          )
           : <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} />;
       case 'deep_search':
         if (!part.deepSearch) return null;
@@ -255,9 +275,11 @@ function renderParts(
     });
 
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
+  // Tighter stack so conversational beats read as one living stream, not a card deck.
+  const stackSx = { display: 'flex', flexDirection: 'column', gap: 0.75 } as const;
   if (firstTextIdx >= 0) {
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      <Box sx={stackSx}>
         {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx)) : null}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
         {renderSlice(ordered.slice(firstTextIdx))}
@@ -266,7 +288,7 @@ function renderParts(
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+    <Box sx={stackSx}>
       {renderSlice(ordered)}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
@@ -296,13 +318,23 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       content: message.content,
       parts: message.parts,
       toolCalls: message.toolCalls,
+      thinking: message.thinking,
+      subAgents: message.subAgents,
+      metadata: {
+        ...(message.thinking ? { thinking: message.thinking } : {}),
+        ...(message.thinkingStartedAt != null ? { thinkingStartedAt: message.thinkingStartedAt } : {}),
+        ...(message.thinkingDoneAt != null ? { thinkingDoneAt: message.thinkingDoneAt } : {}),
+        ...(message.subAgents ? { subAgents: message.subAgents } : {}),
+      },
     }, []),
-    [message.content, message.parts, message.toolCalls],
+    [message.content, message.parts, message.toolCalls, message.thinking, message.thinkingStartedAt, message.thinkingDoneAt, message.subAgents],
   );
   const displayMessage = useMemo(
     () => ({
       ...message,
       content: normalized.content || message.content,
+      thinking: normalized.thinking || message.thinking,
+      subAgents: normalized.subAgents ?? message.subAgents,
       parts: normalized.parts?.map((p) => (
         p.type === 'tool' && p.tool
           ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
@@ -340,11 +372,11 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       voiceSummary,
       message.streaming,
     ) : (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
         {cleanContent && (
           message.streaming
-            ? <StreamingMarkdown content={cleanContent} webSources={webSources} />
+            ? <StreamingMarkdown content={cleanContent} webSources={webSources} live />
             : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
         )}
       </Box>
@@ -352,13 +384,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     [hasParts, displayMessage.parts, onOpenChildSession, onQuestionnaireRespond, message.id, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, voiceSummary, message.streaming, cleanContent, webSources],
   );
 
+  const thinkingText = displayMessage.thinking || message.thinking;
   const hasWorkflow = useMemo(
     () => !message.streaming && message.role === 'assistant' && !!(
       displayMessage.toolCalls?.length
-      || message.thinking
+      || thinkingText
       || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
     ),
-    [message.streaming, message.role, displayMessage.toolCalls, message.thinking, displayMessage.parts],
+    [message.streaming, message.role, displayMessage.toolCalls, thinkingText, displayMessage.parts],
   );
   const workflowStepCount = useMemo(() => {
     const parts = displayMessage.parts ?? [];
@@ -368,12 +401,18 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     return toolParts + deepParts + fallbackTools;
   }, [displayMessage.parts, displayMessage.toolCalls]);
 
-  const subAgentCards = useMemo(
-    () => (message.subAgents ?? []).filter(
-      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
-    ),
-    [message.subAgents],
-  );
+  // Prefer chronological part-attached sub-agent cards (inline in the turn body).
+  // Only fall back to message.subAgents for agents missing from parts (legacy restore).
+  const orphanSubAgentCards = useMemo(() => {
+    const inParts = new Set(
+      (displayMessage.parts ?? [])
+        .filter((p) => p.type === 'subagent' && p.agent?.id)
+        .map((p) => p.agent!.id),
+    );
+    return (message.subAgents ?? []).filter(
+      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker' && !inParts.has(a.id),
+    );
+  }, [displayMessage.parts, message.subAgents]);
 
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
@@ -399,28 +438,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           <Typography component="span" onClick={() => setWhyOpen(!whyOpen)} sx={{ fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim, opacity: 0.5 }}>Why?</Typography>
         )}
       </Box>
-
-      {subAgentCards.length > 0 && onOpenChildSession && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: hasParts || cleanContent ? 1.25 : 0 }}>
-          {subAgentCards.map((agent) => (
-            <ChildSessionInlineCard
-              key={agent.id}
-              childSessionId={agent.id}
-              label={agent.name}
-              kind={agent.kind ?? 'sub_agent'}
-              status={agent.status}
-              task={agent.task}
-              onExpand={() => onOpenChildSession({
-                childSessionId: agent.id,
-                label: agent.name,
-                kind: agent.kind ?? 'sub_agent',
-                status: agent.status,
-                task: agent.task,
-              })}
-            />
-          ))}
-        </Box>
-      )}
 
       {message.attachments && message.attachments.length > 0 && (
         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
@@ -448,6 +465,32 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       )}
 
       {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
+      {/* Legacy fallback: thinking blob with no chronological thinking parts. */}
+      {!hasParts && thinkingText ? (
+        <ThoughtCollapse text={thinkingText} live={!!message.streaming} />
+      ) : null}
+
+      {orphanSubAgentCards.length > 0 && onOpenChildSession && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: hasParts || cleanContent ? 1.25 : 0 }}>
+          {orphanSubAgentCards.map((agent) => (
+            <ChildSessionInlineCard
+              key={agent.id}
+              childSessionId={agent.id}
+              label={agent.name}
+              kind={agent.kind ?? 'sub_agent'}
+              status={agent.status}
+              task={agent.task}
+              onExpand={() => onOpenChildSession({
+                childSessionId: agent.id,
+                label: agent.name,
+                kind: agent.kind ?? 'sub_agent',
+                status: agent.status,
+                task: agent.task,
+              })}
+            />
+          ))}
+        </Box>
+      )}
 
       {message.streaming && !cleanContent && !hasParts && !hasQuestionnaire && (
         <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
@@ -501,7 +544,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       {hasWorkflow && (
         <WorkflowEntryCard
           stepCount={workflowStepCount}
-          hasReasoning={!!message.thinking}
+          hasReasoning={!!thinkingText}
           onOpen={() => setWorkflowOpen(true)}
         />
       )}
@@ -567,8 +610,8 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   const pm = prev.message;
   const nm = next.message;
   if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;
-  // Thinking renders only in the Workflow modal — presence toggles the button.
-  if (!!pm.thinking !== !!nm.thinking) return false;
+  // Thinking field still drives Workflow modal; parts drive inline ThoughtCollapse.
+  if ((pm.thinking ?? '') !== (nm.thinking ?? '')) return false;
   // Tool cards render only in the Workflow modal — only count/completion matter
   // (webSources chips derive from completed tool results).
   if ((pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)) return false;
@@ -580,7 +623,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
   if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
   const isRenderedPart = (p: NonNullable<UIMessage['parts']>[number]) =>
-    p.type === 'text' || p.type === 'chart' || p.type === 'questionnaire'
+    p.type === 'text' || p.type === 'thinking' || p.type === 'chart' || p.type === 'questionnaire'
     || p.type === 'crew_roster_picker' || p.type === 'subagent';
   const prevParts = (pm.parts ?? []).filter(isRenderedPart);
   const nextParts = (nm.parts ?? []).filter(isRenderedPart);
@@ -591,6 +634,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
       const np = nextParts[i]!;
       if (pp.type !== np.type || pp.id !== np.id) return false;
       if (pp.type === 'text' && pp.content !== np.content) return false;
+      if (pp.type === 'thinking' && pp.content !== np.content) return false;
       if (pp.type === 'chart' && pp.chartJson !== np.chartJson) return false;
       if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
       if (pp.type === 'subagent' && (pp.agent?.status !== np.agent?.status || pp.agent?.result !== np.agent?.result)) return false;

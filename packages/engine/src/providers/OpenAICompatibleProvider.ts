@@ -12,7 +12,7 @@ import { captureResponse } from '../utils/DebugLogger.js';
  * (/models, /chat/completions, streaming SSE).
  *
  * Handles multiple response formats across providers:
- *   - { data: [{ id, ... }] }  — OpenAI, Groq, DeepSeek, etc.
+ *   - { data: [{ id, ... }] }  — standard chat-completions catalog shape
  *   - { models: [{ id, ... }] } — Together AI, etc.
  *   - Edge cases: empty arrays, missing keys, non-JSON responses
  */

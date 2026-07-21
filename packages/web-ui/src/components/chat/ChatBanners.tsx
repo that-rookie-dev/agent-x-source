@@ -7,6 +7,7 @@ import {
   useChatCrewListContext,
   useChatInputGateContext,
   useChatModelDataContext,
+  useChatSessionSettersContext,
 } from './ChatSessionProvider';
 
 export const ChatBanners = React.memo(function ChatBanners() {
@@ -22,6 +23,7 @@ export const ChatBanners = React.memo(function ChatBanners() {
   const { sendBlocked, sendBlockedReason } = useChatInputGateContext();
   // Model / provider data.
   const { configLoaded } = useChatModelDataContext();
+  const { setWarnings } = useChatSessionSettersContext();
 
   return (
     <>
@@ -33,7 +35,13 @@ export const ChatBanners = React.memo(function ChatBanners() {
         messages={messages}
       />
 
-      <ChatWarningBand warnings={warnings} sendBlocked={sendBlocked} sendBlockedReason={sendBlockedReason} configLoaded={configLoaded} />
+      <ChatWarningBand
+        warnings={warnings}
+        sendBlocked={sendBlocked}
+        sendBlockedReason={sendBlockedReason}
+        configLoaded={configLoaded}
+        onDismiss={() => setWarnings([])}
+      />
     </>
   );
 });

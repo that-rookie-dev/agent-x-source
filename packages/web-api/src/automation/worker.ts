@@ -7,6 +7,7 @@ import { getTelegramRuntimeHints } from '../channels-sync.js';
 import { getPgBoss, getAutomationQueueName } from './boss.js';
 import { AutomationService, deliverExternalNotifications } from './service.js';
 import { automationRunSessionMatchesTask, telemetryEventToPersistedLog } from './log-utils.js';
+import { getActiveWorkspacePath } from '../workspace.js';
 
 const AUTOMATION_INSTRUCTION_PREFIX = `[Scheduled automation]`;
 
@@ -25,16 +26,10 @@ Do not call notify_* tools — delivery is handled automatically after your repl
 }
 
 function resolveAutomationScopePath(
-  task: { sourceSessionId: string | null },
-  eng: ReturnType<typeof getEngine>,
+  _task: { sourceSessionId: string | null },
+  _eng: ReturnType<typeof getEngine>,
 ): string {
-  if (task.sourceSessionId) {
-    const src = eng.sessionManager.getSessionById(task.sourceSessionId);
-    if (src?.scopePath) return src.scopePath;
-  }
-  const active = eng.sessionManager.getActiveSession();
-  if (active?.scopePath) return active.scopePath;
-  return process.cwd();
+  return getActiveWorkspacePath();
 }
 
 async function restorePermissionSnapshot(agent: Agent, snapshot: Array<{ toolName: string; decision: string }> | null | undefined): Promise<void> {

@@ -151,16 +151,26 @@ export const providers = {
   validate: (provider: string, apiKey?: string, baseUrl?: string) => request<{ valid: boolean; error?: string }>('/provider/validate', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl }) }),
   configure: (provider: string, apiKey?: string, baseUrl?: string, profileName?: string) => request<{ ok: boolean }>('/provider/configure', { method: 'POST', body: JSON.stringify({ provider, apiKey, baseUrl, profileName }) }),
   models: (provider: string) => request<ModelInfo[]>('/provider/models?provider=' + provider),
-  switch: (provider: string) => request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) }),
+  switch: async (provider: string) => {
+    const result = await request<{ ok: boolean; provider: string; model: string }>('/provider/switch', { method: 'POST', body: JSON.stringify({ provider }) });
+    const { emitRuntimeConfigChanged } = await import('./runtime-config-sync.js');
+    emitRuntimeConfigChanged({ kind: 'provider', provider });
+    return result;
+  },
   createProfile: (provider: string, label: string, apiKey: string, baseUrl?: string, setActive?: boolean) => request<{ ok: boolean; provider: string; profileId: string }>('/provider/profile', { method: 'POST', body: JSON.stringify({ provider, profileId: label, label, apiKey, baseUrl, setActive }) }),
-  switchProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) }),
+  switchProfile: async (providerId: string, profileId: string) => {
+    const result = await request<{ ok: boolean }>('/provider/profile/switch', { method: 'POST', body: JSON.stringify({ providerId, profileId }) });
+    const { emitRuntimeConfigChanged } = await import('./runtime-config-sync.js');
+    emitRuntimeConfigChanged({ kind: 'profile', providerId, profileId });
+    return result;
+  },
   deleteProfile: (providerId: string, profileId: string) => request<{ ok: boolean }>(`/provider/${providerId}/profile/${profileId}`, { method: 'DELETE' }),
 };
 
 // ─── Models ───
 export const models = {
-  switch: (modelId: string, opts?: { contextWindow?: number; providerId?: string; reasoningEffort?: string }) =>
-    request<{ ok: boolean }>('/model/switch', {
+  switch: async (modelId: string, opts?: { contextWindow?: number; providerId?: string; reasoningEffort?: string }) => {
+    const result = await request<{ ok: boolean }>('/model/switch', {
       method: 'POST',
       body: JSON.stringify({
         modelId,
@@ -168,7 +178,11 @@ export const models = {
         providerId: opts?.providerId,
         reasoningEffort: opts?.reasoningEffort,
       }),
-    }),
+    });
+    const { emitRuntimeConfigChanged } = await import('./runtime-config-sync.js');
+    emitRuntimeConfigChanged({ kind: 'model', modelId, providerId: opts?.providerId });
+    return result;
+  },
   current: () => request<{ model: string; provider: string; providerId?: string; activeProfile?: string }>('/models'),
 };
 
@@ -266,6 +280,13 @@ export const crewChat = {
   /** Permanently delete a call entry and its transcript messages. */
   deleteVoiceSession: (id: string) =>
     request<{ ok: boolean }>(`/crew-chat/voice-sessions/${id}`, { method: 'DELETE' }),
+
+  /** Persist a call-transcript divider (e.g. total call time at hang-up). */
+  persistVoiceDivider: (id: string, body: { variant: 'duration'; elapsedMs: number }) =>
+    request<{ ok: boolean; divider?: { variant: string; label: string } }>(
+      `/crew-chat/voice-sessions/${encodeURIComponent(id)}/dividers`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 };
 
 export interface CrewVoiceSessionInfo {
@@ -284,6 +305,10 @@ export interface CrewVoiceSessionInfo {
   messageCount?: number;
   createdAt?: string;
   updatedAt?: string;
+  /** Persisted list divider day key — set at session create. */
+  listDayKey?: string | null;
+  /** Persisted absolute list divider label. */
+  listDayLabel?: string | null;
 }
 
 export const crewSuggestions = {
@@ -377,6 +402,7 @@ export const chat = {
     userMessagePersisted?: boolean,
     clientSituation?: ClientSituation,
     crewSuggestionRequested?: boolean,
+    todoDisposition?: 'continue' | 'skip' | 'defer',
   ) =>
     postChatAsync('/chat/message', {
       text,
@@ -391,6 +417,7 @@ export const chat = {
       userMessagePersisted,
       clientSituation,
       crewSuggestionRequested,
+      ...(todoDisposition ? { todoDisposition } : {}),
     }),
 
   getTurn: (turnId: string) => request<{ turnId: string; status: string; message?: ChatMessage; error?: string; partialContent?: string }>(`/chat/turn/${turnId}`),
@@ -505,6 +532,12 @@ export const attachments = {
       method: 'POST',
       body: JSON.stringify({ filename, dataUrl }),
     }),
+  /** Register a workspace path so AttachmentModal can preview/download it. */
+  registerWorkspace: (body: { originalPath: string; filename?: string; mimeType?: string; sessionId?: string }) =>
+    request<{ ok: boolean; attachment: AttachmentReference }>('/attachments/register-workspace', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   get: (id: string) => `${BASE}/attachments/${encodeURIComponent(id)}`,
   meta: (id: string) => request<{ ok: boolean; available: boolean; attachment: AttachmentReference }>(`/attachments/${encodeURIComponent(id)}?meta=1`),
   preview: (id: string) => request<{ ok: boolean; preview: AttachmentPreview }>(`/attachments/${encodeURIComponent(id)}/preview`),
@@ -532,8 +565,12 @@ export const sessions = {
   dbStatus: () => request<SessionDbStatus>('/sessions/db-status'),
   list: () => request<SessionInfo[]>('/sessions'),
   children: (parentId: string) => request<{ children: ChildSessionInfo[] }>(`/sessions/${parentId}/children`).then((r) => r.children ?? []),
-  preview: (id: string) => request<{ session: SessionInfo; messages: ChatMessage[] }>(`/sessions/${id}/preview`),
-  create: (scopePath?: string) => request<{ sessionId: string }>('/sessions', { method: 'POST', body: scopePath ? JSON.stringify({ scopePath }) : undefined }),
+  preview: (id: string) => request<{
+    session: SessionInfo;
+    messages: ChatMessage[];
+    parts?: Array<Record<string, unknown>>;
+  }>(`/sessions/${id}/preview`),
+  create: () => request<{ sessionId: string }>('/sessions', { method: 'POST', body: JSON.stringify({}) }),
   get: (id: string) => request<SessionInfo>(`/sessions/${id}`),
   delete: (id: string) => request<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
   // Soft-archive: hides messages from the UI without deleting DB rows or memory embeddings
@@ -553,7 +590,22 @@ export const sessions = {
       turnFeedback?: Array<Record<string, unknown>>;
       resumeState?: Record<string, unknown> | null;
       messagesMeta?: { total: number; truncated: boolean; perRole: number };
-      turnState?: { phase: string; stage?: string; step?: number; turnId?: string | null; startedAt?: number | null } | null;
+      turnState?: {
+        phase: string;
+        stage?: string;
+        step?: number;
+        turnId?: string | null;
+        startedAt?: number | null;
+        partialContent?: string;
+        activeParts?: Array<Record<string, unknown>>;
+      } | null;
+      backgroundTasks?: Array<{
+        id: string;
+        status: string;
+        instruction?: string;
+        background?: boolean;
+        childSessionId?: string;
+      }>;
     }>(`/sessions/${id}/restore`, {
       method: 'POST',
       body: JSON.stringify(opts?.perRole ? { perRole: opts.perRole } : {}),
@@ -676,12 +728,41 @@ export const settingsPermissionTools = {
   list: () => request<{ tools: PermissionToolEntry[]; permissions: Record<string, 'allow' | 'deny' | 'ask'> }>('/settings/permissions/tools'),
 };
 
-// ─── System ───
+// ─── System / Workspace ───
+export type WorkspaceMigrateMode = 'switch' | 'copy' | 'move';
+
+export interface WorkspaceInfo {
+  path: string;
+  builtinPath: string;
+  isBuiltin: boolean;
+  migrated?: number;
+}
+
 export const system = {
-  cwd: () => request<{ cwd: string | null }>('/cwd'),
-  defaultWorkspace: () => request<{ path: string }>('/cwd/default'),
-  setCwd: (path: string) => request<{ cwd: string }>('/cwd', { method: 'POST', body: JSON.stringify({ path }) }),
+  workspace: () => request<WorkspaceInfo>('/workspace'),
+  setWorkspace: (path: string, mode: WorkspaceMigrateMode = 'switch') =>
+    request<WorkspaceInfo>('/workspace', { method: 'POST', body: JSON.stringify({ path, mode }) }),
   dirs: (path?: string) => request<{ current: string; parent: string | null; dirs: Array<{ name: string; path: string }> }>(`/filesystem/dirs${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  /** Workspace files for composer @ picker. */
+  searchFiles: (q = '', limit = 40, signal?: AbortSignal) =>
+    request<{ workspace: string; files: Array<{ name: string; path: string; relativePath: string }> }>(
+      `/filesystem/files?q=${encodeURIComponent(q)}&limit=${limit}`,
+      signal ? { signal } : {},
+    ),
+  /** Browse one workspace directory (folders + files) for composer @ picker. */
+  browseWorkspace: (path = '', signal?: AbortSignal) =>
+    request<{
+      workspace: string;
+      current: string;
+      relativePath: string;
+      parentRelative: string | null;
+      name: string;
+      dirs: Array<{ name: string; path: string; relativePath: string }>;
+      files: Array<{ name: string; path: string; relativePath: string }>;
+    }>(
+      `/filesystem/browse?path=${encodeURIComponent(path)}`,
+      signal ? { signal } : {},
+    ),
 };
 
 // ─── Client Situation (location + timezone) ───
@@ -1047,9 +1128,13 @@ export const orchestrator = {
 
 // ─── Todos ───
 export const todos = {
-  list: (sessionId?: string) => request<{ todos: TodoItem[] }>(`/todos${sessionId ? '?sessionId=' + sessionId : ''}`).then(r => r.todos ?? []),
-  save: (todos: TodoItem[], sessionId?: string) => request<{ ok: boolean }>('/todos', { method: 'POST', body: JSON.stringify({ todos, sessionId }) }),
-  update: (itemId: string, data: Partial<TodoItem>) => request<{ ok: boolean }>(`/todos/${itemId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  list: (sessionId?: string) =>
+    request<{ todos: TodoItem[] }>(`/todos${sessionId ? '?sessionId=' + encodeURIComponent(sessionId) : ''}`)
+      .then((r) => r.todos ?? []),
+  save: (todos: TodoItem[], sessionId?: string) =>
+    request<{ ok: boolean }>('/todos', { method: 'POST', body: JSON.stringify({ todos, sessionId }) }),
+  update: (itemId: string, data: Partial<TodoItem> & { sessionId?: string }) =>
+    request<{ ok: boolean }>(`/todos/${encodeURIComponent(itemId)}`, { method: 'PUT', body: JSON.stringify(data) }),
 };
 
 // ─── SSE Stream Connection ───
@@ -1150,8 +1235,9 @@ export interface AgentXConfig {
       tavily?: { enabled: boolean; apiKey?: string };
     };
   };
-  runtime?: {
-    cpuBudgetPercent?: number;
+  performance?: {
+    preset?: 'quiet' | 'balanced' | 'performance' | 'max';
+    budgetPercent?: number;
     lazyStorageCache?: boolean;
     backgroundConcurrency?: number;
   };
@@ -1486,6 +1572,11 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool' | 'part';
   content: string;
   timestamp?: string;
+  createdAt?: string;
+  metadata?: {
+    callDivider?: { variant: 'daytime' | 'time' | 'duration'; label: string };
+    [key: string]: unknown;
+  };
   tokenCount?: number;
   crew?: { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] };
   thinking?: string;
@@ -1605,7 +1696,10 @@ export interface EmailConfig {
 
 export interface TodoItem {
   id: string;
+  /** Short one-line heading shown in the TASKS sidebar. */
   title: string;
+  /** Longer task body for processing; kept off the heading line. */
+  detail?: string;
   status: 'not-started' | 'in-progress' | 'completed';
 }
 
@@ -2023,6 +2117,13 @@ export const modelBenchmark = {
 
   latest: (providerId: string, modelId: string) =>
     request<{ result: BenchmarkRunResult | null }>(`/model-benchmark/latest?providerId=${encodeURIComponent(providerId)}&modelId=${encodeURIComponent(modelId)}`),
+
+  /** Provider-scoped whitelist of models that passed clearance (not per-profile). */
+  cleared: (providerId: string) =>
+    request<{
+      providerId: string;
+      models: Array<{ modelId: string; grade: BenchmarkGrade; percent: number; finishedAt: string }>;
+    }>(`/model-benchmark/cleared?providerId=${encodeURIComponent(providerId)}`),
 
   logPath: (providerId: string, modelId: string) =>
     request<{ logFile: string; logPath: string; exists: boolean }>(
@@ -2661,6 +2762,65 @@ export const subagents = {
   cancel: (id: string) => request<{ ok: boolean }>(`/subagents/${id}/cancel`, { method: 'POST' }),
 };
 
+export type PerformancePresetId = 'quiet' | 'balanced' | 'performance' | 'max';
+
+export interface PerformanceLanesInfo {
+  effectiveCores: number;
+  llmGlobal: number;
+  llmPerProvider: number;
+  toolParallel: number;
+  subAgents: number;
+  backgroundConcurrency: number;
+  onnxIntraOpThreads: number;
+  onnxInterOpThreads: number;
+  attachmentWorkers: number;
+}
+
+export interface PerformanceShowcaseResponse {
+  configured: PerformanceLanesInfo & {
+    preset: PerformancePresetId;
+    budgetPercent: number;
+    lazyStorageCache: boolean;
+  };
+  showcase: {
+    host: {
+      hostname: string;
+      platform: string;
+      arch: string;
+      cpuCores: number;
+      totalMemoryGB: number;
+      freeMemoryGB: number;
+      fitnessScore: number;
+      localModelReady: boolean;
+      cortexTier: 'bge-m3' | 'minilm';
+    };
+    activePreset: PerformancePresetId;
+    active: PerformanceLanesInfo & {
+      preset: PerformancePresetId;
+      budgetPercent: number;
+      lazyStorageCache: boolean;
+    };
+    presets: Array<{
+      preset: PerformancePresetId;
+      budgetPercent: number;
+      lanes: PerformanceLanesInfo;
+      label: string;
+      summary: string;
+      recommended: boolean;
+    }>;
+  };
+  cpuCores: number;
+  backgroundPool: { running: number; pending: number };
+  restartRequiredForOnnx?: boolean;
+  liveConcurrency?: boolean;
+  restartRequired?: boolean;
+}
+
+export const performance = {
+  status: () => request<PerformanceShowcaseResponse>('/performance/status'),
+};
+
+/** System clocks / weather / metrics (not the Performance settings profile). */
 export const runtime = {
   metrics: () => request<SystemMetrics>('/system/metrics'),
   time: () => request<SystemTime>('/system/time'),

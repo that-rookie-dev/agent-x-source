@@ -5,13 +5,11 @@ import {
 } from '../ChatEnhancements';
 import StepCapModal from '../StepCapModal';
 import { CrewProfileDialog } from '../crew/CrewProfileDialog';
-import { FolderPickerModal } from '../FolderPickerModal';
 import {
   ClearSessionDialog,
-  FolderConsentDialog,
-  FolderPickerLoadingOverlay,
 } from './ChatDialogs';
 import { chat, agent } from '../../api';
+import { getCrewAccent } from '../../styles/crew-theme';
 import {
   useChatSessionIdentityContext,
   useChatModalContext,
@@ -20,31 +18,23 @@ import {
 } from './ChatSessionProvider';
 
 export const ChatModals = React.memo(function ChatModals() {
-  // Session identity.
   const { currentSessionId } = useChatSessionIdentityContext();
-  // Modal state only — ChatModals does NOT re-render on streaming chunks.
   const {
     searchOpen, checkpointsOpen,
-    folderPickerOpen, folderPickerCallback,
     crewDossierOpen, crewDossierCrew, stepCapPrompt,
     clearSessionModalOpen, clearSessionBusy,
-    folderConsentOpen, folderPickerLoading,
   } = useChatModalContext();
-  // Stable dispatch values — setters, handlers, refs.
   const {
     navigate, setSearchOpen, setCheckpointsOpen,
     setMessages, setTokenUsed, setTokenInput, setTokenOutput,
-    setFolderPickerOpen, setFolderPickerCallback,
     setStreaming, setCrewDossierOpen, setCrewDossierCrew,
     setStepCapPrompt,
-    setClearSessionModalOpen, setFolderConsentOpen,
+    setClearSessionModalOpen,
   } = useChatSessionSettersContext();
-  // Navigation handlers.
-  const { handleArchiveSession, handleDeleteSessionContent, handleFolderConsentConfirm } = useChatNavigationHandlersContext();
+  const { handleArchiveSession, handleDeleteSessionContent } = useChatNavigationHandlersContext();
 
   return (
     <>
-      {/* ─── Global enhancement modals ─── */}
       <SessionSearchModal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
@@ -68,20 +58,14 @@ export const ChatModals = React.memo(function ChatModals() {
           } catch { /* ignore */ }
         }}
       />
-      <FolderPickerModal
-        open={folderPickerOpen}
-        onSelect={(path) => {
-          setFolderPickerOpen(false);
-          folderPickerCallback?.(path);
-          setFolderPickerCallback(null);
-        }}
-        onCancel={() => { setFolderPickerOpen(false); setFolderPickerCallback(null); }}
-      />
       <CrewProfileDialog
         open={crewDossierOpen}
         crew={crewDossierCrew}
         imported={false}
         importLoading={false}
+        accentColor={crewDossierCrew
+          ? getCrewAccent(undefined, crewDossierCrew.callsign)
+          : undefined}
         onClose={() => { setCrewDossierOpen(false); setCrewDossierCrew(null); }}
         onImport={() => {}}
         onRemove={() => {}}
@@ -107,12 +91,6 @@ export const ChatModals = React.memo(function ChatModals() {
         onArchive={() => { void handleArchiveSession(); }}
         onDelete={() => { void handleDeleteSessionContent(); }}
       />
-      <FolderConsentDialog
-        open={folderConsentOpen}
-        onClose={() => setFolderConsentOpen(false)}
-        onConfirm={handleFolderConsentConfirm}
-      />
-      <FolderPickerLoadingOverlay loading={folderPickerLoading} />
     </>
   );
 });

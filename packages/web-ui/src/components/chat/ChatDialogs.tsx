@@ -5,7 +5,6 @@ import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
-import CircularProgress from '@mui/material/CircularProgress';
 import { colors, alphaColor } from '../../theme';
 
 export function ClearSessionDialog({
@@ -87,58 +86,5 @@ export function ClearSessionDialog({
         </Button>
       </DialogActions>
     </Dialog>
-  );
-}
-
-export function FolderConsentDialog({
-  open,
-  onClose,
-  onConfirm,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, borderRadius: 1, maxWidth: 480, width: '90%' } }}
-    >
-      <DialogTitle sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.85rem', fontWeight: 700, letterSpacing: '1px', pb: 1 }}>
-        BEFORE YOU START
-      </DialogTitle>
-      <DialogContent>
-        <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
-          Agent-X will access the folder you select to read, create, and modify files as needed to complete your tasks.
-        </Typography>
-        <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
-          • Your files remain local — nothing is uploaded unless you explicitly use a tool that sends data to a provider.
-        </Typography>
-        <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
-          • Agent-X can run terminal commands and modify files within the selected directory. Review what tasks you delegate.
-        </Typography>
-        <Typography sx={{ color: colors.text.secondary, fontSize: '0.75rem', lineHeight: 1.7, mb: 1.5 }}>
-          • You can change the working directory at any time from the sidebar.
-        </Typography>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} sx={{ color: colors.text.dim, fontSize: '0.75rem' }}>
-          Cancel
-        </Button>
-        <Button onClick={onConfirm} variant="contained" sx={{ bgcolor: colors.text.primary, color: colors.bg.primary, fontSize: '0.75rem' }}>
-          I Understand
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-}
-
-export function FolderPickerLoadingOverlay({ loading }: { loading: boolean }) {
-  if (!loading) return null;
-  return (
-    <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: alphaColor(colors.bg.primary, 0.65), backdropFilter: 'blur(2px)' }}>
-      <CircularProgress size={40} sx={{ color: colors.text.primary }} />
-    </Box>
   );
 }

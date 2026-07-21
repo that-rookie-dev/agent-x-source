@@ -2,7 +2,7 @@
  * Model capability benchmark API — SSE progress stream for agentic clearance scans.
  */
 import { Router, type Request, type Response } from 'express';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ModelCapability, ProviderId } from '@agentx/shared';
 import { getDataDir, getLogger } from '@agentx/shared';
@@ -11,17 +11,30 @@ import {
   runModelBenchmark,
   formatBenchmarkLog,
   benchmarkArtifactBasename,
+  allowsAgentXUse,
   type BenchmarkProgressEvent,
   type BenchmarkRunResult,
+  type BenchmarkGrade,
 } from '@agentx/engine';
 import { getEngine } from './engine.js';
 
 const router: import('express').Router = Router();
 
 const BENCHMARK_DIR = join(getDataDir(), 'model-benchmarks');
+const CLEARED_WHITELIST_FILE = join(BENCHMARK_DIR, 'cleared-models.json');
 if (!existsSync(BENCHMARK_DIR)) {
   try { mkdirSync(BENCHMARK_DIR, { recursive: true }); } catch { /* ignore */ }
 }
+
+/** Provider-scoped whitelist of models cleared by benchmark (not per-profile). */
+interface ClearedModelEntry {
+  modelId: string;
+  grade: BenchmarkGrade;
+  percent: number;
+  finishedAt: string;
+}
+
+type ClearedWhitelist = Record<string, Record<string, ClearedModelEntry>>;
 
 interface ActiveRun {
   runId: string;
@@ -43,6 +56,81 @@ function artifactPaths(providerId: string, modelId: string): { json: string; log
   };
 }
 
+function readWhitelist(): ClearedWhitelist {
+  try {
+    if (!existsSync(CLEARED_WHITELIST_FILE)) return {};
+    return JSON.parse(readFileSync(CLEARED_WHITELIST_FILE, 'utf-8')) as ClearedWhitelist;
+  } catch {
+    return {};
+  }
+}
+
+function writeWhitelist(data: ClearedWhitelist): void {
+  try {
+    writeFileSync(CLEARED_WHITELIST_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (e) {
+    getLogger().warn('model-benchmark-whitelist-write-failed', e instanceof Error ? e.message : String(e));
+  }
+}
+
+function upsertWhitelistEntry(result: BenchmarkRunResult): void {
+  const data = readWhitelist();
+  const byProvider = data[result.providerId] ?? {};
+  if (allowsAgentXUse(result.grade)) {
+    byProvider[result.modelId] = {
+      modelId: result.modelId,
+      grade: result.grade,
+      percent: result.percent,
+      finishedAt: result.finishedAt,
+    };
+    data[result.providerId] = byProvider;
+  } else if (byProvider[result.modelId]) {
+    delete byProvider[result.modelId];
+    if (Object.keys(byProvider).length === 0) delete data[result.providerId];
+    else data[result.providerId] = byProvider;
+  }
+  writeWhitelist(data);
+}
+
+/** Rebuild whitelist from on-disk benchmark JSON artifacts (migration / repair). */
+function rebuildWhitelistFromArtifacts(): ClearedWhitelist {
+  const data: ClearedWhitelist = {};
+  try {
+    const files = readdirSync(BENCHMARK_DIR).filter((f) => f.endsWith('.json') && f !== 'cleared-models.json');
+    for (const file of files) {
+      try {
+        const result = JSON.parse(readFileSync(join(BENCHMARK_DIR, file), 'utf-8')) as BenchmarkRunResult;
+        if (!result?.providerId || !result?.modelId || !result?.grade) continue;
+        if (!allowsAgentXUse(result.grade)) continue;
+        const byProvider = data[result.providerId] ?? {};
+        byProvider[result.modelId] = {
+          modelId: result.modelId,
+          grade: result.grade,
+          percent: result.percent ?? 0,
+          finishedAt: result.finishedAt ?? '',
+        };
+        data[result.providerId] = byProvider;
+      } catch {
+        /* skip corrupt artifact */
+      }
+    }
+  } catch {
+    /* empty dir */
+  }
+  writeWhitelist(data);
+  return data;
+}
+
+function listClearedForProvider(providerId: string): ClearedModelEntry[] {
+  let data = readWhitelist();
+  // First request (or missing index): rebuild from per-model benchmark JSON archives.
+  if (!existsSync(CLEARED_WHITELIST_FILE) || Object.keys(data).length === 0) {
+    data = rebuildWhitelistFromArtifacts();
+  }
+  const byProvider = data[providerId] ?? {};
+  return Object.values(byProvider).sort((a, b) => a.modelId.localeCompare(b.modelId));
+}
+
 function persistResult(result: BenchmarkRunResult): BenchmarkRunResult {
   const paths = artifactPaths(result.providerId, result.modelId);
   const enriched: BenchmarkRunResult = { ...result, logFile: `${paths.basename}.log` };
@@ -51,6 +139,11 @@ function persistResult(result: BenchmarkRunResult): BenchmarkRunResult {
     writeFileSync(paths.log, formatBenchmarkLog(enriched), 'utf-8');
   } catch (e) {
     getLogger().warn('model-benchmark-persist-failed', e instanceof Error ? e.message : String(e));
+  }
+  try {
+    upsertWhitelistEntry(enriched);
+  } catch (e) {
+    getLogger().warn('model-benchmark-whitelist-update-failed', e instanceof Error ? e.message : String(e));
   }
   return enriched;
 }
@@ -168,6 +261,8 @@ router.post('/model-benchmark/start', async (req, res) => {
     if (!body.force) {
       const cached = loadCached(body.providerId, body.modelId);
       if (cached && existsSync(paths.log)) {
+        // Keep provider whitelist in sync when serving an archived clearance.
+        upsertWhitelistEntry(cached);
         const runId = crypto.randomUUID();
         const run: ActiveRun = { runId, events: [], listeners: new Set(), done: false };
         activeRuns.set(runId, run);
@@ -316,6 +411,17 @@ router.get('/model-benchmark/log-path', (req, res) => {
     logPath: paths.log,
     exists: existsSync(paths.log),
   });
+});
+
+/** Models cleared for a provider (grade ≠ STANDBY). Used by chat/voice model pickers. */
+router.get('/model-benchmark/cleared', (req, res) => {
+  const providerId = req.query.providerId as string;
+  if (!providerId) {
+    res.status(400).json({ error: 'providerId required' });
+    return;
+  }
+  const models = listClearedForProvider(providerId);
+  res.json({ providerId, models });
 });
 
 export default router;

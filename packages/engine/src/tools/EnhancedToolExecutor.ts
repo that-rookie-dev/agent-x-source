@@ -7,8 +7,9 @@ import { DoomLoopDetector } from './DoomLoopDetector.js';
 import { AutonomousDiagnosticsSystem } from '../agent/AutonomousDiagnosticsSystem.js';
 import { Semaphore } from '../concurrency/Semaphore.js';
 import { getLogger } from '@agentx/shared';
+import { getPerformanceLanes } from '../performance/PerformanceGovernor.js';
 
-/** Default concurrent tool slots (virtual threads for I/O-bound tool calls). */
+/** Fallback only if Performance lanes are unavailable at construction. */
 const DEFAULT_TOOL_CONCURRENCY = 8;
 
 export interface BatchToolCall {
@@ -45,7 +46,7 @@ export class EnhancedToolExecutor extends ToolExecutor {
   private sessionContextCache: Map<string, any> = new Map();
   private _scopePath: string;
   /** Caps concurrent tool executions when the model emits multi-tool batches. */
-  private toolConcurrency = new Semaphore(DEFAULT_TOOL_CONCURRENCY);
+  private toolConcurrency = new Semaphore(getPerformanceLanes().toolParallel || DEFAULT_TOOL_CONCURRENCY);
   /** Collects concurrent AI SDK tool calls in one microtask for ParallelClassifier. */
   private batchPending: Array<{
     toolId: string;

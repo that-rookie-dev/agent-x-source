@@ -22,13 +22,31 @@ import { turnRegistry } from '../../turn-registry.js';
 import { maybeAugmentChatInstruction, handleChannelHandoffRequest } from '../../channel-session-bridge.js';
 import { waitForIdle } from './shared.js';
 import { messageQueue } from './shared.js';
+import { assertChatWorkspaceAttachments } from '../../workspace.js';
+
+function rejectUnsafeWorkspaceAttachments(
+  res: import('express').Response,
+  attachments: TurnAttachment[] | undefined,
+): TurnAttachment[] | null {
+  const checked = assertChatWorkspaceAttachments(attachments);
+  if (!checked.ok) {
+    res.status(422).json({
+      status: 'error',
+      code: 'WORKSPACE_ATTACHMENT_DENIED',
+      error: checked.error,
+      details: checked.details,
+    });
+    return null;
+  }
+  return checked.attachments;
+}
 
 export function createChatRouter(): Router {
   const r = Router();
 
   r.post('/api/chat/message-stream', validate(chatMessageSchema), async (req, res) => {
     try {
-      const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, clientSituation: clientSituationRaw } = req.body as {
+      const { text, attachments: rawAttachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, todoDisposition, clientSituation: clientSituationRaw } = req.body as {
         text: string;
         attachments?: TurnAttachment[];
         retry?: boolean;
@@ -40,8 +58,11 @@ export function createChatRouter(): Router {
         forceWebSearch?: boolean;
         userMessagePersisted?: boolean;
         crewSuggestionRequested?: boolean;
+        todoDisposition?: 'continue' | 'skip' | 'defer';
         clientSituation?: unknown;
       };
+      const attachments = rejectUnsafeWorkspaceAttachments(res, rawAttachments);
+      if (attachments === null) return;
       const clientSituation = normalizeClientSituation(clientSituationRaw);
       const eng = getEngine();
       if (clientSituation) {
@@ -207,7 +228,8 @@ export function createChatRouter(): Router {
         ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
-        ...(attachments ? { attachments } : {}),
+        ...(attachments.length ? { attachments } : {}),
+        ...(todoDisposition ? { todoDisposition } : {}),
       });
       sendEvent('started', { turnId: turn.turnId, async: true });
       return;
@@ -219,7 +241,7 @@ export function createChatRouter(): Router {
 
   r.post('/api/chat/message', validate(chatMessageSchema), async (req, res) => {
     try {
-      const { text, attachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, clientSituation: clientSituationRaw } = req.body as {
+      const { text, attachments: rawAttachments, retry, delegateCrewIds, crewSuggestionResolved, priorUserMessages, crewIntakeFromPicker, primaryCrewId, forceWebSearch, userMessagePersisted, crewSuggestionRequested, todoDisposition, clientSituation: clientSituationRaw } = req.body as {
         text: string;
         attachments?: TurnAttachment[];
         retry?: boolean;
@@ -231,8 +253,11 @@ export function createChatRouter(): Router {
         forceWebSearch?: boolean;
         userMessagePersisted?: boolean;
         crewSuggestionRequested?: boolean;
+        todoDisposition?: 'continue' | 'skip' | 'defer';
         clientSituation?: unknown;
       };
+      const attachments = rejectUnsafeWorkspaceAttachments(res, rawAttachments);
+      if (attachments === null) return;
       const clientSituation = normalizeClientSituation(clientSituationRaw);
       if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
@@ -318,7 +343,8 @@ export function createChatRouter(): Router {
         ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
-        ...(attachments ? { attachments } : {}),
+        ...(attachments.length ? { attachments } : {}),
+        ...(todoDisposition ? { todoDisposition } : {}),
       });
 
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
@@ -354,7 +380,7 @@ export function createChatRouter(): Router {
 
   r.post('/api/chat/queue', validate(chatMessageSchema), (req, res) => {
     try {
-      const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
+      const { text, attachments: rawAttachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId } = req.body as {
         text: string;
         attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
@@ -362,6 +388,8 @@ export function createChatRouter(): Router {
         crewIntakeFromPicker?: boolean;
         primaryCrewId?: string;
       };
+      const attachments = rejectUnsafeWorkspaceAttachments(res, rawAttachments);
+      if (attachments === null) return;
       messageQueue.push({ text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId });
       res.json({ ok: true, queueLength: messageQueue.length });
     } catch (e) {
@@ -380,7 +408,7 @@ export function createChatRouter(): Router {
 
   r.post('/api/chat/steer', validate(chatSteerSchema), async (req, res) => {
     try {
-      const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
+      const { text, attachments: rawAttachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
         text: string;
         attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
@@ -389,6 +417,8 @@ export function createChatRouter(): Router {
         primaryCrewId?: string;
         clientSituation?: unknown;
       };
+      const attachments = rejectUnsafeWorkspaceAttachments(res, rawAttachments);
+      if (attachments === null) return;
       const clientSituation = normalizeClientSituation(clientSituationRaw);
       if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
@@ -405,7 +435,7 @@ export function createChatRouter(): Router {
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(clientSituation ? { clientSituation } : {}),
-        ...(attachments ? { attachments } : {}),
+        ...(attachments.length ? { attachments } : {}),
       });
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
     } catch (e: unknown) {
@@ -433,7 +463,7 @@ export function createChatRouter(): Router {
 
   r.post('/api/chat/stop-and-send', validate(chatSteerSchema), async (req, res) => {
     try {
-      const { text, attachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
+      const { text, attachments: rawAttachments, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, clientSituation: clientSituationRaw } = req.body as {
         text: string;
         attachments?: TurnAttachment[];
         delegateCrewIds?: string[];
@@ -442,6 +472,8 @@ export function createChatRouter(): Router {
         primaryCrewId?: string;
         clientSituation?: unknown;
       };
+      const attachments = rejectUnsafeWorkspaceAttachments(res, rawAttachments);
+      if (attachments === null) return;
       const clientSituation = normalizeClientSituation(clientSituationRaw);
       if (clientSituation) setCurrentClientSituation(clientSituation);
       const eng = getEngine();
@@ -458,7 +490,7 @@ export function createChatRouter(): Router {
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, instruction, false, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(clientSituation ? { clientSituation } : {}),
-        ...(attachments ? { attachments } : {}),
+        ...(attachments.length ? { attachments } : {}),
       });
       res.status(202).json({ ok: true, turnId: turn.turnId, async: true, status: 'running' });
     } catch (e: unknown) {

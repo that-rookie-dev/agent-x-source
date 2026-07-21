@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "chunks": [
+    {
+      "id": "c-auth-jwt",
+      "sourceId": "src-api",
+      "sourceName": "API Guide",
+      "headingPath": ["## Auth"],
+      "content": "JWT tokens are required for all /api routes. ERR_AUTH_401 is thrown when the token is missing or expired. Use Authorization Bearer headers.",
+      "relevantQueries": ["q01", "q04", "q15", "q17", "q18"]
+    },
+    {
+      "id": "c-storage-pg",
+      "sourceId": "src-api",
+      "sourceName": "API Guide",
+      "headingPath": ["## Storage"],
+      "content": "Conversation memories are stored in Postgres with pgvector. Pool size defaults are documented in deployment notes. session_uuid dd25259d is an example id.",
+      "relevantQueries": ["q02", "q05", "q12", "q25"]
+    },
+    {
+      "id": "c-follows",
+      "sourceId": "src-retrieval",
+      "sourceName": "Retrieval Plan",
+      "headingPath": ["## Edges"],
+      "content": "FOLLOWS edge type encodes reading order only, not semantic similarity. Sequential chunk links must not be treated as RELATED_TO.",
+      "relevantQueries": ["q03", "q19", "q29"]
+    },
+    {
+      "id": "c-embed-text",
+      "sourceId": "src-retrieval",
+      "sourceName": "Retrieval Plan",
+      "headingPath": ["## Embeddings"],
+      "content": "Document chunks are contextualized for embeddings via buildEmbedText as Title › Section › Body. vectorOverFetch and heuristicRerank improve precision. RETRIEVED_EVIDENCE_CONTRACT and EMPTY evidence marker reduce hallucination. Cite evidence ids in answers. minScoreKb 0.40 gates weak neighbors.",
+      "relevantQueries": ["q14", "q16", "q17", "q18", "q22", "q23", "q26", "q27", "q30"]
+    },
+    {
+      "id": "c-compact",
+      "sourceId": "src-retrieval",
+      "sourceName": "Retrieval Plan",
+      "headingPath": ["## Packing"],
+      "content": "Token compaction behavior packs evidence under maxEvidenceChars. Limit chunks from same source document with maxChunksPerSource. ingest pipeline embedding batch size is 32.",
+      "relevantQueries": ["q06", "q21", "q24"]
+    },
+    {
+      "id": "c-deploy",
+      "sourceId": "src-ops",
+      "sourceName": "Ops Runbook",
+      "headingPath": ["## Migration"],
+      "content": "Deployment steps after migration: apply schema v22/v23, reEmbedAll, then reprocess or reEmbedSource for KB PDFs. Phase order for retrieval implementation is documented in the plan.",
+      "relevantQueries": ["q08", "q13", "q21", "q29"]
+    },
+    {
+      "id": "c-compare",
+      "sourceId": "src-api",
+      "sourceName": "API Guide",
+      "headingPath": ["## Overview"],
+      "content": "Compare auth and storage sections: Auth covers JWT; Storage covers Postgres persistence for chat memory.",
+      "relevantQueries": ["q07"]
+    },
+    {
+      "id": "c-noise",
+      "sourceId": "src-noise",
+      "sourceName": "Unrelated",
+      "headingPath": ["## Weather"],
+      "content": "Today the weather is sunny with light winds. This chunk should never answer product questions.",
+      "relevantQueries": []
+    }
+  ]
+}
