@@ -104,6 +104,7 @@ vi.mock('../src/validation.js', () => ({
   crewSuggestionResolveSchema: {},
   crewChatSessionSchema: {},
   crewChatVoiceSessionSchema: {},
+  crewChatVoiceDividerSchema: {},
   turnFeedbackSchema: {},
   clarificationRespondSchema: {},
   crewRosterPickerOfferSchema: {},
@@ -141,6 +142,7 @@ vi.mock('../src/crew-chat.js', () => ({
   postCrewChatSession: vi.fn(),
   postCrewChatVoiceSession: vi.fn(),
   listCrewChatVoiceSessions: vi.fn(),
+  postCrewChatVoiceSessionDivider: vi.fn(),
   deleteCrewChatVoiceSession: vi.fn(),
 }));
 

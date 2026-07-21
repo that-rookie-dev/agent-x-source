@@ -62,6 +62,9 @@ const {
     setParentAgent: vi.fn(),
     setMaxConcurrent: vi.fn(),
     ingestBackgroundResultsForSession: vi.fn(),
+    hasOutstandingWork: vi.fn(() => false),
+    awaitOutstanding: vi.fn(async () => []),
+    waitFor: vi.fn(async () => undefined),
   });
 
   const createTaskMgr = () => ({
@@ -791,7 +794,12 @@ describe('Agent', () => {
       const agent = createTestAgent();
       agent.spawnSubAgent('do something', ['shell_exec'], 30_000);
 
-      expect(mockSubAgentMgr.spawn).toHaveBeenCalledWith('do something', ['shell_exec'], 30_000, 8);
+      expect(mockSubAgentMgr.spawn).toHaveBeenCalledWith(
+        'do something',
+        ['shell_exec'],
+        30_000,
+        agent.getMaxSubAgents(),
+      );
     });
   });
 

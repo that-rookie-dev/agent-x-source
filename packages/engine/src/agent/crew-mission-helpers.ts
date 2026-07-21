@@ -255,7 +255,7 @@ export function parseCrewMentionKeys(content: string): string[] {
   for (const match of normalized.matchAll(/@crew\[([^:\]]+)/g)) {
     push(match[1]!);
   }
-  for (const match of normalized.matchAll(/@crew:([^:\s\[\]]+)(?::[^\s\[\]?!,;:)'"]+)?/g)) {
+  for (const match of normalized.matchAll(/@crew:([^:\s[\]]+)(?::[^\s[\]?!,;:)'"]+)?/g)) {
     push(match[1]!);
   }
   return keys;

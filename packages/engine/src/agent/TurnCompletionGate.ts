@@ -40,7 +40,7 @@ export function estimateEnumeratedTaskCount(userText: string): number {
     const line = raw.trim();
     if (line.length < 6) continue;
     // 1. Task / 1) Task / 1 - Task / Task 1: ...
-    if (/^(?:\d{1,2}[\.\)\:]\s+|\d{1,2}\s+[-–—]\s+|[-*•]\s+(?:\*\*[^*]+\*\*\s*)?|task\s*\d{1,2}\s*[:.\-–—]\s*)/i.test(line)) {
+    if (/^(?:\d{1,2}[.):]\s+|\d{1,2}\s+[-–—]\s+|[-*•]\s+(?:\*\*[^*]+\*\*\s*)?|task\s*\d{1,2}\s*[:.\-–—]\s*)/i.test(line)) {
       count += 1;
     }
   }
@@ -48,7 +48,7 @@ export function estimateEnumeratedTaskCount(userText: string): number {
   // Fallback: "do A, B, C, D, and E" style is too ambiguous — skip.
   // Numbered inline "1) ... 2) ... 3) ..." in one paragraph:
   if (count === 0) {
-    const inline = text.match(/(?:^|[\s;])\d{1,2}[\.\)]\s+\S.{8,}/g);
+    const inline = text.match(/(?:^|[\s;])\d{1,2}[.)]\s+\S.{8,}/g);
     if (inline && inline.length >= 3) count = inline.length;
   }
 
