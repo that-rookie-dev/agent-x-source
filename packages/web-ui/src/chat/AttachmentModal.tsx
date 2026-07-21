@@ -1,4 +1,4 @@
-import { useEffect, useState, memo } from 'react';
+import { useEffect, useState, memo, useRef, type MouseEvent } from 'react';
 import Dialog from '@mui/material/Dialog';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -8,17 +8,9 @@ import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
-import { Document, Page, pdfjs } from 'react-pdf';
-import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
-import 'react-pdf/dist/esm/Page/TextLayer.css';
-import { attachments as attachmentsApi } from '../api';
+import { attachments as attachmentsApi, getAuthToken } from '../api';
 import type { AttachmentPreview } from '@agentx/shared';
-
-// Prefer the bundled worker — CDN workers often fail offline / version-skew and leave the PDF spinner stuck.
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+import { colors, MONO } from '../theme';
 
 interface AttachmentModalProps {
   open: boolean;
@@ -42,8 +34,22 @@ function guessMime(name: string, mimeType?: string): string | undefined {
   return map[ext] ?? mimeType;
 }
 
-function usesNativeViewer(mime?: string): boolean {
+function usesBinaryViewer(mime?: string): boolean {
   return !!mime && (mime.startsWith('image/') || mime === 'application/pdf');
+}
+
+/** Authenticated binary fetch — bare <img>/<iframe> URLs omit Bearer and fail in Electron. */
+async function fetchAttachmentBlob(attachmentId: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(attachmentsApi.get(attachmentId), {
+    credentials: 'include',
+    headers,
+  });
+  if (res.status === 401) throw new Error('Unauthorized');
+  if (!res.ok) throw new Error(`Failed to load file (${res.status})`);
+  return res.blob();
 }
 
 export const AttachmentModal = memo(function AttachmentModal({
@@ -57,19 +63,32 @@ export const AttachmentModal = memo(function AttachmentModal({
   const [resolvedId, setResolvedId] = useState(id);
   const [mimeType, setMimeType] = useState(() => guessMime(name, mimeTypeProp));
   const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pdfPages, setPdfPages] = useState(0);
+  const blobUrlRef = useRef<string | null>(null);
+
+  const revokeBlobUrl = () => {
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+  };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      revokeBlobUrl();
+      setBlobUrl(null);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
     setPreview(null);
     setAvailable(null);
-    setPdfPages(0);
+    revokeBlobUrl();
+    setBlobUrl(null);
     setResolvedId(id);
     setMimeType(guessMime(name, mimeTypeProp));
 
@@ -77,13 +96,8 @@ export const AttachmentModal = memo(function AttachmentModal({
       let attachmentId = id;
       let mime = guessMime(name, mimeTypeProp);
 
-      const tryMeta = async (aid: string) => {
-        const res = await attachmentsApi.meta(aid);
-        return res;
-      };
-
       try {
-        let meta = await tryMeta(attachmentId).catch(() => null);
+        let meta = await attachmentsApi.meta(attachmentId).catch(() => null);
         if ((!meta || !meta.ok || !meta.available) && originalPath) {
           const registered = await attachmentsApi.registerWorkspace({
             originalPath,
@@ -95,7 +109,7 @@ export const AttachmentModal = memo(function AttachmentModal({
           mime = registered.attachment.mimeType || mime;
           setResolvedId(attachmentId);
           setMimeType(mime);
-          meta = await tryMeta(attachmentId);
+          meta = await attachmentsApi.meta(attachmentId);
         }
 
         if (cancelled) return;
@@ -109,8 +123,13 @@ export const AttachmentModal = memo(function AttachmentModal({
         setMimeType(mime);
         setAvailable(true);
 
-        // Images/PDFs render natively — do not wait on extractPreview (that was hanging the spinner).
-        if (!usesNativeViewer(mime)) {
+        if (usesBinaryViewer(mime)) {
+          const blob = await fetchAttachmentBlob(attachmentId);
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          blobUrlRef.current = url;
+          setBlobUrl(url);
+        } else {
           const p = await attachmentsApi.preview(attachmentId);
           if (!cancelled) setPreview(p.preview);
         }
@@ -125,14 +144,19 @@ export const AttachmentModal = memo(function AttachmentModal({
     };
 
     void load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      revokeBlobUrl();
+    };
   }, [open, id, name, mimeTypeProp, originalPath]);
 
   const downloadUrl = attachmentsApi.get(resolvedId);
 
   const renderUnavailable = () => (
     <Box sx={{ p: 4, textAlign: 'center' }}>
-      <Typography color="text.secondary">{error || 'File removed or not found'}</Typography>
+      <Typography color="text.secondary" sx={{ fontFamily: MONO, fontSize: '0.75rem' }}>
+        {error || 'File removed or not found'}
+      </Typography>
     </Box>
   );
 
@@ -145,14 +169,12 @@ export const AttachmentModal = memo(function AttachmentModal({
       );
     }
     if (available === false) return renderUnavailable();
-    if (error && !usesNativeViewer(mimeType)) {
-      return <Typography color="error">{error}</Typography>;
-    }
-    if (mimeType?.startsWith('image/')) {
+
+    if (mimeType?.startsWith('image/') && blobUrl) {
       return (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
           <img
-            src={downloadUrl}
+            src={blobUrl}
             alt={name}
             style={{ maxWidth: '100%', maxHeight: '80vh' }}
             onError={() => {
@@ -163,36 +185,28 @@ export const AttachmentModal = memo(function AttachmentModal({
         </Box>
       );
     }
-    if (mimeType === 'application/pdf') {
+
+    if (mimeType === 'application/pdf' && blobUrl) {
+      // Chromium’s built-in PDF viewer — no pdf.js worker / react-pdf version skew.
       return (
-        <Box sx={{ overflow: 'auto', maxHeight: '80vh' }}>
-          <Document
-            file={downloadUrl}
-            loading={
-              <Box sx={{ p: 4, textAlign: 'center' }}>
-                <CircularProgress size={24} />
-              </Box>
-            }
-            error={
-              <Typography color="error" sx={{ p: 2 }}>
-                Failed to render PDF. Try downloading the file.
-              </Typography>
-            }
-            onLoadSuccess={({ numPages }) => setPdfPages(numPages)}
-            onLoadError={(e) => setError(e.message)}
-          >
-            {Array.from({ length: Math.max(pdfPages, 1) }, (_, i) => (
-              <Page
-                key={i + 1}
-                pageNumber={i + 1}
-                width={Math.min(820, typeof window !== 'undefined' ? window.innerWidth - 96 : 820)}
-              />
-            ))}
-          </Document>
-        </Box>
+        <Box
+          component="iframe"
+          title={name}
+          src={blobUrl}
+          sx={{
+            width: '100%',
+            height: 'min(80vh, 820px)',
+            border: `1px solid ${colors.border.default}`,
+            borderRadius: '4px',
+            bgcolor: colors.bg.primary,
+          }}
+        />
       );
     }
-    if (preview?.kind === 'error') return <Typography color="error">{preview.content}</Typography>;
+
+    if (preview?.kind === 'error') {
+      return <Typography color="error" sx={{ fontFamily: MONO, fontSize: '0.75rem' }}>{preview.content}</Typography>;
+    }
     if (preview?.kind === 'table' && preview.rows) {
       return (
         <Table size="small">
@@ -215,18 +229,46 @@ export const AttachmentModal = memo(function AttachmentModal({
       return <Box sx={{ p: 2, overflow: 'auto', maxHeight: '80vh' }} dangerouslySetInnerHTML={{ __html: preview.content }} />;
     }
     return (
-      <Box sx={{ p: 2, overflow: 'auto', maxHeight: '80vh', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.85rem' }}>
+      <Box sx={{
+        p: 2, overflow: 'auto', maxHeight: '80vh', whiteSpace: 'pre-wrap',
+        fontFamily: MONO, fontSize: '0.8rem', color: colors.text.primary,
+      }}>
         {preview?.content ?? (error || 'No preview available')}
       </Box>
     );
   };
 
+  const onDownloadClick = async (e: MouseEvent<HTMLAnchorElement>) => {
+    // Prefer authenticated blob download so Electron Bearer auth works.
+    if (!blobUrl) {
+      e.preventDefault();
+      try {
+        const blob = await fetchAttachmentBlob(resolvedId);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Download failed');
+      }
+    }
+  };
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       <Box sx={{ p: 2 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>{name}</Typography>
+        <Typography variant="h6" sx={{ mb: 1, fontFamily: MONO, fontSize: '0.95rem' }}>{name}</Typography>
         {available === true && (
-          <a href={downloadUrl} download={name} style={{ display: 'block', marginBottom: 8 }}>Download</a>
+          <a
+            href={blobUrl ?? downloadUrl}
+            download={name}
+            onClick={onDownloadClick}
+            style={{ display: 'block', marginBottom: 8, fontFamily: MONO, fontSize: '0.7rem' }}
+          >
+            Download
+          </a>
         )}
         {renderContent()}
       </Box>
