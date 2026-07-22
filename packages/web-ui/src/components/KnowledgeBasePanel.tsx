@@ -885,7 +885,7 @@ export function KnowledgeBasePanel() {
       <PanelHeader
         title="KNOWLEDGE DECK"
         subtitle={activeTab === 'templates'
-          ? 'TEMPLATES // RAW MASTERS · AUTO FIELDS · FILL'
+          ? 'TEMPLATES // DESIGN MASTERS · CLONE LOOK · FILL SLOTS'
           : 'DOCUMENT VAULT // UPLOAD · INDEX · MAINTAIN'}
         icon={<LibraryBooksIcon sx={{ fontSize: 20 }} />}
         action={

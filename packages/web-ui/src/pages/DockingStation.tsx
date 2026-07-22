@@ -161,7 +161,6 @@ export function DockingStation() {
     clientSituationApi.set(location.clientSituation).catch(() => {});
   }, [serverOnline, location.clientSituation]);
 
-  const version = healthData?.version || '';
   const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
 
   const voiceModuleEnabled = Boolean(voice?.voiceReady);
@@ -236,41 +235,8 @@ export function DockingStation() {
     }}>
       <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2, overflow: 'hidden' }}>
-          <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
-            <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary }}>
-              AGENT-X
-            </Typography>
-            {version && (
-            <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.primary, fontWeight: 600 }}>
-              v{version}
-            </Typography>
-            )}
-            <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '3px', ml: 1 }}>
-              MISSION CONTROL
-            </Typography>
-          </Box>
-
-        <Box sx={{
-          flex: 1, display: 'flex', flexDirection: 'column',
-          border: `1px solid ${colors.border.default}`,
-          borderRadius: '6px', overflow: 'hidden', minHeight: 0,
-          bgcolor: colors.bg.secondary,
-        }}>
           <Box sx={{
-            display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1,
-            borderBottom: `1px solid ${colors.border.default}`,
-          }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.border.strong }} />
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.border.accent }} />
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.text.dim }} />
-            <Typography sx={{ ml: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim }}>
-              agentx — mission-control
-            </Typography>
-          </Box>
-
-          <Box sx={{
-            flex: 1, px: 3, py: 2.5, overflow: 'auto',
+            flex: 1, px: 3, py: 2.5, overflow: 'auto', minHeight: 0,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', lineHeight: 1.8,
           }}>
             {lines.slice(0, visibleLines).map((line, i) => {
@@ -299,7 +265,6 @@ export function DockingStation() {
             )}
           </Box>
         </Box>
-      </Box>
 
       <Box sx={{
         width: 248, flexShrink: 0, display: 'flex', flexDirection: 'column',

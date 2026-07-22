@@ -67,6 +67,20 @@ function sessionFilterSql(sessionId: string | null | undefined): string {
   return '';
 }
 
+/** Gate-friendly confidence for a lexical (FTS) hit — not raw ts_rank. */
+const LEXICAL_HIT_SCORE = 0.55;
+
+export type FabricSearchOptions = {
+  limit?: number;
+  category?: MemoryNodeCategory;
+  agentId?: string;
+  tag?: string;
+  sessionId?: string | null;
+  /** Restrict to a single knowledge / memory source (e.g. @kb pin). */
+  sourceId?: string;
+  touch?: boolean;
+};
+
 const NODE_SELECT = `n.id, n.label, n.category, n.content, n.status, n.x, n.y, n.layout_epoch AS "layoutEpoch", n.tag, n.is_benchmark AS "isBenchmark",
             n.source_id AS "sourceId", n.session_id AS "sessionId", n.agent_id AS "agentId",
             n.confidence, n.created_at AS "createdAt", n.updated_at AS "updatedAt",
@@ -76,7 +90,7 @@ const NODE_SELECT = `n.id, n.label, n.category, n.content, n.status, n.x, n.y, n
 export async function vectorSearch(
   ctx: SearchContext,
   embedding: number[],
-  options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; touch?: boolean } = {},
+  options: FabricSearchOptions = {},
 ): Promise<MemoryNode[]> {
   const limit = options.limit ?? 10;
   const useHalfvec = await ctx.isHalfvecAvailable();
@@ -86,6 +100,12 @@ export async function vectorSearch(
   const vectorCast = useHalfvec ? 'halfvec' : 'vector';
   const vectorValue = useHalfvec ? halfvecLiteral : vectorLiteral;
   const sessionFilter = sessionFilterSql(options.sessionId);
+  const params: unknown[] = [vectorValue, limit];
+  let sourceClause = '';
+  if (options.sourceId) {
+    params.push(options.sourceId);
+    sourceClause = `AND n.source_id = $${params.length}`;
+  }
 
   const { rows } = await ctx.pool.query<MemoryNode>(
     `SELECT ${NODE_SELECT},
@@ -97,10 +117,11 @@ export async function vectorSearch(
        ${options.category ? `AND n.category = '${options.category}'` : ''}
        ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
        ${sessionFilter}
+       ${sourceClause}
        ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
      ORDER BY n.${embeddingColumn} <=> $1::${vectorCast}
      LIMIT $2`,
-    [vectorValue, limit],
+    params,
   );
   if (options.touch !== false) {
     await touchNeurons(ctx, rows.map((r) => r.id));
@@ -114,7 +135,7 @@ export async function vectorSearch(
 export async function lexicalSearch(
   ctx: SearchContext,
   query: string,
-  options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; touch?: boolean } = {},
+  options: FabricSearchOptions = {},
 ): Promise<MemoryNode[]> {
   const q = query.trim();
   if (!q) return [];
@@ -122,24 +143,24 @@ export async function lexicalSearch(
 
   const limit = options.limit ?? getRetrievalSettings().lexicalOverFetch;
   const sessionFilter = sessionFilterSql(options.sessionId);
+  const params: unknown[] = [q, limit, LEXICAL_HIT_SCORE];
+  let sourceClause = '';
+  if (options.sourceId) {
+    params.push(options.sourceId);
+    sourceClause = `AND n.source_id = $${params.length}`;
+  }
 
   try {
-    const { rows } = await ctx.pool.query<MemoryNode & { score: number }>(
-      `SELECT ${NODE_SELECT},
-              ts_rank_cd(n.content_tsv, plainto_tsquery('english', $1)) AS score,
-              NULL::float8 AS distance
-       FROM memory_nodes n
-       LEFT JOIN neuron_activity a ON a.node_id = n.id
-       WHERE n.status = 'active'
-         AND n.content_tsv @@ plainto_tsquery('english', $1)
-         ${options.category ? `AND n.category = '${options.category}'` : ''}
-         ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
-         ${sessionFilter}
-         ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
-       ORDER BY score DESC
-       LIMIT $2`,
-      [q, limit],
-    );
+    // AND queries (plain/websearch) often miss when terms span chunks; fall back to OR.
+    // Never expose raw ts_rank as cosine `score` — that failed minScoreKb after RRF.
+    let rows = await runLexicalQuery(ctx, params, sessionFilter, sourceClause, options, 'plain');
+    if (!rows.length) {
+      const orQuery = buildOrTsQuery(q);
+      if (orQuery) {
+        const orParams = [orQuery, limit, LEXICAL_HIT_SCORE, ...(options.sourceId ? [options.sourceId] : [])];
+        rows = await runLexicalQuery(ctx, orParams, sessionFilter, sourceClause, options, 'or');
+      }
+    }
     if (options.touch !== false) {
       await touchNeurons(ctx, rows.map((r) => r.id));
     }
@@ -151,6 +172,59 @@ export async function lexicalSearch(
   }
 }
 
+/** Build `to_tsquery` OR expression from significant tokens. */
+function buildOrTsQuery(query: string): string {
+  const stop = new Set([
+    'the', 'and', 'for', 'with', 'from', 'that', 'this', 'what', 'when', 'where',
+    'how', 'are', 'was', 'were', 'have', 'has', 'had', 'into', 'about', 'your',
+    'our', 'any', 'all', 'can', 'may', 'not', 'but', 'use', 'using',
+  ]);
+  const terms = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 2 && !stop.has(t) && !/^\d{1,2}$/.test(t));
+  const uniq = [...new Set(terms)].slice(0, 12);
+  if (uniq.length === 0) return '';
+  return uniq.map((t) => t.replace(/'/g, "''")).join(' | ');
+}
+
+async function runLexicalQuery(
+  ctx: SearchContext,
+  params: unknown[],
+  sessionFilter: string,
+  sourceClause: string,
+  options: FabricSearchOptions,
+  mode: 'plain' | 'or',
+): Promise<Array<MemoryNode & { score: number }>> {
+  const tsQuery = mode === 'or'
+    ? `to_tsquery('english', $1)`
+    : `plainto_tsquery('english', $1)`;
+  try {
+    const { rows } = await ctx.pool.query<MemoryNode & { score: number }>(
+      `SELECT ${NODE_SELECT},
+              $3::float8 AS score,
+              NULL::float8 AS distance,
+              ts_rank_cd(n.content_tsv, ${tsQuery}) AS rank
+       FROM memory_nodes n
+       LEFT JOIN neuron_activity a ON a.node_id = n.id
+       WHERE n.status = 'active'
+         AND n.content_tsv @@ ${tsQuery}
+         ${options.category ? `AND n.category = '${options.category}'` : ''}
+         ${options.tag ? `AND n.tag = '${options.tag}'` : ''}
+         ${sessionFilter}
+         ${sourceClause}
+         ${options.agentId ? `AND (n.agent_id = '${options.agentId}' OR n.agent_id IS NULL)` : ''}
+       ORDER BY rank DESC
+       LIMIT $2`,
+      params,
+    );
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Hybrid vector ∪ lexical via RRF. Falls back to vector-only when FTS unavailable or disabled.
  */
@@ -158,12 +232,7 @@ export async function hybridSearch(
   ctx: SearchContext,
   embedding: number[],
   query: string,
-  options: {
-    limit?: number;
-    category?: MemoryNodeCategory;
-    agentId?: string;
-    tag?: string;
-    sessionId?: string | null;
+  options: FabricSearchOptions & {
     vectorLimit?: number;
     lexicalLimit?: number;
   } = {},

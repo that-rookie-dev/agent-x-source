@@ -424,13 +424,13 @@ export class MemoryFabric {
     return getNodeImpl(this.nodeCrudCtx(), id);
   }
 
-  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {}): Promise<MemoryNode[]> {
+  async vectorSearch(embedding: number[], options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; sourceId?: string } = {}): Promise<MemoryNode[]> {
     return vectorSearchImpl(this.searchCtx(), embedding, options);
   }
 
   async lexicalSearch(
     query: string,
-    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null } = {},
+    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; sourceId?: string } = {},
   ): Promise<MemoryNode[]> {
     return lexicalSearchImpl(this.searchCtx(), query, options);
   }
@@ -438,7 +438,7 @@ export class MemoryFabric {
   async hybridSearch(
     embedding: number[],
     query: string,
-    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; vectorLimit?: number; lexicalLimit?: number } = {},
+    options: { limit?: number; category?: MemoryNodeCategory; agentId?: string; tag?: string; sessionId?: string | null; sourceId?: string; vectorLimit?: number; lexicalLimit?: number } = {},
   ): Promise<MemoryNode[]> {
     return hybridSearchImpl(this.searchCtx(), embedding, query, options);
   }

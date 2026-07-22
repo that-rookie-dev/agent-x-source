@@ -156,7 +156,8 @@ export function evaluateQuery(
   const lexicalRanked: RankedCandidate[] = lexicalHits.map((c) => ({
     id: c.id,
     content: c.content,
-    score: c.score,
+    // Cosine-like FTS confidence (matches fabric lexicalSearch), not term-count.
+    score: 0.55,
     sourceId: c.sourceId,
   }));
   const merged = mergeRrf(vectorRanked, lexicalRanked, { limit: RETRIEVAL_DEFAULTS.rerankKeep });

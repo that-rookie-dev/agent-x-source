@@ -62,10 +62,17 @@ export async function knowledgeBaseSearch(
   try {
     const results = await kb.search(query, topK, sourceId);
     if (results.length === 0) {
+      const pinned = sourceId ? await kb.getSource(sourceId) : null;
+      const statusHint = pinned
+        ? pinned.status === 'ready'
+          ? `Pinned source "${pinned.name}" is READY but no chunks matched this query — try a shorter keyword query (names, amounts, section titles).`
+          : `Pinned source "${pinned.name}" status is ${pinned.status.toUpperCase()} (not searchable yet).`
+        : 'Confirm the document finished indexing (READY).';
       return {
         success: true,
         output: [
-          'No knowledge-base matches. Confirm the document finished indexing (READY).',
+          'No knowledge-base matches.',
+          statusHint,
           'Do not fall back to file_read, shell_exec, or any disk open of the original upload — stay on knowledge_base_search or tell the user the document is not searchable yet.',
         ].join(' '),
       };

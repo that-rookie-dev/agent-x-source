@@ -15,11 +15,24 @@ export interface ScoredItem {
   score?: number | null;
 }
 
-/** Prefer explicit score; else derive from distance. */
+/**
+ * Resolve a gate-able similarity in [0, 1].
+ *
+ * - Vector `distance` → cosine similarity.
+ * - `score` is only trusted when already cosine-like (0, 1]; raw ts_rank
+ *   (~0.01–0.2) and term-counts (>1) must not override a good vector hit,
+ *   and must not alone pass minScoreKb.
+ * - When both exist, take the max so a real FTS hit (e.g. 0.55) can still
+ *   survive a weak embedding match.
+ */
 export function itemSimilarity(item: ScoredItem): number {
-  if (item.score != null && Number.isFinite(item.score)) return item.score;
   const fromDist = similarityFromDistance(item.distance);
-  return fromDist ?? 0;
+  const raw = item.score;
+  const score = raw != null && Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : null;
+  if (fromDist != null && score != null) return Math.max(fromDist, score);
+  if (fromDist != null) return fromDist;
+  if (score != null) return score;
+  return 0;
 }
 
 export function filterByMinScore<T extends ScoredItem>(items: T[], minScore: number): T[] {

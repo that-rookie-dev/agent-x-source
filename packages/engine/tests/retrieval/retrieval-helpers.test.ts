@@ -61,6 +61,33 @@ describe('score gate', () => {
     expect(kept.map((k) => k.id)).toEqual(['a']);
   });
 
+  it('keeps strong vector hits even when hybrid attached low ts_rank scores', () => {
+    const kept = applyScoreGate(
+      [
+        // Real cosine ~0.9, but legacy hybrid put ts_rank (~0.1) in score
+        { id: 'hit', content: 'TAX FORECAST', distance: 0.1, score: 0.1, sourceId: 'kb' },
+      ],
+      { minScore: 0.4 },
+    );
+    expect(kept.map((k) => k.id)).toEqual(['hit']);
+  });
+
+  it('keeps FTS-only hits with cosine-like confidence', () => {
+    const kept = applyScoreGate(
+      [{ id: 'lex', content: 'employee 30094485', score: 0.55, sourceId: 'kb' }],
+      { minScore: 0.4 },
+    );
+    expect(kept.map((k) => k.id)).toEqual(['lex']);
+  });
+
+  it('drops raw ts_rank-only scores below the KB floor', () => {
+    const kept = applyScoreGate(
+      [{ id: 'weak', content: 'noise', score: 0.1, sourceId: 'kb' }],
+      { minScore: 0.4 },
+    );
+    expect(kept).toHaveLength(0);
+  });
+
   it('dedupes near-identical bodies', () => {
     const out = dedupeByContent([
       { id: '1', content: 'Hello World' },
