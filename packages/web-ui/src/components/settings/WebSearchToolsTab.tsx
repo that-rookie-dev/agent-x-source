@@ -13,7 +13,7 @@ import TravelExploreIcon from '@mui/icons-material/TravelExplore';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import type { WebSearchProviderId, WebSearchToolsConfig } from '@agentx/shared';
 import { settings } from '../../api';
-import { hasConfiguredSecret, isRedactedSecret } from '../../utils/secret-field';
+import { hasConfiguredSecret } from '../../utils/secret-field';
 import {
   settingsTheme,
   settingsScanlineSx,
@@ -119,15 +119,14 @@ const SEARCH_PROVIDERS: ProviderMeta[] = [
 function isProviderActive(id: ProviderMeta['id'], cfg: WebSearchToolsConfig): boolean {
   if (id === 'duckduckgo') return cfg.duckduckgo?.enabled !== false;
   const entry = cfg[id];
-  return Boolean(entry?.enabled && hasConfiguredSecret(entry.apiKey));
+  return Boolean(entry?.enabled && hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured));
 }
 
 function providerStatus(id: ProviderMeta['id'], cfg: WebSearchToolsConfig, enabled: boolean): string {
   if (!enabled) return 'OFF';
   if (id === 'duckduckgo') return 'READY';
   const entry = cfg[id as PaidProviderId];
-  if (hasConfiguredSecret(entry?.apiKey)) return 'READY';
-  if (entry?.apiKey && isRedactedSecret(entry.apiKey)) return 'READY';
+  if (hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured)) return 'READY';
   return 'SETUP';
 }
 
@@ -346,8 +345,8 @@ function SearchProviderCard({
   const enabled = isDdg
     ? value.duckduckgo?.enabled !== false
     : Boolean(value[meta.id as PaidProviderId]?.enabled);
-  const storedKey = isDdg ? '' : (value[meta.id as PaidProviderId]?.apiKey ?? '');
-  const keyConfigured = isDdg || hasConfiguredSecret(storedKey) || isRedactedSecret(storedKey);
+  const paid = isDdg ? undefined : value[meta.id as PaidProviderId];
+  const keyConfigured = isDdg || hasConfiguredSecret(paid?.apiKey, paid?.apiKeyConfigured);
   const status = providerStatus(meta.id, value, enabled);
   const ready = isProviderActive(meta.id, value);
 
@@ -356,9 +355,14 @@ function SearchProviderCard({
       onChange({ ...value, duckduckgo: { enabled: checked } });
       return;
     }
+    // Do not send apiKey — backend preserves the stored secret.
+    const prev = value[meta.id as PaidProviderId];
     onChange({
       ...value,
-      [meta.id]: { ...value[meta.id as PaidProviderId], enabled: checked },
+      [meta.id]: {
+        enabled: checked,
+        apiKeyConfigured: prev?.apiKeyConfigured,
+      },
     });
   };
 
@@ -367,9 +371,9 @@ function SearchProviderCard({
     onChange({
       ...value,
       [meta.id]: {
-        ...value[meta.id as PaidProviderId],
         enabled: true,
         apiKey: draftKey.trim(),
+        apiKeyConfigured: true,
       },
     });
     setEditingKey(false);
@@ -382,7 +386,7 @@ function SearchProviderCard({
     setDraftKey('');
     onChange({
       ...value,
-      [meta.id]: { ...value[meta.id as PaidProviderId], enabled: false, apiKey: '' },
+      [meta.id]: { enabled: false, apiKey: '', apiKeyConfigured: false },
     });
   };
 
@@ -436,7 +440,7 @@ function SearchProviderCard({
           fontSize: 16,
           color: settingsTheme.text.dim,
           transform: instructionsOpen ? 'rotate(180deg)' : 'none',
-          transition: 'transform 0.2s',
+          transition: 'transform 0.28s ease',
         }} />
         <Typography sx={{ ...settingsOverlineSx, mb: 0 }}>Setup instructions</Typography>
       </Box>
@@ -527,15 +531,15 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
   const hasSearchProvider = SEARCH_PROVIDERS.some((p) => isProviderActive(p.id, value));
 
   const runProviderTest = async (id: PaidProviderId) => {
-    const rawKey = value[id]?.apiKey?.trim() ?? '';
-    const useStored = !rawKey || isRedactedSecret(rawKey);
-    if (!useStored && !rawKey) {
+    const entry = value[id];
+    if (!hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured) && !entry?.apiKey?.trim()) {
       setTestResults((prev) => ({ ...prev, [id]: { ok: false, message: 'Save an API key first' } }));
       return;
     }
     setTesting(id);
     try {
-      const result = await settings.webSearch.test(id, useStored ? undefined : rawKey);
+      // Always test against the server-stored key — never send placeholders from the client.
+      const result = await settings.webSearch.test(id, undefined);
       setTestResults((prev) => ({
         ...prev,
         [id]: {
@@ -611,20 +615,33 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
 export function defaultWebSearchConfig(): WebSearchToolsConfig {
   return {
     duckduckgo: { enabled: true },
-    brave: { enabled: false, apiKey: '' },
-    exa: { enabled: false, apiKey: '' },
-    tavily: { enabled: false, apiKey: '' },
+    brave: { enabled: false, apiKeyConfigured: false },
+    exa: { enabled: false, apiKeyConfigured: false },
+    tavily: { enabled: false, apiKeyConfigured: false },
     providerOrder: [...DEFAULT_PROVIDER_ORDER],
   };
+}
+
+function mergePaidClientEntry(
+  defaults: { enabled: boolean; apiKeyConfigured?: boolean },
+  existing?: { enabled?: boolean; apiKey?: string; apiKeyConfigured?: boolean },
+): { enabled: boolean; apiKeyConfigured?: boolean; apiKey?: string } {
+  const enabled = existing?.enabled ?? defaults.enabled;
+  const configured = hasConfiguredSecret(existing?.apiKey, existing?.apiKeyConfigured);
+  // Never keep placeholder/empty apiKey strings in client state — only the flag + optional new draft key.
+  if (existing?.apiKey && existing.apiKey.trim() && !existing.apiKey.includes('•')) {
+    return { enabled, apiKey: existing.apiKey, apiKeyConfigured: true };
+  }
+  return { enabled, apiKeyConfigured: configured };
 }
 
 export function mergeWebSearchConfig(existing?: WebSearchToolsConfig | null): WebSearchToolsConfig {
   const defaults = defaultWebSearchConfig();
   return {
     duckduckgo: { enabled: existing?.duckduckgo?.enabled ?? defaults.duckduckgo!.enabled },
-    brave: { ...defaults.brave!, ...existing?.brave },
-    exa: { ...defaults.exa!, ...existing?.exa },
-    tavily: { ...defaults.tavily!, ...existing?.tavily },
+    brave: mergePaidClientEntry(defaults.brave!, existing?.brave),
+    exa: mergePaidClientEntry(defaults.exa!, existing?.exa),
+    tavily: mergePaidClientEntry(defaults.tavily!, existing?.tavily),
     providerOrder: normalizeProviderOrder(existing?.providerOrder ?? defaults.providerOrder),
   };
 }

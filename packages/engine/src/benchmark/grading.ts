@@ -76,6 +76,10 @@ export function gradeColor(grade: BenchmarkGrade): string {
   }
 }
 
+/**
+ * Whether a finished benchmark grade may appear in the cleared-model whitelist.
+ * STANDBY is included so users can opt in at their own risk (UI acknowledgment).
+ */
 export function allowsAgentXUse(grade: BenchmarkGrade): boolean {
-  return grade !== 'STANDBY';
+  return grade === 'ELITE' || grade === 'CLEARED' || grade === 'LIMITED' || grade === 'STANDBY';
 }

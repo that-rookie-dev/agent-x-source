@@ -14,6 +14,7 @@ import { getLlmConcurrencyLimits } from '../../performance/PerformanceGovernor.j
 import { createAiSdkModel, createAiSdkTools } from '../../agent/AiSdkBridge.js';
 import { createAiSdkStreamHandler } from '../../agent/AiSdkStreamHandler.js';
 import { buildCompletionMessages } from '../../agent/context-profile.js';
+import { modelMessageContentToText, estimateToolSchemaChars } from '../../agent/agent-helpers.js';
 import { reconcileIntegrationHintWithActiveTools } from '../../integrations/integration-tool-availability.js';
 import type { ThirdPartyTurnPolicy } from '../../integrations/third-party-access.js';
 import { buildGoogleAiSdkProviderOptions } from '../../providers/google/gemini-metadata.js';
@@ -593,40 +594,28 @@ export class TurnOrchestrator implements ITurnOrchestrator {
   }
 
   private modelMessageContentToText(content: unknown): string {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content.map((part) => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part === 'object') {
-          const p = part as Record<string, unknown>;
-          if (typeof p.text === 'string') return p.text;
-          if (typeof p.toolName === 'string') return `tool:${p.toolName}`;
-          return JSON.stringify(part);
-        }
-        return '';
-      }).join('\n');
-    }
-    if (content == null) return '';
-    return JSON.stringify(content);
+    return modelMessageContentToText(content);
   }
 
   private estimateToolSchemaChars(tools: Record<string, unknown>): number {
-    let chars = 0;
-    for (const name of Object.keys(tools)) {
-      const t = tools[name] as { description?: string; inputSchema?: unknown } | undefined;
-      chars += JSON.stringify({ description: t?.description, inputSchema: t?.inputSchema }).length;
-    }
-    return chars;
+    return estimateToolSchemaChars(tools);
   }
 
   private estimateTurnInputTokens(
-    messages: Array<{ content: string }>,
+    messages: Array<{ content: string; attachments?: Array<{ type?: string }> }>,
     tools: Record<string, unknown>,
   ): number {
-    return estimatePromptTokens(
+    const textTokens = estimatePromptTokens(
       messages,
       Object.keys(tools).length,
       this.estimateToolSchemaChars(tools),
     );
+    let imageTokens = 0;
+    for (const m of messages) {
+      for (const a of m.attachments ?? []) {
+        if (a.type === 'image') imageTokens += 1_700;
+      }
+    }
+    return textTokens + imageTokens;
   }
 }

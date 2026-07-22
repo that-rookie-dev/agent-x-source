@@ -509,3 +509,14 @@ export type {
   KnowledgeBaseStatusListener,
   DocumentIngestPipelineOptions,
 } from './knowledge-base/index.js';
+export {
+  TemplateService,
+  TemplateStore,
+  getTemplateService,
+  setTemplateService,
+  detectTemplateFormat,
+  isFillableFormat,
+  scanTemplatePlaceholders,
+  fillTemplateBuffer,
+} from './templates/index.js';
+export type { TemplateServiceOptions } from './templates/TemplateService.js';

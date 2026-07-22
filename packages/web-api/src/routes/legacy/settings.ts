@@ -387,11 +387,22 @@ export function createSettingsRouter(): Router {
         res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
         return;
       }
-      let apiKey = String(req.body?.apiKey ?? '').trim();
-      if (!apiKey || apiKey === REDACTED_SECRET) {
+      // Prefer an explicitly provided new key; otherwise always use the server-stored secret.
+      // Never accept legacy redacted placeholders (bullets) as a key.
+      const bodyKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+      const looksPlaceholder = !bodyKey
+        || bodyKey === REDACTED_SECRET
+        || bodyKey.includes('•')
+        || bodyKey === '***'
+        || bodyKey === '********';
+      let apiKey = '';
+      if (!looksPlaceholder) {
+        apiKey = bodyKey;
+      } else {
         try {
           const cfg = getEngine().configManager.load();
-          apiKey = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+          const stored = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+          apiKey = stored.includes('•') ? '' : stored;
         } catch {
           apiKey = '';
         }

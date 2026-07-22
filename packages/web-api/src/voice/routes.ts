@@ -25,6 +25,23 @@ import {
   formatEnsureError,
 } from './setup.js';
 
+function pickVoiceGreetingFallback(callsign: string, agentName: string): string {
+  const fallbacks = callsign
+    ? [
+        `${agentName} here, ${callsign}. Voice is live — what's on your mind?`,
+        `Hey ${callsign}, ${agentName} online. Ready when you are.`,
+        `${callsign}, ${agentName} speaking. Audio channel is open.`,
+        `Voice is up, ${callsign}. ${agentName} at your service.`,
+      ]
+    : [
+        `${agentName} here. Voice comms are online.`,
+        `Audio channel open. ${agentName} standing by.`,
+        `Voice systems online. ${agentName} ready to help.`,
+        `${agentName} online. What can I do for you?`,
+      ];
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)]!;
+}
+
 function createVoiceRoutesRouter(): Router {
   const router: Router = Router();
 
@@ -259,27 +276,21 @@ function createVoiceRoutesRouter(): Router {
         maxOutputTokens: 60,
       });
       const greeting = result.text.trim().replace(/^["']|["']$/g, '').slice(0, 200);
+      // Empty model output is a soft failure — same as LLM unavailable.
+      if (!greeting) {
+        const fallback = pickVoiceGreetingFallback(
+          String(req.body?.callsign ?? '').trim(),
+          agentName,
+        );
+        return res.json({ text: fallback, fallback: true });
+      }
       res.json({ text: greeting });
     } catch {
       // Fallback greetings if LLM is not available
-      const engine = getEngine();
       const persona = getPersonaStore().get();
       const agentName = persona?.name ?? 'Agent-X';
       const callsign = String(req.body?.callsign ?? '').trim();
-      const fallbacks = callsign
-        ? [
-            `${agentName} here, ${callsign}. Voice is live — what's on your mind?`,
-            `Hey ${callsign}, ${agentName} online. Ready when you are.`,
-            `${callsign}, ${agentName} speaking. Audio channel is open.`,
-            `Voice is up, ${callsign}. ${agentName} at your service.`,
-          ]
-        : [
-            `${agentName} here. Voice comms are online.`,
-            `Audio channel open. ${agentName} standing by.`,
-            `Voice systems online. ${agentName} ready to help.`,
-            `${agentName} online. What can I do for you?`,
-          ];
-      const greeting = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+      const greeting = pickVoiceGreetingFallback(callsign, agentName);
       res.json({ text: greeting, fallback: true });
     }
   });

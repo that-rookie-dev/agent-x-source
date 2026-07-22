@@ -107,10 +107,12 @@ export function CrewCallPhonebookModal({
       PaperProps={{
         sx: {
           bgcolor: colors.bg.secondary,
+          color: colors.text.primary,
           border: `1px solid ${colors.border.default}`,
           borderRadius: '8px',
           maxHeight: '78vh',
           height: { xs: 'auto', sm: 'min(560px, 78vh)' },
+          backgroundImage: 'none',
         },
       }}
     >

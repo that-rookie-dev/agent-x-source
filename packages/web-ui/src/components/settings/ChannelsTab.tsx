@@ -465,7 +465,7 @@ function ChannelCard({
                 <ExpandMoreIcon sx={{
                   fontSize: 14, color: settingsTheme.text.dim,
                   transform: instructionsOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.2s',
+                  transition: 'transform 0.28s ease',
                 }} />
               </Box>
               <Collapse in={instructionsOpen}>

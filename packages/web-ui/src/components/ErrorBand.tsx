@@ -105,6 +105,8 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
                   overflow: expanded ? 'visible' : 'hidden',
                   textOverflow: expanded ? 'clip' : 'ellipsis',
                   lineHeight: expanded ? 1.5 : 1,
+                  maxHeight: expanded ? 240 : 18,
+                  transition: 'max-height 0.28s ease, line-height 0.28s ease',
                 }}
               >
                 {error}
@@ -119,9 +121,11 @@ export function ErrorBandProvider({ children }: { children: ReactNode }) {
                   flexShrink: 0,
                   fontFamily: "'JetBrains Mono', monospace",
                   lineHeight: 1,
+                  transition: 'transform 0.28s ease',
+                  transform: expanded ? 'rotate(180deg)' : 'none',
                 }}
               >
-                {expanded ? '▲' : '▼'}
+                ▼
               </Typography>
             )}
             <Tooltip title="Copy error + log location" arrow placement="top">

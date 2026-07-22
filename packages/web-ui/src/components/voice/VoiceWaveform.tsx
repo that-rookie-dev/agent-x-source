@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
-import { colors, resolveColor } from '../../theme';
+import { colors, getActiveScheme, resolveColor } from '../../theme';
 import { commsTheme } from './voice-comms-theme';
 
 export interface VoiceWaveformProps {
@@ -47,6 +47,7 @@ export function VoiceWaveform({
       frame += 1;
       const lvl = levelRef.current;
       const on = activeRef.current;
+      const light = getActiveScheme() === 'light';
       ctx.clearRect(0, 0, width, height);
 
       const gap = 3;
@@ -61,7 +62,9 @@ export function VoiceWaveform({
           : 2;
         const x = i * (barW + gap);
         ctx.fillStyle = on ? accentColor : idleColor;
-        ctx.globalAlpha = on ? 0.35 + lvl * 0.55 : 0.03;
+        ctx.globalAlpha = on
+          ? (light ? 0.5 : 0.35) + lvl * 0.55
+          : (light ? 0.12 : 0.03);
         ctx.fillRect(x, mid - h / 2, barW, h);
       }
       ctx.globalAlpha = 1;

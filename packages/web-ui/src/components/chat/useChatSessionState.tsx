@@ -594,7 +594,11 @@ export function useChatSessionState(sessionId?: string, coreSession = false) {
   const questionnairePending = useMemo(() => hasPendingChatInteraction(messages), [messages]);
 
   const hasImageAttachment = attachments.some((a) => isImageMimeType(a.mimeType));
-  const visionSupported = supportsVision(currentProvider, currentModel);
+  const activeModelCapabilities = useMemo(
+    () => modelList.find((m) => m.id === currentModel)?.capabilities ?? null,
+    [modelList, currentModel],
+  );
+  const visionSupported = supportsVision(currentProvider, currentModel, activeModelCapabilities);
   const imageSendBlocked = hasImageAttachment && !visionSupported;
   const sendBlocked = !currentProvider || !currentModel || imageSendBlocked;
   const sendBlockedReason = !currentProvider

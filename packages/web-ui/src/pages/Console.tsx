@@ -111,6 +111,8 @@ export function Console() {
     if (panel === 'health') navigate('/console/agent-x', { replace: true });
     // Legacy RAG Studio route — product was decommissioned in favor of Knowledge Base.
     if (panel === 'rag-studio') navigate('/console/knowledge-base', { replace: true });
+    // Templates live under Knowledge Base → Templates tab.
+    if (panel === 'templates') navigate('/console/knowledge-base?tab=templates', { replace: true });
   }, [panel, navigate]);
 
   // Chat stays mounted while Settings changes model — resync when returning to chat.

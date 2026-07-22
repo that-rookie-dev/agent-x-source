@@ -93,6 +93,23 @@ describe('search-config', () => {
     expect(merged.brave?.enabled).toBe(false);
   });
 
+  it('mergeWebSearchToolsConfig ignores legacy redacted placeholders', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { brave: { enabled: true, apiKey: 'real-secret' } },
+      { brave: { enabled: true, apiKey: '••••••••' } },
+    );
+    expect(merged.brave?.apiKey).toBe('real-secret');
+  });
+
+  it('mergeWebSearchToolsConfig clears key when apiKeyConfigured is false', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { brave: { enabled: true, apiKey: 'real-secret' } },
+      { brave: { enabled: false, apiKeyConfigured: false } },
+    );
+    expect(merged.brave?.apiKey).toBe('');
+    expect(merged.brave?.enabled).toBe(false);
+  });
+
   it('reports no active providers when all disabled', () => {
     const rt = resolveWebSearchRuntime({
       duckduckgo: { enabled: false },

@@ -1,6 +1,6 @@
 // Centralized API client for all web-api endpoints
 
-import type { ClientSituation, TurnAttachment, AttachmentReference, AttachmentPreview, KnowledgeSource, KnowledgeSearchResult, KnowledgeSearchRequest, KnowledgeSourceListResponse } from '@agentx/shared';
+import type { ClientSituation, TurnAttachment, AttachmentReference, AttachmentPreview, KnowledgeSource, KnowledgeSearchResult, KnowledgeSearchRequest, KnowledgeSourceListResponse, DocumentTemplate, TemplateField, TemplateFillResult, UpdateDocumentTemplateInput } from '@agentx/shared';
 import { AGENTX_AUTH_TOKEN_KEY } from './utils/client-storage';
 import { notifyVoiceConfigUpdated } from './voice/support';
 
@@ -21,7 +21,17 @@ export function setAuthToken(token: string | null): void {
 }
 
 export function getAuthToken(): string | null {
-  return authToken;
+  if (authToken) return authToken;
+  try {
+    const stored = sessionStorage.getItem(AGENTX_AUTH_TOKEN_KEY);
+    if (stored) {
+      authToken = stored;
+      return stored;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 /** Refresh in-memory token from the active session cookie (needed for WebSocket ?token= auth). */
@@ -955,6 +965,56 @@ export const knowledgeBase = {
   }),
 };
 
+// ─── Document Templates ───
+export const templates = {
+  list: () => request<{ templates: DocumentTemplate[] }>('/templates').then((r) => r.templates),
+  get: (id: string) => request<{ template: DocumentTemplate }>(`/templates/${encodeURIComponent(id)}`).then((r) => r.template),
+  upload: async (file: File): Promise<DocumentTemplate> => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers: Record<string, string> = {};
+    const token = getAuthToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${BASE}/templates/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: form,
+    });
+    if (!res.ok) {
+      const raw = await res.text().catch(() => '');
+      let message = `Upload failed: ${res.statusText}`;
+      try {
+        const parsed = JSON.parse(raw) as { error?: string; message?: string };
+        message = parsed.message ?? parsed.error ?? message;
+      } catch { /* ignore */ }
+      throw new Error(message);
+    }
+    const data = await res.json() as { template: DocumentTemplate };
+    return data.template;
+  },
+  update: (id: string, patch: UpdateDocumentTemplateInput) =>
+    request<{ template: DocumentTemplate }>(`/templates/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }).then((r) => r.template),
+  rescan: (id: string) =>
+    request<{ template: DocumentTemplate }>(`/templates/${encodeURIComponent(id)}/rescan`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }).then((r) => r.template),
+  fill: (id: string, body: { values: Record<string, string>; outputName?: string; sessionId?: string }) =>
+    request<{ ok: boolean; result: TemplateFillResult }>(`/templates/${encodeURIComponent(id)}/fill`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then((r) => r.result),
+  delete: async (id: string): Promise<void> => {
+    await request<{ ok: boolean }>(`/templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+};
+
+export type { DocumentTemplate, TemplateField, TemplateFillResult };
+
 // ─── Bridges ───
 export const bridges = {
   telegram: {
@@ -1275,6 +1335,8 @@ export interface VoiceConfig {
   /** xAI realtime settings. */
   xai?: {
     apiKey?: string;
+    /** Present when a key is stored; secret itself is never returned. */
+    apiKeyConfigured?: boolean;
     model?: string;
     voice?: string;
   };

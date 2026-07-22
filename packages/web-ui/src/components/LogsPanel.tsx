@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
 import IconButton from '@mui/material/IconButton';
 import Chip from '@mui/material/Chip';
 import Tooltip from '@mui/material/Tooltip';
@@ -345,43 +346,45 @@ export function LogsPanel({ onClose, onTogglePosition, position }: LogsPanelProp
                     )}
                   </Box>
                 )}
-                {entry.stack && expandedIndex === idx && (
-                  <Box
-                    component="pre"
-                    sx={{
-                      mt: 0.5,
-                      p: 1,
-                      fontSize: '0.6rem',
-                      bgcolor: colors.bg.primary,
-                      borderRadius: '4px',
-                      color: colors.text.muted,
-                      overflow: 'auto',
-                      maxHeight: 200,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                    }}
-                  >
-                    {entry.stack}
-                  </Box>
-                )}
-                {entry.context && expandedIndex === idx && (
-                  <Box
-                    component="pre"
-                    sx={{
-                      mt: 0.5,
-                      p: 1,
-                      fontSize: '0.6rem',
-                      bgcolor: colors.bg.primary,
-                      borderRadius: '4px',
-                      color: colors.text.muted,
-                      overflow: 'auto',
-                      maxHeight: 150,
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
-                    {JSON.stringify(entry.context, null, 2)}
-                  </Box>
-                )}
+                <Collapse in={expandedIndex === idx} unmountOnExit>
+                  {entry.stack && (
+                    <Box
+                      component="pre"
+                      sx={{
+                        mt: 0.5,
+                        p: 1,
+                        fontSize: '0.6rem',
+                        bgcolor: colors.bg.primary,
+                        borderRadius: '4px',
+                        color: colors.text.muted,
+                        overflow: 'auto',
+                        maxHeight: 200,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                      }}
+                    >
+                      {entry.stack}
+                    </Box>
+                  )}
+                  {entry.context && (
+                    <Box
+                      component="pre"
+                      sx={{
+                        mt: 0.5,
+                        p: 1,
+                        fontSize: '0.6rem',
+                        bgcolor: colors.bg.primary,
+                        borderRadius: '4px',
+                        color: colors.text.muted,
+                        overflow: 'auto',
+                        maxHeight: 150,
+                        whiteSpace: 'pre-wrap',
+                      }}
+                    >
+                      {JSON.stringify(entry.context, null, 2)}
+                    </Box>
+                  )}
+                </Collapse>
               </span>
             </Box>
           ))

@@ -171,12 +171,30 @@ interface EventHandlerContext {
 /** Sync voice-only user turns that text chat didn't add locally. */
 const handleMessageSent = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   if (ctx.isInitialLoadRef.current) return;
-  const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+  const msg = ev.message as {
+    id?: string;
+    content?: string;
+    role?: string;
+    metadata?: { voiceTurn?: boolean };
+    attachments?: UIMessage['attachments'];
+  } | undefined;
   const text = typeof msg?.content === 'string' ? msg.content.trim() : '';
-  if (!text || msg?.role !== 'user') return;
-  // Text chat already added the user bubble locally — only sync voice-only turns.
+  if ((!text && !(msg?.attachments?.length)) || msg?.role !== 'user') return;
+
+  // Chat composer already inserted the bubble. Only synthesize a row for true
+  // voice turns — never invent a "Voice" chip for ordinary chat/SSE races.
+  const voiceTurn = msg?.metadata?.voiceTurn === true;
+  if (!voiceTurn) return;
+
   ctx.setMessages((prev) => {
-    if (prev.some((m) => m.role === 'user' && m.content === text)) return prev;
+    if (prev.some((m) => (
+      (msg?.id != null && m.id === msg.id)
+      || (m.role === 'user' && m.content.trim() === text)
+    ))) {
+      return prev;
+    }
+    const outgoing = ctx.outgoingTurnRef.current;
+    if (outgoing && outgoing.userContent.trim() === text) return prev;
     return [
       ...prev,
       {
@@ -185,6 +203,7 @@ const handleMessageSent = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
         content: text,
         streaming: false,
         voiceInput: true,
+        ...(msg?.attachments?.length ? { attachments: msg.attachments } : {}),
       },
     ];
   });
@@ -760,9 +779,10 @@ const handleMessageReceived = (ev: TelemetryEvent, ctx: EventHandlerContext): vo
 /** Show the permission prompt modal for risky tool operations. */
 const handlePermissionRequired = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   ctx.setMessages((prev) => {
-    // Ignore stale permission prompts replayed from telemetry buffer on page load
-    if (ctx.isInitialLoadRef.current) { return prev; }
-    ctx.setPendingPermissionCount((prev) => prev + 1);
+    // Ignore stale permission prompts replayed from telemetry buffer on page load,
+    // and prompts that arrive after the user already stopped the turn.
+    if (ctx.isInitialLoadRef.current || !ctx.turnActiveRef.current) { return prev; }
+    ctx.setPendingPermissionCount((count) => count + 1);
     ctx.setPermissionPrompt({
       requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
       tool: (ev.tool as string) ?? 'unknown',

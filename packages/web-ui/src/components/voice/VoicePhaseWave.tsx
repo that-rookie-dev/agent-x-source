@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
-import { resolveColor } from '../../theme';
+import { getActiveScheme, resolveColor } from '../../theme';
 
 export type WaveMode = 'listening' | 'speaking' | 'idle';
 
@@ -45,6 +45,8 @@ export function VoicePhaseWave({
       frame += 1;
       const m = modeRef.current;
       const lvl = levelRef.current;
+      const light = getActiveScheme() === 'light';
+      const alphaBoost = light ? 1.35 : 1;
       ctx.clearRect(0, 0, size, size);
       const cx = size / 2;
       const cy = size / 2;
@@ -54,11 +56,11 @@ export function VoicePhaseWave({
         for (let i = 0; i < rings; i += 1) {
           const cycle = ((frame * 0.018) + i * 0.22) % 1;
           const radius = 18 + cycle * (size * 0.42) * (0.55 + lvl * 0.45);
-          const alpha = (1 - cycle) * (0.18 + lvl * 0.45);
+          const alpha = (1 - cycle) * (0.18 + lvl * 0.45) * alphaBoost;
           ctx.beginPath();
           ctx.arc(cx, cy, radius, 0, Math.PI * 2);
           ctx.strokeStyle = color;
-          ctx.globalAlpha = alpha;
+          ctx.globalAlpha = Math.min(0.85, alpha);
           ctx.lineWidth = 1.5 + (1 - cycle) * 1.5;
           ctx.stroke();
         }
@@ -66,7 +68,7 @@ export function VoicePhaseWave({
         const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, 28 + lvl * 18);
         g.addColorStop(0, color);
         g.addColorStop(1, 'transparent');
-        ctx.globalAlpha = 0.12 + lvl * 0.2;
+        ctx.globalAlpha = (0.12 + lvl * 0.2) * alphaBoost;
         ctx.fillStyle = g;
         ctx.beginPath();
         ctx.arc(cx, cy, 36, 0, Math.PI * 2);
@@ -86,7 +88,7 @@ export function VoicePhaseWave({
             else ctx.lineTo(x, y);
           }
           ctx.strokeStyle = color;
-          ctx.globalAlpha = 0.22 + lvl * 0.4 - b * 0.05;
+          ctx.globalAlpha = Math.min(0.9, (0.22 + lvl * 0.4 - b * 0.05) * alphaBoost);
           ctx.lineWidth = 1.6 - b * 0.25;
           ctx.lineCap = 'round';
           ctx.stroke();
@@ -96,7 +98,7 @@ export function VoicePhaseWave({
           const x = 16 + (i / 15) * (size - 32);
           const pulse = Math.abs(Math.sin(frame * 0.09 + i * 0.4));
           const h = (4 + pulse * (10 + lvl * 18));
-          ctx.globalAlpha = 0.12 + pulse * 0.35 * (0.4 + lvl);
+          ctx.globalAlpha = Math.min(0.85, (0.12 + pulse * 0.35 * (0.4 + lvl)) * alphaBoost);
           ctx.fillStyle = color;
           ctx.fillRect(x - 1, cy - h / 2, 2, h);
         }

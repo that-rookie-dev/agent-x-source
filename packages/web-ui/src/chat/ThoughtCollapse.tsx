@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
 import { colors } from '../theme';
 
@@ -56,14 +57,14 @@ export function ThoughtCollapse({
             color: colors.text.dim,
             opacity: 0.7,
             transform: open ? 'rotate(90deg)' : 'none',
-            transition: 'transform 0.15s ease',
+            transition: 'transform 0.28s ease',
             lineHeight: 1,
           }}
         >
           ›
         </Typography>
       </Box>
-      {open && (
+      <Collapse in={open} unmountOnExit>
         <Typography
           component="pre"
           sx={{
@@ -81,7 +82,7 @@ export function ThoughtCollapse({
         >
           {trimmed}
         </Typography>
-      )}
+      </Collapse>
     </Box>
   );
 }

@@ -1,38 +1,86 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import SendIcon from '@mui/icons-material/Send';
-import { channels } from '../../api';
+import { bridges, channels, config } from '../../api';
 import { WizardStatusLine, WizardStepShell } from './wizard-step-shell';
 import { wizardPrimaryBtnSx, wizardTextFieldSlotProps, wizardTheme, WIZARD_MONO } from './wizard-theme';
 import { colors, alphaColor } from '../../theme';
 
+export interface WizardTelegramLinkMeta {
+  botLabel: string | null;
+  chatLabel: string | null;
+}
+
 export interface WizardTelegramStepProps {
-  onLinkedChange?: (linked: boolean) => void;
+  onLinkedChange?: (linked: boolean, meta?: WizardTelegramLinkMeta) => void;
+  /** Parent already marked this step complete — restore finished UI on revisit. */
+  alreadyLinked?: boolean;
+  initialBotLabel?: string | null;
+  initialChatLabel?: string | null;
 }
 
 /** Two-phase link flow: 1) validate token, 2) detect the chat after user messages the bot. */
 type LinkPhase = 'token' | 'awaiting-chat' | 'linked';
 
-export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) {
+export function WizardTelegramStep({
+  onLinkedChange,
+  alreadyLinked,
+  initialBotLabel,
+  initialChatLabel,
+}: WizardTelegramStepProps) {
   const [token, setToken] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'info' | 'error'>('info');
-  const [phase, setPhase] = useState<LinkPhase>('token');
-  const [botLabel, setBotLabel] = useState<string | null>(null);
-  const [chatLabel, setChatLabel] = useState<string | null>(null);
+  const [phase, setPhase] = useState<LinkPhase>(alreadyLinked ? 'linked' : 'token');
+  const [botLabel, setBotLabel] = useState<string | null>(initialBotLabel ?? null);
+  const [chatLabel, setChatLabel] = useState<string | null>(initialChatLabel ?? null);
+  const [tokenConfigured, setTokenConfigured] = useState(Boolean(alreadyLinked));
 
   const linked = phase === 'linked';
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [cfg, status] = await Promise.all([
+          config.get().catch(() => null),
+          bridges.telegram.status().catch(() => null),
+        ]);
+        const tg = cfg?.channels?.telegram;
+        const serverLinked = Boolean(
+          (tg?.enabled && tg.chatId) || status?.configured,
+        );
+        if (!serverLinked && !alreadyLinked) return;
+
+        const nextBot = initialBotLabel
+          || (typeof status?.['botUsername'] === 'string' ? `@${String(status['botUsername'])}` : null)
+          || (tg?.botToken ? 'Telegram bot' : null)
+          || 'Bot';
+        const nextChat = initialChatLabel
+          || (tg?.chatId ? `Chat ${tg.chatId}` : null)
+          || 'Linked chat';
+
+        setTokenConfigured(true);
+        setBotLabel(nextBot);
+        setChatLabel(nextChat);
+        setPhase('linked');
+        onLinkedChange?.(true, { botLabel: nextBot, chatLabel: nextChat });
+      } catch { /* ignore */ }
+    })();
+    // Intentionally once on mount / when parent says already linked.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alreadyLinked]);
 
   const resetToToken = () => {
     setPhase('token');
     setBotLabel(null);
     setChatLabel(null);
     setStatusMsg(null);
-    onLinkedChange?.(false);
+    setTokenConfigured(false);
+    onLinkedChange?.(false, { botLabel: null, chatLabel: null });
   };
 
   const showError = (msg: string) => {
@@ -57,18 +105,17 @@ export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) 
       const label = result.botUsername ? `@${result.botUsername}` : result.botName ?? 'Bot';
       setBotLabel(label);
       if (!result.chats?.length) {
-        // Phase 1 passed: token is valid, but no chat yet. Move to phase 2.
         setChatLabel(null);
         setPhase('awaiting-chat');
         setStatusTone('info');
         setStatusMsg(`Token verified for ${label}. Now open Telegram, send any private message to your bot, then run the chat detection.`);
         return;
       }
-      // Both phases satisfied in one shot (user already messaged the bot).
       const chat = result.chats[0]!;
       setChatLabel(chat.title);
       setPhase('linked');
-      onLinkedChange?.(true);
+      setTokenConfigured(true);
+      onLinkedChange?.(true, { botLabel: label, chatLabel: chat.title });
       setStatusMsg(null);
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Verification failed');
@@ -89,21 +136,62 @@ export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) 
         <WizardStatusLine label="INBOUND" value="Text · voice notes · files" />
         <WizardStatusLine label="REQUIREMENT" value="@BotFather token" />
 
-        <TextField
-          fullWidth
-          size="small"
-          type="password"
-          label="Bot token"
-          placeholder="123456789:ABCdefGHI…"
-          value={token}
-          onChange={(e) => {
-            setToken(e.target.value);
-            resetToToken();
-          }}
-          disabled={verifying || phase !== 'token'}
-          sx={{ mt: 2, mb: 1.5 }}
-          slotProps={wizardTextFieldSlotProps}
-        />
+        {phase === 'linked' && tokenConfigured ? (
+          <Box sx={{
+            mt: 2,
+            mb: 1.5,
+            p: 1.5,
+            borderRadius: 1,
+            border: `1px solid ${wizardTheme.accentOk}`,
+            bgcolor: alphaColor(colors.accent.green, 0.06),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1,
+          }}>
+            <Box>
+              <Typography sx={{ fontFamily: WIZARD_MONO, fontSize: '0.62rem', color: wizardTheme.accentOk, mb: 0.25 }}>
+                TOKEN ON FILE
+              </Typography>
+              <Typography sx={{ fontSize: '0.55rem', color: wizardTheme.textDim }}>
+                Bot token saved — leave blank to keep
+              </Typography>
+            </Box>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                setToken('');
+                resetToToken();
+              }}
+              sx={{
+                fontFamily: WIZARD_MONO,
+                fontSize: '0.6rem',
+                color: wizardTheme.accentErr,
+                borderColor: alphaColor(colors.accent.red, 0.3),
+                '&:hover': { borderColor: wizardTheme.accentErr, bgcolor: alphaColor(colors.accent.red, 0.06) },
+              }}
+            >
+              REPLACE
+            </Button>
+          </Box>
+        ) : (
+          <TextField
+            fullWidth
+            size="small"
+            type="password"
+            label="Bot token"
+            placeholder="123456789:ABCdefGHI…"
+            value={token}
+            onChange={(e) => {
+              setToken(e.target.value);
+              if (phase !== 'token') resetToToken();
+            }}
+            disabled={verifying || phase === 'awaiting-chat'}
+            sx={{ mt: 2, mb: 1.5 }}
+            slotProps={wizardTextFieldSlotProps}
+          />
+        )}
 
         {/* Step tracker — makes the two checks explicit. */}
         <Box sx={{ mb: 2 }}>
@@ -162,21 +250,21 @@ export function WizardTelegramStep({ onLinkedChange }: WizardTelegramStepProps) 
           </Typography>
         )}
 
-        <Button
-          fullWidth
-          variant="contained"
-          onClick={() => { void verify(); }}
-          disabled={verifying || !token.trim()}
-          sx={{ ...wizardPrimaryBtnSx, py: 1.1 }}
-        >
-          {verifying
-            ? (phase === 'awaiting-chat' ? 'DETECTING CHAT…' : 'VERIFYING TOKEN…')
-            : phase === 'awaiting-chat'
-              ? 'DETECT CHAT & LINK'
-              : linked
-                ? 'RE-VERIFY LINK'
+        {phase !== 'linked' && (
+          <Button
+            fullWidth
+            variant="contained"
+            onClick={() => { void verify(); }}
+            disabled={verifying || !token.trim()}
+            sx={{ ...wizardPrimaryBtnSx, py: 1.1 }}
+          >
+            {verifying
+              ? (phase === 'awaiting-chat' ? 'DETECTING CHAT…' : 'VERIFYING TOKEN…')
+              : phase === 'awaiting-chat'
+                ? 'DETECT CHAT & LINK'
                 : 'VERIFY BOT TOKEN'}
-        </Button>
+          </Button>
+        )}
 
         <Typography sx={{ mt: 1.5, fontSize: '0.55rem', color: wizardTheme.textDim, textAlign: 'center', fontFamily: WIZARD_MONO }}>
           Skip to configure later in Settings → Channels

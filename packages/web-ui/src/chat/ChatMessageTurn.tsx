@@ -1,5 +1,6 @@
 import React, { useState, useMemo, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import Tooltip from '@mui/material/Tooltip';
@@ -43,10 +44,12 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
       }}>
         {agent.status === 'running' ? '◌' : agent.status === 'error' ? '✕' : '✓'} {agent.name}
       </Box>
-      {expanded && agent.result && (
-        <Box sx={{ mt: 0.5, p: 1, bgcolor: colors.bg.secondary, borderRadius: 1, fontSize: '0.6rem', whiteSpace: 'pre-wrap' }}>
-          {agent.result.slice(0, 2000)}
-        </Box>
+      {agent.result && (
+        <Collapse in={expanded} unmountOnExit>
+          <Box sx={{ mt: 0.5, p: 1, bgcolor: colors.bg.secondary, borderRadius: 1, fontSize: '0.6rem', whiteSpace: 'pre-wrap' }}>
+            {agent.result.slice(0, 2000)}
+          </Box>
+        </Collapse>
       )}
     </>
   );
@@ -108,13 +111,13 @@ function VoiceSummaryCard({ text }: { text: string }) {
           fontFamily: "'JetBrains Mono', monospace",
           color: colors.text.dim,
           flexShrink: 0,
-          transition: 'transform 0.15s',
+          transition: 'transform 0.28s ease',
           transform: expanded ? 'rotate(180deg)' : 'none',
         }}>
           ▾
         </Typography>
       </Box>
-      {expanded && (
+      <Collapse in={expanded} unmountOnExit>
         <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.border.strong, '55')}` }}>
           <Typography sx={{
             fontSize: '0.62rem',
@@ -127,7 +130,7 @@ function VoiceSummaryCard({ text }: { text: string }) {
             {text}
           </Typography>
         </Box>
-      )}
+      </Collapse>
     </Box>
   );
 }

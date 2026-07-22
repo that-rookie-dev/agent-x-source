@@ -21,45 +21,18 @@ import {
   settingsStripSx,
 } from '../../styles/settings-theme';
 import { alphaColor } from '../../theme';
+import {
+  PERFORMANCE_PRESET_ORDER,
+  PERFORMANCE_PRESET_UI,
+} from './performance-presets';
 
 interface PerformanceTabProps {
   cfg: AgentXConfig;
   onChange: (cfg: AgentXConfig) => void;
 }
 
-const PRESET_ORDER: PerformancePresetId[] = ['quiet', 'balanced', 'moderate', 'ultimate'];
-
-const PRESET_UI: Record<PerformancePresetId, {
-  label: string;
-  tag: string;
-  accent: string;
-  budget: number;
-}> = {
-  quiet: {
-    label: 'Quiet',
-    tag: 'COOL',
-    accent: settingsTheme.accent.cyan,
-    budget: 25,
-  },
-  balanced: {
-    label: 'Balanced',
-    tag: 'DAILY',
-    accent: settingsTheme.accent.hud,
-    budget: 40,
-  },
-  moderate: {
-    label: 'Moderate',
-    tag: 'STORM',
-    accent: settingsTheme.accent.amber,
-    budget: 70,
-  },
-  ultimate: {
-    label: 'Ultimate',
-    tag: 'PEAK',
-    accent: settingsTheme.accent.signal,
-    budget: 80,
-  },
-};
+const PRESET_ORDER = PERFORMANCE_PRESET_ORDER;
+const PRESET_UI = PERFORMANCE_PRESET_UI;
 
 function normalizePresetId(raw: unknown): PerformancePresetId | undefined {
   if (raw === 'performance') return 'moderate';

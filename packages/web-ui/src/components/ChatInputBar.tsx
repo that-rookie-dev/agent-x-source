@@ -11,7 +11,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import RouteIcon from '@mui/icons-material/Route';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit } from './ComposerMentionMenu';
+import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit, type ComposerTemplateHit } from './ComposerMentionMenu';
 import { colors, alphaColor } from '../theme';
 import type { Crew } from '../api';
 
@@ -181,6 +181,13 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
     mentionInputRef.current?.insertKbChip({ sourceId: source.sourceId, name: source.name });
   }, [closeMentionMenu]);
 
+  const handleTemplateSelect = useCallback((template: ComposerTemplateHit) => {
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    mentionInputRef.current?.insertTemplateChip({ templateId: template.templateId, name: template.name });
+  }, [closeMentionMenu]);
+
   const clearAndGetText = useCallback(() => {
     const text = mentionInputRef.current?.getValue() ?? '';
     mentionInputRef.current?.clear();
@@ -190,14 +197,14 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   }, []);
 
   const handleSendClick = useCallback(() => {
-    if (inputDisabled) return;
+    if (inputDisabled || sendBlocked) return;
     const text = mentionInputRef.current?.getValue() ?? '';
     if (!text.trim() && !hasAttachments) return;
     onSend(text);
-  }, [hasAttachments, onSend, inputDisabled]);
+  }, [hasAttachments, onSend, inputDisabled, sendBlocked]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (inputDisabled) return;
+    if (inputDisabled || sendBlocked) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       // Menu is open OR we just accepted a mention — never send.
       if (
@@ -213,7 +220,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
       e.preventDefault();
       handleSendClick();
     }
-  }, [handleSendClick, inputDisabled, showMentionMenu]);
+  }, [handleSendClick, inputDisabled, sendBlocked, showMentionMenu]);
 
   const canSend = !inputDisabled && !sendBlocked && (hasText || hasAttachments);
 
@@ -228,6 +235,7 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onSelectFile={handleFileSelect}
           onSelectFolder={handleFolderSelect}
           onSelectKb={handleKbSelect}
+          onSelectTemplate={handleTemplateSelect}
           onClose={closeMentionMenu}
         />
       )}
@@ -278,14 +286,24 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
           transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onStopAndSend(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onStopAndSend(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <StopIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.red }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Stop and Send</Typography>
-              <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Cancel current task, send this message</Typography>
+              <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>
+                {sendBlocked && sendBlockedReason ? sendBlockedReason : 'Cancel current task, send this message'}
+              </Typography>
             </Box>
           </MenuItem>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onAddToQueue(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onAddToQueue(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <QueueIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.blue }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Add to Queue</Typography>
@@ -293,7 +311,11 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
             </Box>
             <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>⌥Enter</Typography>
           </MenuItem>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onSteer(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onSteer(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <RouteIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.orange }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Steer with Message</Typography>

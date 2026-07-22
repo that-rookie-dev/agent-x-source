@@ -15,6 +15,7 @@ import {
   shouldOfferCrewRosterPicker,
 } from '../../chat/crew-suggestion-flow';
 import type { UIMessage, FileAttachment } from '../../chat/types';
+import { supportsVision, isImageMimeType } from '../../chat/vision-support';
 import type { ChatInputBarHandle } from '../ChatInputBar';
 
 function toUiMessageAttachments(
@@ -108,6 +109,17 @@ export function useChatSend({
   useEffect(() => { crewSuggestionRequestedRef.current = crewSuggestionRequested; }, [crewSuggestionRequested]);
   useEffect(() => { coreSessionRef.current = coreSession; }, [coreSession]);
   useEffect(() => { currentSessionIdRef.current = currentSessionId; }, [currentSessionId]);
+
+  const assertCanSendAttachments = useCallback((): boolean => {
+    const hasImage = attachmentsRef.current.some((a) => isImageMimeType(a.mimeType));
+    if (!hasImage) return true;
+    if (supportsVision(currentProviderRef.current, currentModelRef.current)) return true;
+    setWarnings((prev) => replaceWarning(
+      prev,
+      'Current model does not support images. Switch to a vision model to send this message.',
+    ));
+    return false;
+  }, [setWarnings]);
 
   // ─── attachCrewRosterPicker ───
   const attachCrewRosterPicker = useCallback(async (
@@ -257,6 +269,7 @@ export function useChatSend({
     const cleaned = sanitizeForJson(text);
     if ((!cleaned.trim() && attachmentsRef.current.length === 0) && !options?.skipUserMessage) return;
     if (!currentProviderRef.current || !currentModelRef.current) return;
+    if (!assertCanSendAttachments()) return;
     rateLimitSeenRef.current = false;
     const sessionId = await ensureSession();
     if (!sessionId) return;
@@ -358,7 +371,7 @@ export function useChatSend({
       });
       endTurnUi();
     }
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, setWarnings, setCrewSuggestionRequested, rateLimitSeenRef, outgoingTurnRef, activeTurnIdRef, crewSuggestionHandledRef, inputBarRef, messagesRef, attachmentsRef, currentProviderRef, currentModelRef, webSearchAvailableRef, webSearchForceRef, crewSuggestionRequestedRef, attachCrewRosterPickerRef, scrollMessagesToBottom]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, setWarnings, setCrewSuggestionRequested, rateLimitSeenRef, outgoingTurnRef, activeTurnIdRef, crewSuggestionHandledRef, inputBarRef, messagesRef, attachmentsRef, currentProviderRef, currentModelRef, webSearchAvailableRef, webSearchForceRef, crewSuggestionRequestedRef, attachCrewRosterPickerRef, scrollMessagesToBottom, assertCanSendAttachments]);
 
   // ─── runCrewSuggestionGate ───
   const runCrewSuggestionGate = useCallback(async (trimmed: string): Promise<boolean> => {
@@ -681,6 +694,7 @@ export function useChatSend({
   const handleStopAndSend = useCallback(async (text: string) => {
     const cleaned = sanitizeForJson(text);
     if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
+    if (!assertCanSendAttachments()) return;
     const sessionId = await ensureSession();
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
@@ -708,24 +722,26 @@ export function useChatSend({
       }
     } catch { /* handled by SSE */ }
     endTurnUi();
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef, assertCanSendAttachments]);
 
   // ─── handleAddToQueue ───
   const handleAddToQueue = useCallback(async (text: string) => {
     const cleaned = sanitizeForJson(text);
     if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
+    if (!assertCanSendAttachments()) return;
     const sessionId = currentSessionIdRef.current;
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
     const fileRefs = attachmentRefs.length > 0 ? attachmentRefs : undefined;
     try { await chat.queue(cleaned, fileRefs); } catch { /* ignore */ }
     setAttachments([]);
-  }, [setAttachments, attachmentsRef, currentSessionIdRef, uploadAttachments]);
+  }, [setAttachments, attachmentsRef, currentSessionIdRef, uploadAttachments, assertCanSendAttachments]);
 
   // ─── handleSteer ───
   const handleSteer = useCallback(async (text: string) => {
     const cleaned = sanitizeForJson(text);
     if (!cleaned.trim() && attachmentsRef.current.length === 0) return;
+    if (!assertCanSendAttachments()) return;
     const sessionId = await ensureSession();
     if (!sessionId) return;
     const attachmentRefs = await uploadAttachments(sessionId);
@@ -754,7 +770,7 @@ export function useChatSend({
       }
     } catch { /* handled by SSE */ }
     endTurnUi();
-  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef]);
+  }, [ensureSession, beginTurnUi, endTurnUi, setMessages, setAttachments, scrollMessagesToBottom, outgoingTurnRef, activeTurnIdRef, attachmentsRef, assertCanSendAttachments]);
 
   const guessMimeType = (filename: string): string => {
     const ext = filename.split('.').pop()?.toLowerCase() ?? '';

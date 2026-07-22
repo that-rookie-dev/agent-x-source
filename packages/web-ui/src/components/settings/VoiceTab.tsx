@@ -343,7 +343,10 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
     voice.capabilities().then((res) => setCapabilities(res.capabilities)).catch(() => {});
   };
 
-  const hasXaiKey = Boolean(voiceConfig.xai?.apiKey);
+  const hasXaiKey = Boolean(
+    voiceConfig.xai?.apiKeyConfigured
+    || (voiceConfig.xai?.apiKey && !voiceConfig.xai.apiKey.includes('•')),
+  );
 
   const revokeXaiKey = async () => {
     setError(null);
@@ -353,7 +356,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
       ...voiceConfig,
       engine: 'stt_llm_tts',
       mode: { ...voiceConfig.mode, web: 'push-to-talk' },
-      xai: { ...voiceConfig.xai, apiKey: '' },
+      xai: { ...voiceConfig.xai, apiKey: '', apiKeyConfigured: false },
     });
   };
 
@@ -1037,7 +1040,7 @@ export function VoiceTab({ value, onChange }: VoiceTabProps) {
             fontSize: 16,
             color: settingsTheme.text.dim,
             transform: advancedOpen ? 'rotate(180deg)' : 'none',
-            transition: 'transform 0.2s',
+            transition: 'transform 0.28s ease',
           }} />
           <Typography sx={{ ...settingsOverlineSx, mb: 0 }}>Advanced</Typography>
         </Box>

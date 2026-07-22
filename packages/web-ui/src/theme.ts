@@ -137,6 +137,46 @@ export function resolveColor(color: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(m[1]!).trim() || color;
 }
 
+/** Active visual scheme from `data-ax-scheme` (falls back to dark). */
+export function getActiveScheme(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark';
+  return document.documentElement.getAttribute('data-ax-scheme') === 'light' ? 'light' : 'dark';
+}
+
+export function isLightScheme(): boolean {
+  return getActiveScheme() === 'light';
+}
+
+/** Parse a resolved color into RGB channels for canvas drawing. */
+export function resolveRgb(color: string): { r: number; g: number; b: number } {
+  const raw = resolveColor(color).trim();
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(raw);
+  if (hex6) {
+    const n = parseInt(hex6[1]!, 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(raw);
+  if (hex3) {
+    const [a, b, c] = hex3[1]!.split('');
+    return {
+      r: parseInt(a! + a!, 16),
+      g: parseInt(b! + b!, 16),
+      b: parseInt(c! + c!, 16),
+    };
+  }
+  const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(raw);
+  if (rgb) {
+    return { r: Number(rgb[1]), g: Number(rgb[2]), b: Number(rgb[3]) };
+  }
+  return { r: 120, g: 120, b: 130 };
+}
+
+export function resolveRgba(color: string, alpha: number): string {
+  const { r, g, b } = resolveRgb(color);
+  const a = Math.min(1, Math.max(0, alpha));
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
 const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
   cssVariables: { colorSchemeSelector: 'data-ax-scheme' },
   colorSchemes: {
@@ -195,16 +235,30 @@ const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
           WebkitFontSmoothing: 'antialiased',
         },
         '::selection': { background: v('ink'), color: v('bg-primary') },
-        '::-webkit-scrollbar': { width: '6px', height: '6px' },
-        '::-webkit-scrollbar-track': { background: 'transparent' },
-        '::-webkit-scrollbar-thumb': { background: v('scrollbar-thumb'), borderRadius: '3px' },
-        '::-webkit-scrollbar-thumb:hover': { background: v('scrollbar-thumb-hover') },
-        '.MuiDialogContent-root::-webkit-scrollbar': { display: 'none' },
-        '.MuiModal-root *::-webkit-scrollbar': { display: 'none' },
+        // Hide scrollbars everywhere while keeping overflow scrollable.
+        '*': {
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+        },
+        '*::-webkit-scrollbar': {
+          display: 'none',
+          width: 0,
+          height: 0,
+          background: 'transparent',
+        },
       },
     },
-    MuiButton: {
-      defaultProps: { size: 'small' },
+    MuiCollapse: {
+      defaultProps: {
+        timeout: { enter: 280, exit: 220 },
+      },
+    },
+    MuiAccordion: {
+      defaultProps: {
+        TransitionProps: { timeout: { enter: 280, exit: 220 } },
+      },
+    },
+    MuiButton: {      defaultProps: { size: 'small' },
       styleOverrides: {
         root: {
           textTransform: 'none', fontFamily: MONO, fontWeight: 500, borderRadius: 5,

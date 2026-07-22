@@ -1,17 +1,11 @@
 import { useEffect, useRef } from 'react';
+import { colors, getActiveScheme, resolveRgb, resolveRgba } from '../../theme';
 
 /**
  * Particle physics canvas for the Voice Agent card.
  *
- * Renders 80+ particles drifting around a central mic button. Particle behavior
- * changes based on the voice phase:
- *  - idle: slow orbital drift (blue)
- *  - recording: particles converge toward center (green, gravitational pull)
- *  - thinking: spiral orbit (orange)
- *  - speaking: particles radiate outward in waves (purple)
- *  - disabled: minimal drift, dimmed (grey)
- *
- * Also renders a radial gradient glow behind the mic that shifts color with phase.
+ * Renders particles drifting around a central mic button. Behavior changes by
+ * voice phase. Colors + trail fade follow the active light/dark scheme.
  */
 
 export type ParticlePhase =
@@ -38,21 +32,34 @@ interface Particle {
   maxLife: number;
 }
 
-/** Shared palette for voice + crew-call particle UIs. */
-export const PARTICLE_PHASE_COLORS: Record<ParticlePhase, { r: number; g: number; b: number }> = {
-  disabled: { r: 150, g: 152, b: 158 }, // colorless grey — offline
-  paused: { r: 168, g: 170, b: 176 },   // colorless grey — on hold / disconnected
-  connecting: { r: 59, g: 130, b: 246 }, // blue — dialing / reconnecting / loading
-  idle: { r: 59, g: 130, b: 246 },       // blue (dashboard standby)
-  listening: { r: 34, g: 197, b: 94 },   // green — call listening
-  recording: { r: 34, g: 197, b: 94 },   // green — mic active
-  thinking: { r: 249, g: 115, b: 22 },   // orange
-  speaking: { r: 168, g: 85, b: 247 },   // purple — crew / TTS audio
+const PHASE_TOKEN: Record<ParticlePhase, string> = {
+  disabled: colors.text.dim,
+  paused: colors.text.muted,
+  connecting: colors.accent.blue,
+  idle: colors.accent.blue,
+  listening: colors.accent.green,
+  recording: colors.accent.green,
+  thinking: colors.accent.orange,
+  speaking: colors.accent.purple,
 };
 
-const PHASE_COLORS = PARTICLE_PHASE_COLORS;
+/** @deprecated Prefer live resolve via theme tokens; kept for callers that import the map. */
+export const PARTICLE_PHASE_COLORS: Record<ParticlePhase, { r: number; g: number; b: number }> = {
+  disabled: { r: 150, g: 152, b: 158 },
+  paused: { r: 168, g: 170, b: 176 },
+  connecting: { r: 59, g: 130, b: 246 },
+  idle: { r: 59, g: 130, b: 246 },
+  listening: { r: 34, g: 197, b: 94 },
+  recording: { r: 34, g: 197, b: 94 },
+  thinking: { r: 249, g: 115, b: 22 },
+  speaking: { r: 168, g: 85, b: 247 },
+};
 
 const PARTICLE_COUNT = 40;
+
+function phaseRgb(phase: ParticlePhase): { r: number; g: number; b: number } {
+  return resolveRgb(PHASE_TOKEN[phase]);
+}
 
 export function VoiceParticleField({
   phase,
@@ -99,8 +106,6 @@ export function VoiceParticleField({
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       ctx.scale(dpr, dpr);
-      // Default center to canvas center; if centerRef is provided, use the
-      // center of that element relative to the canvas.
       cx = width / 2;
       cy = height / 2;
       if (centerRef?.current) {
@@ -141,8 +146,6 @@ export function VoiceParticleField({
     resizeObserver.observe(canvas);
     if (centerRef?.current) resizeObserver.observe(centerRef.current);
 
-    // On scroll/resize, only recompute the center position — don't
-    // reinitialize particles (that causes a visible jump/flash).
     const onWindowChange = () => {
       if (!canvas || !ctx) return;
       const rect = canvas.getBoundingClientRect();
@@ -167,19 +170,23 @@ export function VoiceParticleField({
       if (!ctx || !canvas) return;
       const currentPhase = phaseRef.current;
       const isActive = activeRef.current;
-      const color = PHASE_COLORS[currentPhase];
+      const color = phaseRgb(currentPhase);
+      const light = getActiveScheme() === 'light';
       const isHoldLike = currentPhase === 'paused' || currentPhase === 'disabled';
       const intensity = isHoldLike ? 0.35 : (isActive ? 1 : 0.3);
       const lvl = levelRef.current;
 
-      // Clear with subtle trail effect
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+      // Trail fade must match the surface — black trails muddy light panels.
+      ctx.fillStyle = light
+        ? resolveRgba(colors.bg.secondary, 0.32)
+        : resolveRgba(colors.bg.primary, 0.14);
       ctx.fillRect(0, 0, width, height);
 
-      // Draw radial gradient glow behind mic
       const glowRadius = Math.min(width, height) * 0.45;
       const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
-      const glowAlpha = isHoldLike ? 0.02 : (isActive ? 0.08 : 0.03);
+      const glowAlpha = light
+        ? (isHoldLike ? 0.04 : (isActive ? 0.14 : 0.06))
+        : (isHoldLike ? 0.02 : (isActive ? 0.08 : 0.03));
       gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${glowAlpha})`);
       gradient.addColorStop(0.5, `rgba(${color.r}, ${color.g}, ${color.b}, ${glowAlpha * 0.4})`);
       gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, 0)`);
@@ -188,14 +195,12 @@ export function VoiceParticleField({
 
       time += 0.016;
 
-      // Update and draw particles
       for (const p of particles) {
         p.life += 0.016;
 
         switch (currentPhase) {
           case 'disabled':
           case 'paused': {
-            // Slow colorless roam around center (hold / disconnected).
             p.angle += p.angularVel * 0.22;
             const roam = p.orbitRadius + Math.sin(time * 0.35 + p.angle) * 4;
             p.x = cx + Math.cos(p.angle) * roam;
@@ -204,7 +209,6 @@ export function VoiceParticleField({
           }
           case 'connecting':
           case 'idle': {
-            // Blue loading / standby orbit
             p.angle += p.angularVel;
             p.x = cx + Math.cos(p.angle) * p.orbitRadius;
             p.y = cy + Math.sin(p.angle) * p.orbitRadius;
@@ -212,7 +216,6 @@ export function VoiceParticleField({
           }
           case 'listening':
           case 'recording': {
-            // Gravitational pull toward center — stronger with mic level
             const energy = 0.35 + lvl * 1.4;
             const dx = cx - p.x;
             const dy = cy - p.y;
@@ -220,12 +223,10 @@ export function VoiceParticleField({
             const pull = 0.12 * energy;
             p.vx += (dx / dist) * pull + (Math.random() - 0.5) * 0.35 * lvl;
             p.vy += (dy / dist) * pull + (Math.random() - 0.5) * 0.35 * lvl;
-            // Damping
             p.vx *= 0.9;
             p.vy *= 0.9;
             p.x += p.vx * energy;
             p.y += p.vy * energy;
-            // If too close, reset to orbit (radius reacts to volume)
             if (dist < 12 + lvl * 10) {
               p.angle = Math.random() * Math.PI * 2;
               p.orbitRadius = 28 + Math.random() * (55 + lvl * 50);
@@ -237,7 +238,6 @@ export function VoiceParticleField({
             break;
           }
           case 'thinking': {
-            // Spiral orbit
             p.angle += p.angularVel * 1.5;
             const spiralRadius = p.orbitRadius + Math.sin(time * 2 + p.angle) * 10;
             p.x = cx + Math.cos(p.angle) * spiralRadius;
@@ -245,7 +245,6 @@ export function VoiceParticleField({
             break;
           }
           case 'speaking': {
-            // Radiate outward in waves — driven by playback level
             const waveSpeed = 24 + lvl * 40;
             const waveRadius = ((time * waveSpeed + p.maxLife * 100) % (90 + lvl * 50));
             const base = 18 + lvl * 14;
@@ -259,26 +258,24 @@ export function VoiceParticleField({
           }
         }
 
-        // Pulsing radius
         const pulseRadius = p.baseRadius + Math.sin(time * 3 + p.angle) * (isHoldLike ? 0.2 : 0.5);
-
-        // Draw particle with glow
-        const alpha = intensity * (isHoldLike ? 0.28 : (0.4 + Math.sin(time * 2 + p.angle) * 0.2));
+        const alphaBase = light
+          ? (isHoldLike ? 0.35 : (0.55 + Math.sin(time * 2 + p.angle) * 0.15))
+          : (isHoldLike ? 0.28 : (0.4 + Math.sin(time * 2 + p.angle) * 0.2));
+        const alpha = intensity * alphaBase;
         ctx.beginPath();
         ctx.arc(p.x, p.y, pulseRadius, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`;
         ctx.fill();
 
-        // Glow halo
         if (isActive && !isHoldLike) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, pulseRadius * 2.5, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha * 0.15})`;
+          ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha * (light ? 0.22 : 0.15)})`;
           ctx.fill();
         }
       }
 
-      // Draw connection lines between nearby particles (neural network effect)
       if (isActive && !isHoldLike) {
         const maxDist = 60;
         const maxDistSq = maxDist * maxDist;
@@ -289,7 +286,7 @@ export function VoiceParticleField({
             const distSq = dx * dx + dy * dy;
             if (distSq < maxDistSq) {
               const dist = Math.sqrt(distSq);
-              const lineAlpha = (1 - dist / maxDist) * 0.08 * intensity;
+              const lineAlpha = (1 - dist / maxDist) * (light ? 0.14 : 0.08) * intensity;
               ctx.beginPath();
               ctx.moveTo(particles[i]!.x, particles[i]!.y);
               ctx.lineTo(particles[j]!.x, particles[j]!.y);

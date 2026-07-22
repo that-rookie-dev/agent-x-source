@@ -28,10 +28,17 @@ interface Props {
   compact?: boolean;
   /** Skip the Workspace section header (e.g. when nested under General). */
   embedded?: boolean;
+  /**
+   * Wizard mode: only expose “Choose folder…” — built-in path is a silent fallback,
+   * not a selectable option.
+   */
+  chooseOnly?: boolean;
   onChanged?: (info: WorkspaceInfo) => void;
+  /** Fired when readiness changes (true = non-builtin folder selected). */
+  onReadyChange?: (ready: boolean) => void;
 }
 
-export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
+export function WorkspaceCard({ compact, embedded, chooseOnly, onChanged, onReadyChange }: Props) {
   const [info, setInfo] = useState<WorkspaceInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +63,11 @@ export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (loading) return;
+    onReadyChange?.(Boolean(info && !info.isBuiltin && info.path));
+  }, [loading, info, onReadyChange]);
+
   const applyPath = async (path: string, migrateMode: WorkspaceMigrateMode) => {
     setSaving(true);
     setError(null);
@@ -78,16 +90,18 @@ export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
 
   const body = (
     <>
-      <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
-        All chats and tools work inside this single folder. Choose your own project folder anytime —
-        the built-in app-data folder is only used as a fallback if the chosen path is missing.
-      </Typography>
+      {!chooseOnly && (
+        <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
+          All chats and tools work inside this single folder. Choose your own project folder anytime —
+          the built-in app-data folder is only used as a fallback if the chosen path is missing.
+        </Typography>
+      )}
 
       {loading && (
         <Typography sx={{ ...settingsMonoSx, fontSize: '0.7rem' }}>Loading…</Typography>
       )}
 
-      {!loading && info && (
+      {!loading && info && !chooseOnly && (
         <Box
           sx={{
             mb: 1.5,
@@ -99,7 +113,7 @@ export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
         >
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary', mb: 0.5, letterSpacing: '0.5px' }}>
-              CURRENT {info.isBuiltin ? '· BUILT-IN' : '· WORKSPACE'}
+              CURRENT {info.isBuiltin ? '· BUILT-IN FALLBACK' : '· WORKSPACE'}
             </Typography>
             <Typography sx={{ ...settingsMonoSx, fontSize: '0.72rem', wordBreak: 'break-all' }}>
               {info.path}
@@ -118,10 +132,52 @@ export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
         </Box>
       )}
 
-      {error && <Alert severity="error" sx={{ mb: 1.5, py: 0.5 }}>{error}</Alert>}
-      {status && <Alert severity="success" sx={{ mb: 1.5, py: 0.5 }}>{status}</Alert>}
+      {!loading && chooseOnly && (
+        <Box sx={{ mb: compact ? 0 : 1.5 }}>
+          {info && !info.isBuiltin && (
+            <Typography sx={{ ...settingsMonoSx, fontSize: '0.65rem', wordBreak: 'break-all', mb: 1 }}>
+              {info.path}
+            </Typography>
+          )}
+          {info?.isBuiltin && (
+            <Typography sx={{ ...settingsHelperSx, mb: 1, fontSize: '0.65rem' }}>
+              Choose a project folder to continue.
+            </Typography>
+          )}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<FolderOpenIcon sx={{ fontSize: 14 }} />}
+              onClick={() => setPickerOpen(true)}
+              disabled={saving}
+              sx={settingsBtnGhostSx}
+            >
+              Choose folder…
+            </Button>
+            {saving && (
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: 'text.secondary' }}>
+                Updating…
+              </Typography>
+            )}
+            {!saving && status && (
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: 'success.main' }}>
+                {status}
+              </Typography>
+            )}
+            {!saving && error && (
+              <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: 'error.main' }}>
+                {error}
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      )}
 
-      {!loading && !info && (
+      {!chooseOnly && error && <Alert severity="error" sx={{ mb: 1.5, py: 0.5 }}>{error}</Alert>}
+      {!chooseOnly && status && <Alert severity="success" sx={{ mb: 1.5, py: 0.5 }}>{status}</Alert>}
+
+      {!loading && !info && !chooseOnly && (
         <Button
           size="small"
           variant="outlined"
@@ -139,6 +195,11 @@ export function WorkspaceCard({ compact, embedded, onChanged }: Props) {
         onCancel={() => setPickerOpen(false)}
         onSelect={(path) => {
           setPickerOpen(false);
+          // First selection from built-in fallback — nothing to migrate yet.
+          if (!info || info.isBuiltin) {
+            void applyPath(path, 'switch');
+            return;
+          }
           setPendingPath(path);
           setMode('copy');
         }}

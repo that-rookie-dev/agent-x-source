@@ -111,9 +111,29 @@ export function parseKbMentionSourceIds(content: string): Array<{ sourceId: stri
   return out;
 }
 
+/** Composer `@template[templateId:name]` mentions — pin Template Library generate tools. */
+export function parseTemplateMentionIds(content: string): Array<{ templateId: string; name: string }> {
+  const out: Array<{ templateId: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@template\[([^:\]]+):([^\]]+)\]/g)) {
+    const templateId = match[1]!.trim();
+    if (!templateId || seen.has(templateId)) continue;
+    seen.add(templateId);
+    let name = match[2]!;
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // keep raw
+    }
+    out.push({ templateId, name });
+  }
+  return out;
+}
+
 function stripMentionTokensForSearch(userText: string): string {
   return userText
     .replace(/@kb\[[^\]]+\]/g, ' ')
+    .replace(/@template\[[^\]]+\]/g, ' ')
     .replace(/@file\[[^\]]+\]/g, ' ')
     .replace(/@folder\[[^\]]+\]/g, ' ')
     .replace(/@crew\[[^\]]+\]/g, ' ')
@@ -231,6 +251,7 @@ function buildJourneyBlock(opts: {
   toolIds: string[];
   stages: TurnJourneyStageReport[];
   mentionedKb: Array<{ sourceId: string; name: string }>;
+  mentionedTemplates: Array<{ templateId: string; name: string }>;
 }): string {
   const integrations = summarizeIntegrations(opts.toolIds);
   const webTools = listPresent(opts.toolIds, [...WEB_TOOLS]);
@@ -241,6 +262,18 @@ function buildJourneyBlock(opts: {
       .map((m) => `${m.name || m.sourceId} (sourceId=${m.sourceId})`)
       .join('; ')
     : '';
+  const templatePinLine = opts.mentionedTemplates.length > 0
+    ? opts.mentionedTemplates
+      .map((m) => `${m.name || m.templateId} (templateId=${m.templateId})`)
+      .join('; ')
+    : '';
+  const templateHint = templatePinLine
+    ? [
+        `- User @template-mentioned Template Library item(s): ${templatePinLine}.`,
+        '- STRICT: Use template_inspect then template_fill with that templateId. Do NOT recreate the layout from scratch or from RAG text.',
+        '- Understand the template design, then clone it with available data (same format). Missing slots stay blank; extra data is ignored. Fonts, colors, and images stay intact.',
+      ].join('\n')
+    : '';
 
   if (opts.voiceTurn || opts.compact) {
     const integLine =
@@ -250,10 +283,13 @@ function buildJourneyBlock(opts: {
     const kbHint = kbPinLine
       ? ` STRICT @kb: only knowledge_base_search with sourceId for: ${kbPinLine}. NEVER file_read/shell_exec/glob on the original upload.`
       : '';
+    const tplHint = templatePinLine
+      ? ` STRICT @template: template_inspect then template_fill to clone design for ${templatePinLine}. Never rebuild layout.`
+      : '';
     return [
       '[TURN_JOURNEY]',
       'Default silent research order (user did not need to request tools):',
-      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_base_search.${kbHint}`,
+      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_base_search.${kbHint}${tplHint}`,
       `2. INTEGRATIONS — ${integLine} Use matching integration__* tools when the ask involves those apps.`,
       `3. WEB — ${webTools.length > 0 ? webTools.join(', ') : 'unavailable'} only if local+MCP cannot answer or facts may be stale.`,
       '4. MODEL — brief answer from trained knowledge last; say when unsure.',
@@ -280,6 +316,7 @@ function buildJourneyBlock(opts: {
           '- If knowledge_base_search returns no matches, say the document may still be indexing (READY). Do NOT fall back to disk.',
         ].join('\n')
       : '',
+    templateHint,
     '- If excerpts answer the question fully → answer now and stop. Do not invent extra tool calls.',
     '',
     'STAGE 2 — DEEPER LOCAL RETRIEVAL (tools, only if needed)',
@@ -368,6 +405,7 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
     detail: 'Trained knowledge fallback',
   });
 
+  const mentionedTemplates = parseTemplateMentionIds(input.userText);
   const journeyBlock = buildJourneyBlock({
     voiceTurn: input.voiceTurn === true,
     compact: input.compact === true,
@@ -375,6 +413,7 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
     toolIds,
     stages,
     mentionedKb: local.mentionedKb,
+    mentionedTemplates,
   });
 
   return {

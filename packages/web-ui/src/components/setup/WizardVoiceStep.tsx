@@ -25,6 +25,8 @@ export interface WizardVoiceStepProps {
   callsign?: string;
   /** Agent persona name — used in the test voice greeting. */
   agentName?: string;
+  /** Parent already marked this step complete — restore finished UI on revisit. */
+  alreadyCalibrated?: boolean;
 }
 
 function micStatusLabel(state: string): string {
@@ -34,13 +36,13 @@ function micStatusLabel(state: string): string {
   return 'UNKNOWN';
 }
 
-export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentName }: WizardVoiceStepProps) {
+export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentName, alreadyCalibrated }: WizardVoiceStepProps) {
   const mic = useMicrophonePermission();
   const [deploying, setDeploying] = useState(false);
   const [deployStatus, setDeployStatus] = useState<VoiceSetupStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [installComplete, setInstallComplete] = useState(false);
-  const [warmupComplete, setWarmupComplete] = useState(false);
+  const [installComplete, setInstallComplete] = useState(Boolean(alreadyCalibrated));
+  const [warmupComplete, setWarmupComplete] = useState(Boolean(alreadyCalibrated));
   const [previewing, setPreviewing] = useState(false);
   const [testingMic, setTestingMic] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -74,9 +76,11 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentNa
         const activeEngine = merged.engine ?? 'stt_llm_tts';
         setEngine(activeEngine);
         if (activeEngine === 'realtime_xai') {
-          setXaiConfigured(Boolean(capRes.capabilities.realtimeXai?.configured));
+          const xaiReady = Boolean(capRes.capabilities.realtimeXai?.configured || alreadyCalibrated);
+          setXaiConfigured(xaiReady);
           setSelectedXaiVoice(merged.xai?.voice ?? 'eve');
-          if (capRes.capabilities.realtimeXai?.configured) {
+          setXaiModel(merged.xai?.model ?? 'grok-voice-latest');
+          if (xaiReady) {
             try {
               const voices = await voice.xaiVoices();
               setXaiVoices(voices.voices);
@@ -84,14 +88,25 @@ export function WizardVoiceStep({ onReadyChange, onBusyChange, callsign, agentNa
           }
         } else {
           setSelectedLocalVoice(merged.tts?.voiceId ?? 'kokoro-af');
+          let installed = alreadyCalibrated;
           if (capRes.capabilities.pythonAvailable && capRes.capabilities.ffmpegAvailable) {
             const { status } = await voice.setupStatus();
-            if (status.phase === 'complete') setInstallComplete(true);
+            if (status.phase === 'complete') installed = true;
+          }
+          // Revisit: skip re-warmup when install is already done (or parent marked ready).
+          if (installed) {
+            setInstallComplete(true);
+            setWarmupComplete(true);
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        if (alreadyCalibrated) {
+          setInstallComplete(true);
+          setWarmupComplete(true);
+        }
+      }
     })();
-  }, []);
+  }, [alreadyCalibrated]);
 
   useEffect(() => {
     onReadyChange?.(complete);

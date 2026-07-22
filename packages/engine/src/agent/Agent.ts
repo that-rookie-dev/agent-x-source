@@ -1979,6 +1979,7 @@ export class Agent {
     }
 
     const messageMetadata: Record<string, unknown> = {};
+    if (options?.voiceTurn) messageMetadata['voiceTurn'] = true;
     if (messagingChannelInbound && options?.sourceMessageId) {
       if (options?.sourceChannel) messageMetadata['channel'] = options.sourceChannel;
       messageMetadata['platformMessageId'] = Number(options.sourceMessageId);
@@ -3641,14 +3642,31 @@ export class Agent {
     return aiMessages;
   }
 
+  private modelSupportsVision(): boolean {
+    const modelId = this.config.provider.activeModel;
+    const caps = this.cachedModelInfo.get(modelId)?.capabilities ?? [];
+    if (caps.includes('vision')) return true;
+    const combined = `${this.config.provider.activeProvider} ${modelId}`.toLowerCase();
+    return /gpt-4o|gpt-4-turbo|claude-3|claude-4|gemini|llava|vision|pixtral|gpt-5|o4-mini/.test(combined);
+  }
+
   private async buildSdkMessages(
     aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>,
   ): Promise<Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>> {
     const service = getAttachmentService();
+    const visionOk = this.modelSupportsVision();
     const results = [] as Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>;
     for (const m of aiMessages) {
       const imageAttachments = m.attachments?.filter((a) => a.type === 'image');
       if (m.role === 'user' && imageAttachments && imageAttachments.length > 0) {
+        if (!visionOk) {
+          const names = imageAttachments.map((a) => a.name).filter(Boolean).join(', ') || 'image';
+          results.push({
+            role: m.role,
+            content: `${m.content}\n\n[Attached image(s) omitted: ${names}. Current model does not support vision — switch to a vision-capable model.]`,
+          });
+          continue;
+        }
         const parts: unknown[] = [{ type: 'text', text: m.content }];
         for (const img of imageAttachments) {
           let dataUrl = img.content;
@@ -3717,14 +3735,23 @@ export class Agent {
   }
 
   private estimateTurnInputTokens(
-    messages: Array<{ content: string }>,
+    messages: Array<{ content: string; attachments?: Array<{ type?: string }> }>,
     tools: Record<string, unknown>,
   ): number {
-    return estimatePromptTokens(
+    const textTokens = estimatePromptTokens(
       messages,
       Object.keys(tools).length,
       this.estimateToolSchemaChars(tools),
     );
+    // Vision tile packing varies by provider; reserve a conservative per-image budget
+    // so ensureOutputBudget does not ignore multimodal payload size.
+    let imageTokens = 0;
+    for (const m of messages) {
+      for (const a of m.attachments ?? []) {
+        if (a.type === 'image') imageTokens += 1_700;
+      }
+    }
+    return textTokens + imageTokens;
   }
 
   private tagCrewPrivateAssistant(msg: Message): Message {

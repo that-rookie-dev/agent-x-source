@@ -11,7 +11,12 @@ import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolvePerformanceSettings, buildPerformanceShowcase, getLogger, normalizeClientSituation } from '@agentx/shared';
 import type { AgentXConfig } from '@agentx/shared';
 import { getEngine, destroyAgent, clearEngine, applyPerformanceSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
-import { redactConfigForClient, mergeConfigPreservingSecrets, REDACTED_SECRET } from '../../config-redaction.js';
+import {
+  redactConfigForClient,
+  mergeConfigPreservingSecrets,
+  scrubPersistedSecretPlaceholders,
+  REDACTED_SECRET,
+} from '../../config-redaction.js';
 import { mergeVoiceConfig, getBackgroundTaskPool, applyWebSearchConfigFromAgentConfig, mergeWebSearchToolsConfig, getLogCollector } from '@agentx/engine';
 import { applyChannelsConfig } from '../../channels-sync.js';
 import { validateProviderConfig, AVAILABLE_PROVIDERS } from './providers.js';
@@ -79,9 +84,16 @@ export function createSystemRouter(): Router {
     const eng = getEngine();
     try {
       const raw = eng.configManager.load();
+      // Heal keys that were previously persisted as redacted bullet placeholders
+      // (invalid in HTTP headers). One-time repair on read.
+      const healed = scrubPersistedSecretPlaceholders(raw);
+      if (healed) {
+        try { eng.configManager.save(healed); } catch { /* best-effort */ }
+      }
+      const cfg = healed ?? raw;
       // Merge voice config so enabled=true with mode.web='off' (legacy configs)
       // gets upgraded to mode.web='push-to-talk' automatically.
-      const withMergedVoice = { ...raw, voice: mergeVoiceConfig(raw.voice) };
+      const withMergedVoice = { ...cfg, voice: mergeVoiceConfig(cfg.voice) };
       res.json(redactConfigForClient(withMergedVoice));
     } catch (e) {
       getLogger().error('GET_API_CONFIG', e instanceof Error ? e : String(e));    res.status(400).json({ error: 'Agent-X is not configured. Configure a provider and model first.' });
@@ -149,13 +161,21 @@ export function createSystemRouter(): Router {
           ...existing.voice,
           ...req.body.voice,
           mode: { ...existing.voice?.mode, ...req.body.voice?.mode },
-          xai: {
-            ...existing.voice?.xai,
-            ...req.body.voice?.xai,
-            apiKey: req.body.voice?.xai?.apiKey === REDACTED_SECRET
-              ? existing.voice?.xai?.apiKey
-              : (req.body.voice?.xai?.apiKey ?? existing.voice?.xai?.apiKey),
-          },
+          xai: (() => {
+            const inc = req.body.voice?.xai as { apiKey?: string; apiKeyConfigured?: boolean } | undefined;
+            const prev = existing.voice?.xai?.apiKey;
+            const raw = typeof inc?.apiKey === 'string' ? inc.apiKey.trim() : '';
+            const placeholder = !raw || raw === REDACTED_SECRET || raw.includes('•');
+            let apiKey = prev;
+            if (inc?.apiKeyConfigured === false) apiKey = '';
+            else if (!placeholder) apiKey = raw;
+            const { apiKeyConfigured: _drop, ...incRest } = inc ?? {};
+            return {
+              ...existing.voice?.xai,
+              ...incRest,
+              apiKey,
+            };
+          })(),
           stt: { ...existing.voice?.stt, ...req.body.voice?.stt },
           tts: { ...existing.voice?.tts, ...req.body.voice?.tts },
           sidecar: { ...existing.voice?.sidecar, ...req.body.voice?.sidecar },

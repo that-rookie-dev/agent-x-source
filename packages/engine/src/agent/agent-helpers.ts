@@ -465,7 +465,45 @@ export function isFailureAssistantContent(content: string): boolean {
   return /\b(unable to generate|i apologize|i was unable|provider error|encountered an error|cannot assist|tell me which|please tell me|which action you)\b/i.test(content);
 }
 
-/** Convert model message content (string | array | null) to plain text. */
+/** Byte length for image/file parts without materializing a JSON dump of the bytes. */
+function binaryPartByteLength(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'string') {
+    const b64 = value.includes('base64,') ? value.slice(value.indexOf('base64,') + 7) : value;
+    return Math.max(0, Math.floor(b64.length * 0.75));
+  }
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) return value.length;
+  if (value instanceof Uint8Array) return value.byteLength;
+  if (value instanceof ArrayBuffer) return value.byteLength;
+  if (typeof value === 'object' && 'byteLength' in value) {
+    const n = Number((value as { byteLength: unknown }).byteLength);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+function isTypedArrayLike(value: unknown): boolean {
+  return (
+    value instanceof Uint8Array
+    || value instanceof ArrayBuffer
+    || (typeof Buffer !== 'undefined' && Buffer.isBuffer(value))
+    || (ArrayBuffer.isView(value) && !(value instanceof DataView))
+  );
+}
+
+/** JSON.stringify replacer that never expands typed arrays into per-byte objects. */
+function tokenEstimateReplacer(_key: string, value: unknown): unknown {
+  if (isTypedArrayLike(value)) {
+    return `[binary:${binaryPartByteLength(value)}b]`;
+  }
+  return value;
+}
+
+/**
+ * Convert model message content (string | array | null) to plain text for token estimates.
+ * Must never JSON.stringify Uint8Array image payloads — that expands each byte into
+ * `"0":255,"1":216,...` and can inflate a few MB image into multi-million "tokens".
+ */
 export function modelMessageContentToText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -475,13 +513,36 @@ export function modelMessageContentToText(content: unknown): string {
         const p = part as Record<string, unknown>;
         if (typeof p.text === 'string') return p.text;
         if (typeof p.toolName === 'string') return `tool:${p.toolName}`;
-        return JSON.stringify(part);
+        const type = typeof p.type === 'string' ? p.type : '';
+        if (type === 'image' || p.image != null) {
+          const mime = typeof p.mimeType === 'string' ? p.mimeType : 'image';
+          const bytes = binaryPartByteLength(p.image ?? p.data ?? p.content);
+          return `[image:${mime}:${bytes}b]`;
+        }
+        if (type === 'file' || type === 'media' || type === 'image-url') {
+          return `[${type}]`;
+        }
+        if (isTypedArrayLike(part)) {
+          return `[binary:${binaryPartByteLength(part)}b]`;
+        }
+        try {
+          return JSON.stringify(part, tokenEstimateReplacer);
+        } catch {
+          return '[unserializable-part]';
+        }
       }
       return '';
     }).join('\n');
   }
   if (content == null) return '';
-  return JSON.stringify(content);
+  if (isTypedArrayLike(content)) {
+    return `[binary:${binaryPartByteLength(content)}b]`;
+  }
+  try {
+    return JSON.stringify(content, tokenEstimateReplacer);
+  } catch {
+    return '[unserializable-content]';
+  }
 }
 
 /** Estimate the character count of tool schemas for token budgeting. */

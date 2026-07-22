@@ -11,7 +11,7 @@ import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import MicIcon from '@mui/icons-material/Mic';
 import MinimizeIcon from '@mui/icons-material/Minimize';
-import { alphaColor } from '../../theme';
+import { alphaColor, colors } from '../../theme';
 import { friendlyVoiceError } from '../voice/voice-comms-theme';
 import { getCrewAccent } from '../../styles/crew-theme';
 import { VoiceParticleField } from '../voice/VoiceParticleField';
@@ -221,13 +221,13 @@ export function CrewCallModal({
           `,
           border: `1px solid ${callTheme.border.line}`,
           borderRadius: '10px',
-          boxShadow: `0 20px 64px ${alphaColor('#000', 0.6)}`,
+          boxShadow: `0 20px 64px ${colors.shadow.heavy}`,
           overflow: 'hidden',
         },
       }}
       slotProps={{
         backdrop: {
-          sx: { bgcolor: alphaColor('#020406', 0.78), backdropFilter: 'blur(6px)' },
+          sx: { bgcolor: alphaColor(colors.bg.primary, 0.72), backdropFilter: 'blur(6px)' },
         },
       }}
     >

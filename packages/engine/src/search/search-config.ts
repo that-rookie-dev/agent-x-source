@@ -94,6 +94,33 @@ export function webSearchProvidersUnavailableMessage(): string {
   return 'No web search providers are active. Enable DuckDuckGo or configure a BYOK provider (Brave, Exa, Tavily) in Settings → Tools → Web Search.';
 }
 
+/** True for legacy client placeholders (bullet redaction) that must never be persisted. */
+function isUnusableApiKeyPlaceholder(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  // Former REDACTED_SECRET was U+2022 bullets — invalid in HTTP headers if saved.
+  if (/^•+$/.test(v) || v.includes('•')) return true;
+  if (v === '••••••••' || v === '***' || v === '********') return true;
+  return false;
+}
+
+/**
+ * Merge a paid search provider key.
+ * - New non-empty key → store it
+ * - `apiKeyConfigured: false` → clear stored key
+ * - Missing / empty / legacy placeholder → keep existing secret
+ */
+function mergePaidProviderKey(
+  existing?: { apiKey?: string },
+  incoming?: { apiKey?: string; apiKeyConfigured?: boolean },
+): string | undefined {
+  if (!incoming) return existing?.apiKey;
+  if (incoming.apiKeyConfigured === false) return '';
+  const next = typeof incoming.apiKey === 'string' ? incoming.apiKey.trim() : undefined;
+  if (next && !isUnusableApiKeyPlaceholder(next)) return next;
+  return existing?.apiKey;
+}
+
 export function mergeWebSearchToolsConfig(
   existing?: WebSearchToolsConfig | null,
   incoming?: WebSearchToolsConfig | null,
@@ -107,15 +134,15 @@ export function mergeWebSearchToolsConfig(
     },
     brave: {
       enabled: inc.brave?.enabled ?? ex.brave?.enabled ?? base.brave!.enabled,
-      apiKey: inc.brave?.apiKey !== undefined ? inc.brave.apiKey : ex.brave?.apiKey,
+      apiKey: mergePaidProviderKey(ex.brave, inc.brave),
     },
     exa: {
       enabled: inc.exa?.enabled ?? ex.exa?.enabled ?? base.exa!.enabled,
-      apiKey: inc.exa?.apiKey !== undefined ? inc.exa.apiKey : ex.exa?.apiKey,
+      apiKey: mergePaidProviderKey(ex.exa, inc.exa),
     },
     tavily: {
       enabled: inc.tavily?.enabled ?? ex.tavily?.enabled ?? base.tavily!.enabled,
-      apiKey: inc.tavily?.apiKey !== undefined ? inc.tavily.apiKey : ex.tavily?.apiKey,
+      apiKey: mergePaidProviderKey(ex.tavily, inc.tavily),
     },
     providerOrder: normalizeWebSearchProviderOrder(
       inc.providerOrder ?? ex.providerOrder ?? base.providerOrder,

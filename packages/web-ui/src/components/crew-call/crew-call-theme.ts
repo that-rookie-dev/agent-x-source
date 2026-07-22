@@ -1,30 +1,33 @@
 import { colors, alphaColor } from '../../theme';
 
-/** Sci-fi secure-uplink palette — cool signal green / cyan on deep void (not purple). */
+/**
+ * Secure-uplink palette for crew calls — scheme-aware via CSS tokens so light
+ * theme stays readable (no hard-coded void blacks).
+ */
 export const callTheme = {
   bg: {
-    void: '#05080c',
-    panel: '#0a1018',
-    glass: alphaColor('#0e1824', 0.92),
-    inset: '#060b12',
+    void: colors.bg.primary,
+    panel: colors.bg.secondary,
+    glass: alphaColor(colors.bg.secondary, 0.94),
+    inset: colors.bg.tertiary,
   },
   border: {
-    faint: alphaColor('#7ec8e3', 0.12),
-    line: alphaColor('#7ec8e3', 0.28),
-    hot: alphaColor('#5eead4', 0.55),
+    faint: alphaColor(colors.accent.cyan, 0.16),
+    line: alphaColor(colors.accent.cyan, 0.32),
+    hot: alphaColor(colors.accent.green, 0.5),
   },
   text: {
-    primary: '#e8f4f8',
-    secondary: alphaColor('#e8f4f8', 0.65),
-    dim: alphaColor('#e8f4f8', 0.4),
-    mono: '#9fb8c4',
+    primary: colors.text.primary,
+    secondary: colors.text.secondary,
+    dim: colors.text.dim,
+    mono: colors.text.tertiary,
   },
-  signal: '#5eead4',
-  uplink: '#38bdf8',
+  signal: colors.accent.green,
+  uplink: colors.accent.blue,
   warn: colors.accent.orange,
-  alert: '#f87171',
-  operator: '#7dd3fc',
-  crew: '#6ee7b7',
+  alert: colors.accent.red,
+  operator: colors.accent.cyan,
+  crew: colors.accent.green,
   mono: "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace",
   display: "'Orbitron', 'JetBrains Mono', monospace",
 } as const;

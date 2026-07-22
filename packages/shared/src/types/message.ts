@@ -35,6 +35,8 @@ export interface MessageMetadata {
   channel?: string;
   normalizationWarnings?: number;
   providerRequestId?: string;
+  /** True when this user turn originated from a voice session (not chat composer). */
+  voiceTurn?: boolean;
   /** Voice engine that produced/ingested this message. */
   engine?: string;
   /** Provider used for the response. */

@@ -30,7 +30,13 @@ export type WebSearchProviderId = 'duckduckgo' | WebSearchPaidProviderId;
 
 export interface WebSearchPaidProviderConfig {
   enabled: boolean;
+  /** Present only when the client is saving a new key (never returned from the API). */
   apiKey?: string;
+  /**
+   * Server → client: whether a key is stored (actual secret is never sent).
+   * Client → server: set `false` to clear the stored key on save.
+   */
+  apiKeyConfigured?: boolean;
 }
 
 export interface WebSearchToolsConfig {

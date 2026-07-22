@@ -841,4 +841,38 @@ BEGIN
   END IF;
 END $$;
 ` },
+  { version: 16, name: 'document_templates', sql: `-- Document Templates library: layout masters kept as original binaries.
+-- Placeholders use {{field_key}} syntax. Chunking/RAG is intentionally not used.
+
+CREATE TABLE IF NOT EXISTS document_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  mime_type TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  storage_id TEXT NOT NULL,
+  format TEXT NOT NULL DEFAULT 'other',
+  fillable BOOLEAN NOT NULL DEFAULT FALSE,
+  fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_templates_name ON document_templates (name);
+CREATE INDEX IF NOT EXISTS idx_document_templates_updated ON document_templates (updated_at DESC);
+` },
+  { version: 17, name: 'template_analysis', sql: `-- Track LLM field-discovery status for raw uploaded templates.
+
+ALTER TABLE document_templates
+  ADD COLUMN IF NOT EXISTS analysis_status TEXT NOT NULL DEFAULT 'ready';
+
+ALTER TABLE document_templates
+  ADD COLUMN IF NOT EXISTS analysis_error TEXT;
+` },
+  { version: 18, name: 'template_design_summary', sql: `-- Design brief for templates: how the master looks / is structured (not just blank fields).
+
+ALTER TABLE document_templates
+  ADD COLUMN IF NOT EXISTS design_summary TEXT;
+` },
 ];

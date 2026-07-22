@@ -6,6 +6,7 @@ import * as shell from './builtin/shell.js';
 import * as git from './builtin/git.js';
 import * as code from './builtin/code.js';
 import * as documents from './builtin/documents.js';
+import * as templates from './builtin/templates.js';
 import * as automation from './builtin/automation.js';
 import * as agentXOverview from './builtin/agent-x-overview.js';
 import * as channelPermissions from './builtin/channel-permissions.js';
@@ -279,6 +280,9 @@ const CORE_TOOLS: ToolDefinition[] = [
   { id: 'memory_read', name: 'Memory Read', description: 'Read agent memory by key', modelDescription: 'Read persistent agent memory by key (alias for memory_recall).', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { key: { type: 'string', description: 'Memory key' } }, required: ['key'] }, composable: true, source: 'builtin' },
   { id: 'codebase_search', name: 'Codebase Search', description: 'Semantic search over indexed codebase', modelDescription: 'Search indexed codebase chunks by meaning (requires /index or rag.enabled). Read-only — use for @codebase-style context. Do NOT use this for PDFs uploaded to Knowledge Base.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Natural language search query' }, limit: { type: 'number', description: 'Max results (default: 8)' } }, required: ['query'] }, composable: true, source: 'builtin' },
   { id: 'knowledge_base_search', name: 'Knowledge Base Search', description: 'Semantic search over Knowledge Base uploads', modelDescription: 'Search documents uploaded to the Knowledge Base (PDFs, DOCX, etc.) by meaning. Returns page/chunk text from ingested sources. Use whenever the user asks about uploaded documents. Read-only.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Natural language or keyword search query' }, limit: { type: 'number', description: 'Max results (default: 8)' }, sourceId: { type: 'string', description: 'Optional knowledge source id to restrict search' } }, required: ['query'] }, composable: true, source: 'builtin' },
+  { id: 'template_list', name: 'List Templates', description: 'List document templates in the Template Library', modelDescription: 'List design masters from Knowledge Base → Templates (PDF/DOCX/XLSX). Each template is a visual/layout master. Prefer template_fill to clone the design with available data — never recreate the layout from scratch.', category: 'documents', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Optional name/tag filter' } }, required: [] }, composable: true, source: 'builtin' },
+  { id: 'template_inspect', name: 'Inspect Template', description: 'Show template design and content slots', modelDescription: 'Inspect a Template Library master: design summary, content slots, format, analysis status. Understand the exact design before calling template_fill.', category: 'documents', riskLevel: 'low', schema: { type: 'object', properties: { templateId: { type: 'string', description: 'Template id from template_list or @template mention' } }, required: ['templateId'] }, composable: true, source: 'builtin' },
+  { id: 'template_fill', name: 'Generate From Template', description: 'Clone a template with available data and save a new file', modelDescription: 'Clone a Template Library master into a new document of the same format that looks exactly like the template. Pass whatever slot values you have; missing slots stay blank; extra keys are ignored. Preserves fonts, colors, images, and alignment. Never rebuild the document from scratch.', category: 'documents', riskLevel: 'medium', schema: { type: 'object', properties: { templateId: { type: 'string', description: 'Template id' }, values: { type: 'object', description: 'Map of content-slot key → string value (omit or empty for blank)' }, outputName: { type: 'string', description: 'Optional output filename' } }, required: ['templateId', 'values'] }, composable: true, source: 'builtin' },
   { id: 'cortex_memory_search', name: 'Cortex Memory Search', description: 'Search Neural Cortex chat/profile memory', modelDescription: 'Vector search over chat and profile memory in Neural Cortex. scope: session | profile | both (default both). Profile is always global. Read-only.', category: 'ai_meta', riskLevel: 'low', schema: { type: 'object', properties: { query: { type: 'string', description: 'Natural language search query' }, limit: { type: 'number', description: 'Max results (default: 8)' }, scope: { type: 'string', enum: ['session', 'profile', 'both'], description: 'Memory scope (default: both)' } }, required: ['query'] }, composable: true, source: 'builtin' },
 
   // ═══ COMMUNICATION ═══
@@ -575,6 +579,9 @@ export function createDefaultToolkit(scopePath: string): { registry: ToolRegistr
   executor.registerHandler('memory_read', aliases.memoryRead);
   executor.registerHandler('codebase_search', aliases.ragSearch);
   executor.registerHandler('knowledge_base_search', aliases.knowledgeBaseSearch);
+  executor.registerHandler('template_list', templates.templateList);
+  executor.registerHandler('template_inspect', templates.templateInspect);
+  executor.registerHandler('template_fill', templates.templateFill);
   executor.registerHandler('cortex_memory_search', aliases.cortexMemorySearch);
 
   // ═══ Communication ═══

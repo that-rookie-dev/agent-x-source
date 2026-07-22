@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, memo, startTransition } from 'react';
 import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
 import Typography from '@mui/material/Typography';
 import { isIntegrationToolId } from '@agentx/shared/browser';
 import { colors, alphaColor } from '../theme';
@@ -160,7 +161,7 @@ function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; c
         {tool.status !== 'running' && !isDeepSearchTool && (
           <Typography sx={{
             fontSize: '0.55rem', fontFamily: "'JetBrains Mono', monospace",
-            color: colors.text.dim, flexShrink: 0, transition: 'transform 0.15s',
+            color: colors.text.dim, flexShrink: 0, transition: 'transform 0.28s ease',
             transform: expanded ? 'rotate(180deg)' : 'none',
           }}>
             ▾
@@ -168,13 +169,13 @@ function InlineToolCallComponent({ tool, compactTop }: { tool: InlineToolData; c
         )}
       </Box>
 
-      {expanded && SpecializedRender && !isDeepSearchTool && (
-        <SpecializedRender tool={tool} />
-      )}
-
-      {expanded && !SpecializedRender && !isDeepSearchTool && (
-        <DefaultDetailsPanel tool={tool} cc={cc} />
-      )}
+      <Collapse in={expanded && !isDeepSearchTool} unmountOnExit>
+        {SpecializedRender ? (
+          <SpecializedRender tool={tool} />
+        ) : (
+          <DefaultDetailsPanel tool={tool} cc={cc} />
+        )}
+      </Collapse>
     </Box>
   );
 }

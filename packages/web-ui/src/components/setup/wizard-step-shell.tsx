@@ -1,74 +1,34 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { ReactNode } from 'react';
-import { wizardTheme, WIZARD_MONO } from './wizard-theme';
-import { colors, alphaColor } from '../../theme';
+import { WizardStepHeader } from './wizard-ui';
+import { wizardPanelSx, wizardTheme, WIZARD_MONO } from './wizard-theme';
 
 export interface WizardStepShellProps {
   codename: string;
   title: string;
   subtitle: string;
-  icon: ReactNode;
+  /** Kept for call-site compatibility; no longer rendered (header matches other steps). */
+  icon?: ReactNode;
   children: ReactNode;
+  /** Max width of the content panel. */
+  maxWidth?: number | string;
 }
 
+/**
+ * Shared step chrome: same centered header as other wizard pages + a single panel.
+ */
 export function WizardStepShell({
   codename,
   title,
   subtitle,
-  icon,
   children,
+  maxWidth = 560,
 }: WizardStepShellProps) {
   return (
-    <Box sx={{ maxWidth: 560, mx: 'auto' }}>
-      <Box sx={{ textAlign: 'center', mb: 2 }}>
-        <Box sx={{
-          width: 48,
-          height: 48,
-          borderRadius: 1.5,
-          mx: 'auto',
-          mb: 1.25,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: alphaColor(colors.ink, 0.03),
-          border: `1px solid ${wizardTheme.panelBorder}`,
-          color: wizardTheme.textSecondary,
-        }}>
-          {icon}
-        </Box>
-        <Typography sx={{
-          fontFamily: WIZARD_MONO,
-          fontSize: '0.52rem',
-          letterSpacing: '2.5px',
-          color: wizardTheme.textDim,
-          mb: 0.75,
-        }}>
-          {codename}
-        </Typography>
-        <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.05rem', mb: 0.5, color: wizardTheme.text }}>
-          {title}
-        </Typography>
-        <Typography variant="body2" sx={{ color: wizardTheme.textDim, fontSize: '0.68rem', maxWidth: 420, mx: 'auto', lineHeight: 1.55 }}>
-          {subtitle}
-        </Typography>
-      </Box>
-
-      <Box sx={{
-        position: 'relative',
-        p: 2,
-        borderRadius: 1.5,
-        border: `1px solid ${wizardTheme.panelBorder}`,
-        bgcolor: wizardTheme.panel,
-        overflow: 'hidden',
-        '&::before': {
-          content: '""',
-          position: 'absolute',
-          inset: 0,
-          background: `repeating-linear-gradient(0deg, transparent, transparent 2px, ${alphaColor(colors.ink, 0.015)} 2px, ${alphaColor(colors.ink, 0.015)} 4px)`,
-          pointerEvents: 'none',
-        },
-      }}>
+    <Box>
+      <WizardStepHeader codename={codename} title={title} subtitle={subtitle} />
+      <Box sx={{ ...wizardPanelSx, maxWidth, mx: 'auto', position: 'relative' }}>
         {children}
       </Box>
     </Box>

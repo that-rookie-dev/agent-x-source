@@ -3,6 +3,9 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
+import Checkbox from '@mui/material/Checkbox';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Collapse from '@mui/material/Collapse';
 import { colors, alphaColor } from '../../theme';
 import {
   modelBenchmark,
@@ -29,14 +32,111 @@ const GRADE_META: Record<BenchmarkGrade, { label: string; subtitle: string; colo
   STANDBY: { label: 'STANDBY', subtitle: 'Not cleared for agentic deployment', color: colors.accent.red },
 };
 
-function gradeAllowsUse(grade: BenchmarkGrade): boolean {
-  return grade !== 'STANDBY';
+export interface BenchmarkGradeOverrides {
+  limitedOverride?: boolean;
+  standbyOverride?: boolean;
 }
 
+/**
+ * Shared gate for setup wizard + settings model picker.
+ * ELITE/CLEARED proceed freely; LIMITED and STANDBY require an explicit risk checkbox.
+ */
+export function canProceedWithBenchmarkGrade(
+  grade: BenchmarkGrade | null | undefined,
+  opts: BenchmarkGradeOverrides = {},
+): boolean {
+  if (!grade) return false;
+  if (grade === 'ELITE' || grade === 'CLEARED') return true;
+  if (grade === 'LIMITED') return Boolean(opts.limitedOverride);
+  if (grade === 'STANDBY') return Boolean(opts.standbyOverride);
+  return false;
+}
+
+/** @deprecated Prefer canProceedWithBenchmarkGrade — kept for any external imports. */
 export function gradeAllowsAgentX(grade: BenchmarkGrade): boolean {
-  return gradeAllowsUse(grade);
+  return grade === 'ELITE' || grade === 'CLEARED' || grade === 'LIMITED';
 }
 
+/** Risk-acknowledgment checkboxes for LIMITED / STANDBY — shared UI for wizard + settings. */
+export function BenchmarkGradeAck({
+  grade,
+  running,
+  limitedOverride,
+  standbyOverride,
+  onLimitedChange,
+  onStandbyChange,
+  accentLimited,
+  accentStandby,
+  labelSx,
+}: {
+  grade: BenchmarkGrade | null | undefined;
+  running?: boolean;
+  limitedOverride: boolean;
+  standbyOverride: boolean;
+  onLimitedChange: (v: boolean) => void;
+  onStandbyChange: (v: boolean) => void;
+  accentLimited?: string;
+  accentStandby?: string;
+  labelSx?: object;
+}) {
+  if (running || !grade) return null;
+  if (grade !== 'LIMITED' && grade !== 'STANDBY') return null;
+  const limitedColor = accentLimited ?? settingsTheme.accent.amber;
+  const standbyColor = accentStandby ?? settingsTheme.accent.alert;
+  const textSx = labelSx ?? { ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.secondary };
+
+  const accent = grade === 'LIMITED' ? limitedColor : standbyColor;
+  const checked = grade === 'LIMITED' ? limitedOverride : standbyOverride;
+  const onChange = grade === 'LIMITED' ? onLimitedChange : onStandbyChange;
+  const label = grade === 'LIMITED'
+    ? 'Acknowledge LIMITED clearance — proceed with constraints'
+    : 'Use STANDBY model at my own risk — not recommended for agentic workloads';
+
+  return (
+    <Box sx={{
+      mt: 1.5,
+      px: 1.5,
+      py: 1.25,
+      borderRadius: '6px',
+      border: `1px solid ${alphaColor(accent, '66')}`,
+      bgcolor: `${alphaColor(accent, '12')}`,
+    }}>
+      <Typography sx={{
+        ...settingsMonoSx,
+        fontSize: '0.5rem',
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: accent,
+        fontWeight: 700,
+        mb: 0.75,
+      }}>
+        Action required
+      </Typography>
+      <FormControlLabel
+        sx={{ m: 0, alignItems: 'flex-start', width: '100%' }}
+        control={
+          <Checkbox
+            size="small"
+            checked={checked}
+            onChange={(e) => onChange(e.target.checked)}
+            sx={{
+              color: accent,
+              '&.Mui-checked': { color: accent },
+              // Equal padding keeps the IconButton hit-area square so the hover ripple stays circular.
+              p: 0.5,
+              mr: 0.25,
+              mt: '-1px',
+              borderRadius: '50%',
+              '& .MuiTouchRipple-root': { borderRadius: '50%' },
+              '&:hover': { bgcolor: alphaColor(accent, 0.12) },
+            }}
+          />
+        }
+        label={<Typography sx={{ ...textSx, pt: 0.6 }}>{label}</Typography>}
+      />
+    </Box>
+  );
+}
 interface ModelBenchmarkRunnerProps {
   providerId: string;
   modelId: string;
@@ -45,6 +145,8 @@ interface ModelBenchmarkRunnerProps {
   modelCapabilities?: string[];
   autoStart?: boolean;
   embedded?: boolean;
+  /** Restore a previously completed run when revisiting the step. */
+  initialResult?: BenchmarkRunResult | null;
   onComplete?: (result: BenchmarkRunResult) => void;
   onRunningChange?: (running: boolean) => void;
 }
@@ -57,21 +159,24 @@ export function ModelBenchmarkRunner({
   modelCapabilities,
   autoStart = false,
   embedded = false,
+  initialResult = null,
   onComplete,
   onRunningChange,
 }: ModelBenchmarkRunnerProps) {
   const [phaseMessage, setPhaseMessage] = useState('');
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState(initialResult ? 100 : 0);
   const [currentTest, setCurrentTest] = useState('');
-  const [tests, setTests] = useState<BenchmarkTestResult[]>([]);
-  const [modalities, setModalities] = useState<ModalityProbeResult[]>([]);
-  const [result, setResult] = useState<BenchmarkRunResult | null>(null);
-  const [fromCache, setFromCache] = useState(false);
-  const [logFile, setLogFile] = useState('');
+  const [tests, setTests] = useState<BenchmarkTestResult[]>(initialResult?.tests ?? []);
+  const [modalities, setModalities] = useState<ModalityProbeResult[]>(initialResult?.modalities ?? []);
+  const [result, setResult] = useState<BenchmarkRunResult | null>(initialResult);
+  const [fromCache, setFromCache] = useState(Boolean(initialResult?.fromCache));
+  const [logFile, setLogFile] = useState(initialResult?.logFile ?? '');
   const [error, setError] = useState('');
+  /** Live probes expand while running; collapse to the grade once complete. */
+  const [detailsOpen, setDetailsOpen] = useState(!initialResult);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const startedRef = useRef(false);
+  const startedRef = useRef(Boolean(initialResult));
 
   const reset = useCallback(() => {
     cleanupRef.current?.();
@@ -85,6 +190,7 @@ export function ModelBenchmarkRunner({
     setFromCache(false);
     setLogFile('');
     setError('');
+    setDetailsOpen(true);
     startedRef.current = false;
   }, []);
 
@@ -115,8 +221,12 @@ export function ModelBenchmarkRunner({
       setResult(event.result);
       setFromCache(Boolean(event.result.fromCache));
       setLogFile(event.result.logFile ?? '');
+      // Prefer streamed rows; fall back to payload (cached / late join).
+      if (event.result.tests?.length) setTests(event.result.tests);
+      if (event.result.modalities?.length) setModalities(event.result.modalities);
       setProgress(100);
       setRunning(false);
+      setDetailsOpen(false);
       onComplete?.(event.result);
       return;
     }
@@ -263,11 +373,11 @@ export function ModelBenchmarkRunner({
           </Box>
         )}
 
-        {(running || result) && (
+        {running && (
           <Box sx={{ mb: 2 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
               <Typography sx={{ ...settingsMonoSx, fontSize: '0.52rem', color: settingsTheme.text.dim, textTransform: 'uppercase' }}>
-                {phaseMessage || (running ? 'Executing probes…' : 'Scan complete')}
+                {phaseMessage || 'Executing probes…'}
               </Typography>
               <Typography sx={{ ...settingsMonoSx, fontSize: '0.52rem', color: settingsTheme.accent.hud }}>
                 {progress}%
@@ -283,7 +393,7 @@ export function ModelBenchmarkRunner({
                 },
               }}
             />
-            {currentTest && running && (
+            {currentTest && (
               <Typography sx={{ ...settingsMonoSx, fontSize: '0.5rem', color: settingsTheme.accent.cyan, mt: 0.75, letterSpacing: '1px' }}>
                 ▸ {currentTest}
               </Typography>
@@ -291,10 +401,11 @@ export function ModelBenchmarkRunner({
           </Box>
         )}
 
-        {/* Grade reveal */}
+        {/* Grade reveal — primary output once complete */}
         {result && gradeMeta && (
           <Box sx={{
-            mb: 2.5, p: 2, borderRadius: '6px', textAlign: 'center',
+            mb: (tests.length > 0 || modalities.length > 0) ? 1.5 : 0,
+            p: 2, borderRadius: '6px', textAlign: 'center',
             border: `1px solid ${alphaColor(gradeMeta.color, '55')}`,
             bgcolor: `${alphaColor(gradeMeta.color, '0d')}`,
           }}>
@@ -313,30 +424,58 @@ export function ModelBenchmarkRunner({
           </Box>
         )}
 
-        {/* Test matrix */}
-        {tests.length > 0 && (
-          <Box sx={{ mb: modalities.length > 0 ? 2 : 0 }}>
-            <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Core capability matrix</Typography>
-            <Box sx={{ display: 'grid', gap: 0.75 }}>
-              {tests.map((t) => (
-                <TestRow key={t.id} test={t} />
-              ))}
-            </Box>
-          </Box>
-        )}
-
-        {/* Modality sensors */}
-        {modalities.length > 0 && (
+        {/* Probe details: live while running; collapsed after complete so grade + ack stay visible */}
+            {(tests.length > 0 || modalities.length > 0) && (
           <Box>
-            <Typography sx={{ ...settingsOverlineSx, mb: 0.5 }}>Sensory channels · live probes</Typography>
-            <Typography sx={{ ...settingsMonoSx, fontSize: '0.48rem', color: settingsTheme.text.dim, mb: 1, lineHeight: 1.5 }}>
-              Image, audio, and video are tested with live media payloads. Critical core probes count double toward clearance. Sensory results are informational and do not change the grade.
-            </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 0.75 }}>
-              {modalities.map((m) => (
-                <ModalityChip key={m.id} probe={m} />
-              ))}
-            </Box>
+            {!running && result && (
+              <Button
+                size="small"
+                onClick={() => setDetailsOpen((v) => !v)}
+                sx={{
+                  ...settingsBtnGhostSx,
+                  mb: detailsOpen ? 1 : 0,
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  px: 1.25,
+                  py: 0.75,
+                  transition: 'margin-bottom 0.28s ease',
+                }}
+              >
+                <span>{detailsOpen ? 'Hide probe details' : 'Show probe details'}</span>
+                <Typography component="span" sx={{ ...settingsMonoSx, fontSize: '0.48rem', color: settingsTheme.text.dim }}>
+                  {tests.length} core{modalities.length > 0 ? ` · ${modalities.length} sensory` : ''}
+                </Typography>
+              </Button>
+            )}
+
+            <Collapse in={running || detailsOpen} unmountOnExit={!running}>
+              <Box>
+                {tests.length > 0 && (
+                  <Box sx={{ mb: modalities.length > 0 ? 2 : 0 }}>
+                    <Typography sx={{ ...settingsOverlineSx, mb: 1 }}>Core capability matrix</Typography>
+                    <Box sx={{ display: 'grid', gap: 0.75 }}>
+                      {tests.map((t) => (
+                        <TestRow key={t.id} test={t} />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+
+                {modalities.length > 0 && (
+                  <Box>
+                    <Typography sx={{ ...settingsOverlineSx, mb: 0.5 }}>Sensory channels · live probes</Typography>
+                    <Typography sx={{ ...settingsMonoSx, fontSize: '0.48rem', color: settingsTheme.text.dim, mb: 1, lineHeight: 1.5 }}>
+                      Image, audio, and video are tested with live media payloads. Critical core probes count double toward clearance. Sensory results are informational and do not change the grade.
+                    </Typography>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 0.75 }}>
+                      {modalities.map((m) => (
+                        <ModalityChip key={m.id} probe={m} />
+                      ))}
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            </Collapse>
           </Box>
         )}
 
