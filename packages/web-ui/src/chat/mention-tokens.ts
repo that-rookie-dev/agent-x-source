@@ -6,7 +6,6 @@
  *   @folder[<urlencoded-relativePath>]   ("." = workspace root)
  *   @crew[<callsign>:<urlencoded-name>]
  *   @kb[<sourceId>:<urlencoded-name>]
- *   @template[<templateId>:<urlencoded-name>]
  *
  * Legacy (read):
  *   @file:path  @folder:path  @crew:callsign:name
@@ -25,14 +24,13 @@ export const FILE_MENTION_RE = /@file\[([^\]]+)\]/g;
 export const FOLDER_MENTION_RE = /@folder\[([^\]]+)\]/g;
 export const CREW_MENTION_RE = /@crew\[([^\]\s]+)\]/g;
 export const KB_MENTION_RE = /@kb\[([^\]]+)\]/g;
-export const TEMPLATE_MENTION_RE = /@template\[([^\]]+)\]/g;
 
 /**
  * Split plain text into chips + raw segments (keeps delimiters).
  * Bracket forms first; legacy colon forms stop before trailing punctuation.
  */
 export const MENTION_TOKEN_SPLIT_RE = new RegExp(
-  `(@file\\[[^\\]]+\\]|@folder\\[[^\\]]+\\]|@crew\\[[^\\]]+\\]|@kb\\[[^\\]]+\\]|@template\\[[^\\]]+\\]|@file:${LEGACY_PATH_BODY}|@folder:${LEGACY_PATH_BODY}|@crew:[^:\\s\\[]+:${LEGACY_PATH_BODY}|@[\\w][\\w.-]*)`,
+  `(@file\\[[^\\]]+\\]|@folder\\[[^\\]]+\\]|@crew\\[[^\\]]+\\]|@kb\\[[^\\]]+\\]|@file:${LEGACY_PATH_BODY}|@folder:${LEGACY_PATH_BODY}|@crew:[^:\\s\\[]+:${LEGACY_PATH_BODY}|@[\\w][\\w.-]*)`,
   'g',
 );
 
@@ -72,23 +70,6 @@ export function formatKbMentionToken(sourceId: string, name?: string): string {
   if (!id) return '';
   const label = (name?.trim() || id);
   return `@kb[${id}:${encodeURIComponent(label)}]`;
-}
-
-export function formatTemplateMentionToken(templateId: string, name?: string): string {
-  const id = templateId.trim();
-  if (!id) return '';
-  const label = (name?.trim() || id);
-  return `@template[${id}:${encodeURIComponent(label)}]`;
-}
-
-export function parseTemplateMentionToken(token: string): { templateId: string; name: string } | null {
-  const bracket = /^@template\[([^:\]]+):([^\]]+)\]$/.exec(token);
-  if (!bracket) return null;
-  try {
-    return { templateId: bracket[1]!, name: decodeURIComponent(bracket[2]!) };
-  } catch {
-    return { templateId: bracket[1]!, name: bracket[2]! };
-  }
 }
 
 export function parseKbMentionToken(token: string): { sourceId: string; name: string } | null {
@@ -162,7 +143,6 @@ export function isCompleteMentionToken(token: string): boolean {
   if (/^@folder\[[^\]]+\]$/.test(token)) return true;
   if (/^@crew\[[^\]]+\]$/.test(token)) return true;
   if (/^@kb\[[^\]]+\]$/.test(token)) return true;
-  if (/^@template\[[^\]]+\]$/.test(token)) return true;
   // Legacy complete tokens (colon form)
   if (new RegExp(`^@file:${LEGACY_PATH_BODY}$`).test(token)) return true;
   if (new RegExp(`^@folder:${LEGACY_PATH_BODY}$`).test(token)) return true;
@@ -184,7 +164,7 @@ export function findActiveMentionQuery(textBefore: string): { atIdx: number; que
   if (/\s/.test(raw)) return null;
 
   // Closed bracket chip: `@file[…]` — anything after `]` is typed text, not a query.
-  if (/^@(?:file|folder|crew|kb|template)\[[^\]]+\]/.test(raw)) return null;
+  if (/^@(?:file|folder|crew|kb)\[[^\]]+\]/.test(raw)) return null;
 
   if (isCompleteMentionToken(raw)) return null;
 

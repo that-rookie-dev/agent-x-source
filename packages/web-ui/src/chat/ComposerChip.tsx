@@ -9,7 +9,6 @@ import {
   parseFileMentionToken,
   parseFolderMentionToken,
   parseKbMentionToken,
-  parseTemplateMentionToken,
 } from './mention-tokens';
 
 /** Stable per-callsign accent (uses crew.color when provided). */
@@ -300,78 +299,7 @@ export function KbDisplayChip({
   );
 }
 
-export function TemplateDisplayChip({
-  name,
-  templateId,
-  onClick,
-}: {
-  name: string;
-  templateId?: string;
-  onClick?: () => void;
-}) {
-  const rawName = name || 'template';
-  const extRaw = rawName.includes('.') ? (rawName.split('.').pop() || '').toUpperCase() : '';
-  const ext = (extRaw || 'TPL').slice(0, 6);
-  const display = rawName.length > 24 ? `${rawName.slice(0, 24)}…` : rawName;
-  const title = templateId ? `Template: ${rawName}` : rawName;
-  return (
-    <Box
-      component="span"
-      title={title}
-      onClick={onClick}
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '3px',
-        boxSizing: 'border-box',
-        padding: '0 5px 0 0',
-        margin: '0 1px',
-        borderRadius: '999px',
-        fontFamily: "'JetBrains Mono', monospace",
-        fontSize: '0.55rem',
-        fontWeight: 600,
-        color: colors.accent.orange,
-        background: alphaColor(colors.accent.orange, '12'),
-        border: `1px solid ${alphaColor(colors.accent.orange, '28')}`,
-        userSelect: 'none',
-        whiteSpace: 'nowrap',
-        lineHeight: 1.2,
-        verticalAlign: 'middle',
-        maxWidth: 200,
-        overflow: 'hidden',
-        cursor: onClick ? 'pointer' : 'default',
-        '&:hover': onClick ? { borderColor: alphaColor(colors.accent.orange, '50') } : undefined,
-      }}
-    >
-      <Box
-        component="span"
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minWidth: 16,
-          px: '3px',
-          height: 14,
-          borderRadius: '999px',
-          fontSize: '0.42rem',
-          fontWeight: 700,
-          letterSpacing: '0.02em',
-          lineHeight: 1,
-          color: colors.bg.primary,
-          background: colors.accent.orange,
-          flexShrink: 0,
-        }}
-      >
-        {ext}
-      </Box>
-      <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>
-        {display}
-      </Box>
-    </Box>
-  );
-}
-
-/** Tokens for @file[…], @folder[…], @kb[…], @template[…], @crew[…], and legacy colon / bare @callsign. */
+/** Tokens for @file[…], @folder[…], @kb[…], @crew[…], and legacy colon / bare @callsign. */
 export function renderComposerMentionTokens(
   text: string,
   opts?: {
@@ -412,16 +340,6 @@ export function renderComposerMentionTokens(
           key={i}
           name={kbTok.name}
           sourceId={kbTok.sourceId}
-        />
-      );
-    }
-    const templateTok = parseTemplateMentionToken(part);
-    if (templateTok) {
-      return (
-        <TemplateDisplayChip
-          key={i}
-          name={templateTok.name}
-          templateId={templateTok.templateId}
         />
       );
     }

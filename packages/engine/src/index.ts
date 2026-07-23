@@ -520,3 +520,35 @@ export {
   fillTemplateBuffer,
 } from './templates/index.js';
 export type { TemplateServiceOptions } from './templates/TemplateService.js';
+export {
+  DocumentStudioService,
+  getDocumentStudioService,
+  setDocumentStudioService,
+  JobRunner,
+  PrimitiveRegistry,
+  ComposeRegistry,
+  validateJobSpec,
+  defaultJobPolicies,
+  registerDocumentStudioTools,
+  unregisterDocumentStudioTools,
+  DOC_STUDIO_TOOL_CATALOG,
+  DOC_STUDIO_TOOL_DEFINITIONS,
+  DOC_STUDIO_TOOL_IDS,
+  DocumentStudioEventBus,
+  documentStudioEventBus,
+  DOCUMENT_STUDIO_EVENT_NAMES,
+  formatSseEvent,
+} from './document-studio/index.js';
+export type {
+  JobSpec,
+  JobStep,
+  JobPolicies,
+  JobStatus,
+  Job as DocStudioJob,
+  Master as DocStudioMaster,
+  Binder as DocStudioBinder,
+  DocStudioToolCatalogEntry,
+  DocumentStudioEventPayloads,
+  DocumentStudioEvent,
+  DocumentStudioEventName,
+} from './document-studio/index.js';

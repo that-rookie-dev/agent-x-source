@@ -46,7 +46,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -134,7 +134,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -222,7 +222,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -310,7 +310,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -398,7 +398,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -486,7 +486,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -574,7 +574,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -662,7 +662,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -750,7 +750,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -838,7 +838,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -926,7 +926,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1014,7 +1014,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1102,7 +1102,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1190,7 +1190,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1278,7 +1278,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1366,7 +1366,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1454,7 +1454,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1542,7 +1542,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1630,7 +1630,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1718,7 +1718,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],
@@ -1806,7 +1806,7 @@ export const PREBUILT_CREWS: PrebuiltCrewData[] = [
       "shell_exec",
       "json_parse",
       "pdf_read",
-      "doc_markdown",
+      "gen_markdown",
       "test_run",
       "http_get"
     ],

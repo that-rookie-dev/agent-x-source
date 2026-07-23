@@ -146,8 +146,18 @@ function appendContextFile(
 /**
  * Directly persist a message to PostgreSQL — independent of WebSocket subscription.
  */
-export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[]; metadata?: MessageMetadata }): void {
-  appendContextFile(sessionId, role, content, undefined, extra);
+export function persistMessageDirect(
+  sessionId: string,
+  role: string,
+  content: string,
+  extra?: {
+    thinking?: string;
+    toolCalls?: ToolCallRecord[];
+    metadata?: MessageMetadata;
+    attachments?: unknown;
+  },
+): void {
+  appendContextFile(sessionId, role, content, undefined, extra as { attachments?: NormalizedAttachment[] } | undefined);
 }
 
 let wss: WebSocketServer | null = null;

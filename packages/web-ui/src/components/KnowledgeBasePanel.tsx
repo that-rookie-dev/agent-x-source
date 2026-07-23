@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useVirtualGrid } from '../perf/useVirtualGrid';
 import type { KnowledgeSource, KnowledgeSourceStatus } from '@agentx/shared';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import { PanelHeader } from './PanelHeader';
-import { TemplatesPanel } from './TemplatesPanel';
 import { useKnowledgeBase } from '../hooks/useKnowledgeBase';
 import { knowledgeBase, neuralCortex } from '../api';
 import { colors, alphaColor, MONO } from '../theme';
@@ -29,10 +26,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import BoltIcon from '@mui/icons-material/Bolt';
 import PendingIcon from '@mui/icons-material/Pending';
-import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
 import { FileViewerModal } from './FileViewerModal';
-
-type KbTab = 'library' | 'templates';
 
 const ACCEPTED_EXTS = '.pdf,.docx,.xlsx,.pptx,.txt,.md,.json,.html,.htm';
 
@@ -778,13 +772,6 @@ function SourceCard({
 // ─── Main Panel ───
 
 export function KnowledgeBasePanel() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab: KbTab = searchParams.get('tab') === 'templates' ? 'templates' : 'library';
-  const setActiveTab = (tab: KbTab) => {
-    if (tab === 'templates') setSearchParams({ tab: 'templates' }, { replace: true });
-    else setSearchParams({}, { replace: true });
-  };
-
   const {
     sources,
     loading,
@@ -884,110 +871,63 @@ export function KnowledgeBasePanel() {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: colors.bg.primary }}>
       <PanelHeader
         title="KNOWLEDGE DECK"
-        subtitle={activeTab === 'templates'
-          ? 'TEMPLATES // DESIGN MASTERS · CLONE LOOK · FILL SLOTS'
-          : 'DOCUMENT VAULT // UPLOAD · INDEX · MAINTAIN'}
+        subtitle="DOCUMENT VAULT // UPLOAD · INDEX · MAINTAIN"
         icon={<LibraryBooksIcon sx={{ fontSize: 20 }} />}
         action={
-          activeTab === 'library' ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              {activeCount > 0 && (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                    px: 1,
-                    py: 0.25,
-                    border: `1px solid ${alphaColor(colors.accent.blue, 0.4)}`,
-                    borderRadius: 0.5,
-                    bgcolor: alphaColor(colors.accent.blue, 0.08),
-                  }}
-                >
-                  <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.blue, animation: 'kbPulse 1s ease-in-out infinite' }} />
-                  <Typography sx={{ fontSize: '0.6rem', color: colors.accent.blue, fontFamily: MONO, letterSpacing: 1 }}>
-                    {activeCount} INGESTING
-                  </Typography>
-                </Box>
-              )}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {activeCount > 0 && (
               <Box
                 sx={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 0.75,
+                  gap: 0.5,
                   px: 1,
                   py: 0.25,
-                  border: `1px solid ${colors.border.default}`,
+                  border: `1px solid ${alphaColor(colors.accent.blue, 0.4)}`,
                   borderRadius: 0.5,
-                  bgcolor: colors.bg.tertiary,
+                  bgcolor: alphaColor(colors.accent.blue, 0.08),
                 }}
               >
-                <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO, letterSpacing: 1 }}>
-                  {readyCount}/{sources.length} READY
-                </Typography>
-                <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO }}>·</Typography>
-                <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO }}>
-                  {formatBytes(totalBytes)}
+                <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.blue, animation: 'kbPulse 1s ease-in-out infinite' }} />
+                <Typography sx={{ fontSize: '0.6rem', color: colors.accent.blue, fontFamily: MONO, letterSpacing: 1 }}>
+                  {activeCount} INGESTING
                 </Typography>
               </Box>
-              <Tooltip title="Refresh vault">
-                <IconButton size="small" onClick={() => void refresh()} sx={{ color: colors.text.dim }}>
-                  <RefreshIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
+            )}
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.75,
+                px: 1,
+                py: 0.25,
+                border: `1px solid ${colors.border.default}`,
+                borderRadius: 0.5,
+                bgcolor: colors.bg.tertiary,
+              }}
+            >
+              <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO, letterSpacing: 1 }}>
+                {readyCount}/{sources.length} READY
+              </Typography>
+              <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO }}>·</Typography>
+              <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO }}>
+                {formatBytes(totalBytes)}
+              </Typography>
             </Box>
-          ) : undefined
+            <Tooltip title="Refresh vault">
+              <IconButton size="small" onClick={() => void refresh()} sx={{ color: colors.text.dim }}>
+                <RefreshIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
         }
       />
-
-      <Box sx={{
-        flexShrink: 0,
-        display: 'flex',
-        borderBottom: `1px solid ${colors.border.default}`,
-        px: 2,
-        bgcolor: colors.bg.secondary,
-        gap: 0.5,
-      }}>
-        {([
-          { id: 'library' as const, label: 'Library', icon: <LibraryBooksIcon sx={{ fontSize: 14 }} /> },
-          { id: 'templates' as const, label: 'Templates', icon: <ContentCopyOutlinedIcon sx={{ fontSize: 14 }} /> },
-        ]).map((tab) => (
-          <Button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            startIcon={tab.icon}
-            sx={{
-              minWidth: 0,
-              px: 1.5,
-              py: 1,
-              borderRadius: 0,
-              fontFamily: MONO,
-              fontSize: '0.65rem',
-              letterSpacing: '0.04em',
-              textTransform: 'none',
-              color: activeTab === tab.id ? colors.text.primary : colors.text.dim,
-              fontWeight: activeTab === tab.id ? 700 : 400,
-              borderBottom: activeTab === tab.id ? `2px solid ${colors.accent.cyan}` : '2px solid transparent',
-              '&:hover': { bgcolor: 'transparent', color: colors.text.primary },
-            }}
-          >
-            {tab.label}
-          </Button>
-        ))}
-      </Box>
-
-      {activeTab === 'templates' && (
-        <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <TemplatesPanel embedded />
-        </Box>
-      )}
 
       <Box
         sx={{
           flex: 1,
           overflow: 'auto',
           p: 2.5,
-          display: activeTab === 'library' ? 'block' : 'none',
         }}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}

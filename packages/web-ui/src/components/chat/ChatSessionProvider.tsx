@@ -154,7 +154,7 @@ type BypassPermissions = Pick<ChatSessionStateReturn, BypassPermissionsKey>;
 // ─── Sidebar keys ───
 const SIDEBAR_KEYS = [
   'tokenExpanded', 'tasksExpanded', 'missionExpanded',
-  'todoItems',
+  'todoItems', 'turnActivity',
 ] as const;
 
 type SidebarKey = typeof SIDEBAR_KEYS[number];

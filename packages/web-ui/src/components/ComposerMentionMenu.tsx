@@ -7,13 +7,13 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
-import ContentCopyOutlinedIcon from '@mui/icons-material/ContentCopyOutlined';
+
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import CircularProgress from '@mui/material/CircularProgress';
 import { colors, alphaColor } from '../theme';
 import { getCrewAccent } from '../styles/crew-theme';
-import { knowledgeBase, system, templates, type Crew } from '../api';
-import type { DocumentTemplate, KnowledgeSource } from '@agentx/shared';
+import { knowledgeBase, system, type Crew } from '../api';
+import type { KnowledgeSource } from '@agentx/shared';
 import { crewRequiresMedicalDisclaimer } from '@agentx/shared/browser';
 
 export type ComposerFileHit = {
@@ -34,27 +34,20 @@ export type ComposerKbHit = {
   mimeType?: string;
 };
 
-export type ComposerTemplateHit = {
-  templateId: string;
-  name: string;
-  format?: string;
-  fillable?: boolean;
-};
 
-type MenuStage = 'root' | 'crew' | 'files' | 'kb' | 'templates';
+type MenuStage = 'root' | 'crew' | 'files' | 'kb';
 
 type NavItem =
   | { kind: 'back' }
   | { kind: 'select-folder' }
-  | { kind: 'category'; category: 'crew' | 'files' | 'kb' | 'templates' }
+  | { kind: 'category'; category: 'crew' | 'files' | 'kb' }
   | { kind: 'crew'; crew: Crew }
   | { kind: 'dir'; dir: ComposerFolderHit }
   | { kind: 'file'; file: ComposerFileHit }
-  | { kind: 'kb'; source: ComposerKbHit }
-  | { kind: 'template'; template: ComposerTemplateHit };
+  | { kind: 'kb'; source: ComposerKbHit };
 
 /**
- * Multi-level @ picker: Crew / Directory / Knowledge Base / Templates.
+ * Multi-level @ picker: Crew / Directory / Knowledge Base.
  */
 export function ComposerMentionMenu({
   query,
@@ -64,7 +57,6 @@ export function ComposerMentionMenu({
   onSelectFile,
   onSelectFolder,
   onSelectKb,
-  onSelectTemplate,
   onClose,
 }: {
   query: string;
@@ -74,7 +66,6 @@ export function ComposerMentionMenu({
   onSelectFile: (file: ComposerFileHit) => void;
   onSelectFolder: (folder: ComposerFolderHit) => void;
   onSelectKb?: (source: ComposerKbHit) => void;
-  onSelectTemplate?: (template: ComposerTemplateHit) => void;
   onClose: () => void;
 }) {
   const q = query.toLowerCase();
@@ -88,15 +79,13 @@ export function ComposerMentionMenu({
   const [files, setFiles] = useState<ComposerFileHit[]>([]);
   const [searchFiles, setSearchFiles] = useState<ComposerFileHit[]>([]);
   const [kbSources, setKbSources] = useState<ComposerKbHit[]>([]);
-  const [templateHits, setTemplateHits] = useState<ComposerTemplateHit[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [loadingKb, setLoadingKb] = useState(false);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const searching = stage === 'files' && q.length > 0;
 
-  // Reset when a new @ session starts. Root still lists Files / KB / Templates when Crew is hidden.
+  // Reset when a new @ session starts. Root still lists Files / KB when Crew is hidden.
   useEffect(() => {
     setStage('root');
     setBrowseRel('');
@@ -154,30 +143,6 @@ export function ComposerMentionMenu({
     return () => { cancelled = true; };
   }, [stage]);
 
-  // Document templates.
-  useEffect(() => {
-    if (stage !== 'templates') return;
-    let cancelled = false;
-    setLoadingTemplates(true);
-    void templates.list()
-      .then((list: DocumentTemplate[]) => {
-        if (cancelled) return;
-        setTemplateHits(list.map((t) => ({
-          templateId: t.id,
-          name: t.name,
-          format: t.format,
-          fillable: t.fillable,
-        })));
-      })
-      .catch(() => {
-        if (!cancelled) setTemplateHits([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingTemplates(false);
-      });
-    return () => { cancelled = true; };
-  }, [stage]);
-
   // Flat file search when user types a filter.
   useEffect(() => {
     if (stage !== 'files' || !searching) {
@@ -225,20 +190,12 @@ export function ComposerMentionMenu({
       .slice(0, 24);
   }, [kbSources, q]);
 
-  const templatesFiltered = useMemo(() => {
-    if (!q) return templateHits.slice(0, 24);
-    return templateHits
-      .filter((t) => t.name.toLowerCase().includes(q) || t.templateId.toLowerCase().includes(q))
-      .slice(0, 24);
-  }, [templateHits, q]);
-
   const items: NavItem[] = useMemo(() => {
     if (stage === 'root') {
       const cats: NavItem[] = [];
       if (!disableCrew) cats.push({ kind: 'category', category: 'crew' });
       cats.push({ kind: 'category', category: 'files' });
       cats.push({ kind: 'category', category: 'kb' });
-      cats.push({ kind: 'category', category: 'templates' });
       return cats;
     }
     if (stage === 'crew') {
@@ -251,12 +208,6 @@ export function ComposerMentionMenu({
       return [
         { kind: 'back' as const },
         ...kbFiltered.map((source) => ({ kind: 'kb' as const, source })),
-      ];
-    }
-    if (stage === 'templates') {
-      return [
-        { kind: 'back' as const },
-        ...templatesFiltered.map((template) => ({ kind: 'template' as const, template })),
       ];
     }
     if (searching) {
@@ -272,7 +223,7 @@ export function ComposerMentionMenu({
       ...dirs.map((dir) => ({ kind: 'dir' as const, dir })),
       ...files.map((file) => ({ kind: 'file' as const, file })),
     ];
-  }, [stage, disableCrew, crewFiltered, kbFiltered, templatesFiltered, searching, searchFiles, dirs, files]);
+  }, [stage, disableCrew, crewFiltered, kbFiltered, searching, searchFiles, dirs, files]);
 
   // Reset highlight only when the browse context changes — not when item count
   // flickers during async loads (that was resetting selection mid-navigation).
@@ -324,7 +275,6 @@ export function ComposerMentionMenu({
     if (item.kind === 'category') {
       if (item.category === 'crew') setStage('crew');
       else if (item.category === 'kb') setStage('kb');
-      else if (item.category === 'templates') setStage('templates');
       else {
         setStage('files');
         setBrowseRel('');
@@ -339,17 +289,13 @@ export function ComposerMentionMenu({
       onSelectKb?.(item.source);
       return;
     }
-    if (item.kind === 'template') {
-      onSelectTemplate?.(item.template);
-      return;
-    }
     if (item.kind === 'dir') {
       setBrowseRel(item.dir.relativePath);
       return;
     }
     onSelectFile(item.file);
   }, [
-    items, onSelectCrew, onSelectFile, onSelectFolder, onSelectKb, onSelectTemplate, onClose, disableCrew,
+    items, onSelectCrew, onSelectFile, onSelectFolder, onSelectKb, onClose, disableCrew,
     stage, browseRel, parentRelative, browseName, browseAbs,
   ]);
 
@@ -403,16 +349,13 @@ export function ComposerMentionMenu({
       ? '@ CREW'
       : stage === 'kb'
         ? '@ KNOWLEDGE BASE'
-        : stage === 'templates'
-          ? '@ TEMPLATES'
-          : browseRel
-            ? `@ ${browseRel}`
-            : '@ DIRECTORY';
+        : browseRel
+          ? `@ ${browseRel}`
+          : '@ DIRECTORY';
 
   const emptyBrowse = !searching && !loadingFiles && dirs.length === 0 && files.length === 0;
   const emptySearch = searching && !loadingFiles && searchFiles.length === 0;
   const emptyKb = stage === 'kb' && !loadingKb && kbFiltered.length === 0;
-  const emptyTemplates = stage === 'templates' && !loadingTemplates && templatesFiltered.length === 0;
 
   return (
     <Box
@@ -447,7 +390,7 @@ export function ComposerMentionMenu({
           {title}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        {(stage === 'files' && loadingFiles) || (stage === 'kb' && loadingKb) || (stage === 'templates' && loadingTemplates)
+        {(stage === 'files' && loadingFiles) || (stage === 'kb' && loadingKb)
           ? <CircularProgress size={8} sx={{ color: colors.text.dim }} />
           : null}
         <Typography sx={{ fontSize: '0.4rem', color: colors.text.dim }}>↑↓ · ⏎ · esc</Typography>
@@ -469,9 +412,7 @@ export function ComposerMentionMenu({
           ? { label: 'Crew', hint: 'Mention a crew member', color: colors.accent.blue, icon: <GroupIcon sx={{ fontSize: 13, color: colors.accent.blue }} /> }
           : item.category === 'kb'
             ? { label: 'Knowledge Base', hint: 'Pick an embedded document', color: colors.accent.purple, icon: <LibraryBooksIcon sx={{ fontSize: 13, color: colors.accent.purple }} /> }
-            : item.category === 'templates'
-              ? { label: 'Templates', hint: 'Pick a fillable document', color: colors.accent.orange, icon: <ContentCopyOutlinedIcon sx={{ fontSize: 13, color: colors.accent.orange }} /> }
-              : { label: 'Directory', hint: 'Browse files & folders', color: colors.accent.cyan, icon: <FolderIcon sx={{ fontSize: 13, color: colors.accent.cyan }} /> };
+            : { label: 'Directory', hint: 'Browse files & folders', color: colors.accent.cyan, icon: <FolderIcon sx={{ fontSize: 13, color: colors.accent.cyan }} /> };
         return (
           <Box
             key={item.category}
@@ -558,73 +499,6 @@ export function ComposerMentionMenu({
           {emptyKb && (
             <Typography sx={{ px: 1, py: 1.25, fontSize: '0.5rem', color: colors.text.dim }}>
               No ready Knowledge Base documents
-            </Typography>
-          )}
-        </>
-      )}
-
-      {stage === 'templates' && (
-        <>
-          {items.map((item, i) => {
-            if (item.kind === 'back') {
-              return (
-                <Box
-                  key="back"
-                  data-mention-idx={i}
-                  onClick={() => selectIndex(i)}
-                  onMouseEnter={() => setActive(i)}
-                  sx={{
-                    px: 0.85, py: 0.35,
-                    display: 'flex', alignItems: 'center', gap: 0.5,
-                    cursor: 'pointer',
-                    bgcolor: i === active ? alphaColor(colors.accent.orange, '12') : 'transparent',
-                    borderBottom: `1px solid ${colors.border.subtle}`,
-                  }}
-                >
-                  <ArrowBackIcon sx={{ fontSize: 12, color: colors.text.dim }} />
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.secondary }}>Go back</Typography>
-                </Box>
-              );
-            }
-            if (item.kind !== 'template') return null;
-            const tpl = item.template;
-            const ext = (tpl.format || 'TPL').toUpperCase().slice(0, 6);
-            return (
-              <Box
-                key={`tpl-${tpl.templateId}`}
-                data-mention-idx={i}
-                onClick={() => selectIndex(i)}
-                onMouseEnter={() => setActive(i)}
-                sx={{
-                  px: 0.85, py: 0.3,
-                  display: 'flex', alignItems: 'center', gap: 0.55,
-                  cursor: 'pointer',
-                  bgcolor: i === active ? alphaColor(colors.accent.orange, '15') : 'transparent',
-                  borderLeft: i === active ? `2px solid ${colors.accent.orange}` : '2px solid transparent',
-                }}
-              >
-                <Box sx={{
-                  minWidth: 16, height: 14, px: 0.35, borderRadius: '999px',
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  bgcolor: colors.accent.orange, color: colors.bg.primary,
-                  fontSize: '0.4rem', fontWeight: 700, flexShrink: 0,
-                }}>
-                  {ext}
-                </Box>
-                <Typography sx={{ fontSize: '0.55rem', color: colors.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
-                  {tpl.name}
-                </Typography>
-                {tpl.fillable && (
-                  <Typography sx={{ fontSize: '0.38rem', color: colors.text.dim, fontWeight: 600, flexShrink: 0 }}>
-                    fill
-                  </Typography>
-                )}
-              </Box>
-            );
-          })}
-          {emptyTemplates && (
-            <Typography sx={{ px: 1, py: 1.25, fontSize: '0.5rem', color: colors.text.dim }}>
-              No templates yet — add one under Knowledge Base → Templates
             </Typography>
           )}
         </>

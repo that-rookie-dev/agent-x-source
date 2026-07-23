@@ -436,7 +436,7 @@ export class DiscordBridge {
     const toolId = this.permToolIds.get(permId);
     this.permToolIds.delete(permId);
     const agent = this.userAgents.get(interaction.user.id);
-    if (agent && toolId && choice !== 'allow_once') {
+    if (agent && toolId) {
       agent.recordToolPermissionDecision(toolId, choice);
     }
 

@@ -19,14 +19,13 @@ import { CodeBlockChrome, CodeBlockBody, CODE_BLOCK_TOKENS, formatBlockTitle } f
 import { CitationChip } from './CitationChip';
 import { prepareWebSourcedMarkdown } from './source-chip-utils';
 import { openExternalUrl } from '../utils/open-external-url';
-import { CrewDisplayChip, FileDisplayChip, FolderDisplayChip, KbDisplayChip, TemplateDisplayChip } from './ComposerChip';
+import { CrewDisplayChip, FileDisplayChip, FolderDisplayChip, KbDisplayChip } from './ComposerChip';
 import {
   MENTION_TOKEN_FIND_RE,
   parseCrewMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
   parseKbMentionToken,
-  parseTemplateMentionToken,
 } from './mention-tokens';
 
 const MARKDOWN_BASE_SX = {
@@ -503,12 +502,11 @@ export function UserMentionText({
   const segments = useMemo(() => {
     const re = new RegExp(MENTION_TOKEN_FIND_RE.source, 'g');
     const out: Array<{
-      kind: 'text' | 'crew' | 'file' | 'folder' | 'kb' | 'template';
+      kind: 'text' | 'crew' | 'file' | 'folder' | 'kb';
       value: string;
       callsign?: string;
       name?: string;
       sourceId?: string;
-      templateId?: string;
     }> = [];
     let last = 0;
     let m: RegExpExecArray | null;
@@ -527,18 +525,13 @@ export function UserMentionText({
           if (kb) {
             out.push({ kind: 'kb', value: tok, sourceId: kb.sourceId, name: kb.name });
           } else {
-            const template = parseTemplateMentionToken(tok);
-            if (template) {
-              out.push({ kind: 'template', value: tok, templateId: template.templateId, name: template.name });
+            const crew = parseCrewMentionToken(tok);
+            if (crew) {
+              out.push({ kind: 'crew', value: tok, callsign: crew.callsign, name: crew.name });
+            } else if (tok.startsWith('@') && tok.length > 1 && !tok.includes('[')) {
+              out.push({ kind: 'crew', value: tok, callsign: tok.slice(1) });
             } else {
-              const crew = parseCrewMentionToken(tok);
-              if (crew) {
-                out.push({ kind: 'crew', value: tok, callsign: crew.callsign, name: crew.name });
-              } else if (tok.startsWith('@') && tok.length > 1 && !tok.includes('[')) {
-                out.push({ kind: 'crew', value: tok, callsign: tok.slice(1) });
-              } else {
-                out.push({ kind: 'text', value: tok });
-              }
+              out.push({ kind: 'text', value: tok });
             }
           }
         }
@@ -642,15 +635,6 @@ export function UserMentionText({
               key={i}
               name={seg.name || seg.value}
               sourceId={seg.sourceId}
-            />
-          );
-        }
-        if (seg.kind === 'template') {
-          return (
-            <TemplateDisplayChip
-              key={i}
-              name={seg.name || seg.value}
-              templateId={seg.templateId}
             />
           );
         }

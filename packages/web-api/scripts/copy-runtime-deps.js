@@ -26,6 +26,7 @@ const externalPackages = [
   'onnxruntime-common',
   'pdfjs-dist',
   '@napi-rs/keyring',
+  '@napi-rs/canvas',
   'esbuild',
 ];
 

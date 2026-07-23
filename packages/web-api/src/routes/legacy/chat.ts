@@ -146,6 +146,11 @@ export function createChatRouter(): Router {
         ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
         : instruction;
 
+      // Persist the user message immediately so a mid-turn page refresh still shows it.
+      if (sid && !retry) {
+        persistMessageDirect(sid, 'user', fullText, { attachments });
+      }
+
       // Auto-checkpoint
       try {
         const store = eng.sessionManager.getStorageAdapter();
@@ -225,7 +230,7 @@ export function createChatRouter(): Router {
 
       runAgentTurnAsync(agent, fullText, augmentedInstruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(forceWebSearch ? { forceWebSearch: true } : {}),
-        ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+        userMessagePersisted: true,
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
         ...(attachments.length ? { attachments } : {}),
@@ -316,6 +321,11 @@ export function createChatRouter(): Router {
         ? maybeAugmentChatInstruction(eng, sid, fullText, instruction)
         : instruction;
 
+      // Persist the user message immediately so a mid-turn page refresh still shows it.
+      if (sid && !retry) {
+        persistMessageDirect(sid, 'user', fullText, { attachments });
+      }
+
       // Auto-checkpoint before each user turn — enables /undo to roll back this turn
       try {
         const store = eng.sessionManager.getStorageAdapter();
@@ -340,7 +350,7 @@ export function createChatRouter(): Router {
       const turn = turnRegistry.create(sid);
       runAgentTurnAsync(agent, fullText, augmentedInstruction, retry, turn.turnId, sid, undefined, undefined, delegateCrewIds, crewSuggestionResolved, crewIntakeFromPicker, primaryCrewId, {
         ...(forceWebSearch ? { forceWebSearch: true } : {}),
-        ...(userMessagePersisted ? { userMessagePersisted: true } : {}),
+        userMessagePersisted: true,
         ...(clientSituation ? { clientSituation } : {}),
         ...(crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
         ...(attachments.length ? { attachments } : {}),

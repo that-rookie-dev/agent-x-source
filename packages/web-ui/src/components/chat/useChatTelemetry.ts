@@ -782,7 +782,10 @@ const handlePermissionRequired = (ev: TelemetryEvent, ctx: EventHandlerContext):
     // Ignore stale permission prompts replayed from telemetry buffer on page load,
     // and prompts that arrive after the user already stopped the turn.
     if (ctx.isInitialLoadRef.current || !ctx.turnActiveRef.current) { return prev; }
-    ctx.setPendingPermissionCount((count) => count + 1);
+    const isRePrompt = ev.rePrompt === true;
+    if (!isRePrompt) {
+      ctx.setPendingPermissionCount((count) => count + 1);
+    }
     ctx.setPermissionPrompt({
       requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
       tool: (ev.tool as string) ?? 'unknown',

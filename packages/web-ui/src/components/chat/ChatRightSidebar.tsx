@@ -8,8 +8,9 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import AutoGraphIcon from '@mui/icons-material/AutoGraph';
 import GroupsIcon from '@mui/icons-material/Groups';
 import ChecklistIcon from '@mui/icons-material/Checklist';
-import PlayCircleIcon from '@mui/icons-material/PlayCircle';
+import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
+import CircularProgress from '@mui/material/CircularProgress';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import BadgeIcon from '@mui/icons-material/Badge';
 import { CheckCircle } from '../CheckCircle';
@@ -58,7 +59,7 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
   // Sidebar state — does NOT re-render on streaming chunks.
   const {
     tokenExpanded, missionExpanded, tasksExpanded,
-    todoItems,
+    todoItems, turnActivity,
   } = useChatSidebarContext();
   // Stable dispatch values.
   const {
@@ -347,6 +348,8 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
                 {todoItems.map((item) => {
                   const ongoing = item.status === 'in-progress';
                   const done = item.status === 'completed';
+                  const interrupted = ongoing && !turnActivity;
+                  const notStarted = !done && !ongoing;
                   return (
                     <Box
                       key={item.id}
@@ -357,14 +360,15 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
                         py: 0.35,
                         px: 0.4,
                         borderRadius: '4px',
-                        bgcolor: ongoing ? alphaColor(colors.accent.orange, 0.12) : 'transparent',
+                        bgcolor: interrupted ? alphaColor(colors.accent.orange, 0.12) : 'transparent',
                         minWidth: 0,
                       }}
                     >
                       <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
                         {done && <CheckCircle size={11} color={colors.accent.green} />}
-                        {ongoing && <PlayCircleIcon sx={{ fontSize: 12, color: colors.accent.orange }} />}
-                        {!done && !ongoing && <RadioButtonUncheckedIcon sx={{ fontSize: 12, color: colors.text.dim }} />}
+                        {ongoing && !interrupted && <CircularProgress size={12} sx={{ color: colors.accent.blue }} />}
+                        {interrupted && <PauseCircleIcon sx={{ fontSize: 12, color: colors.accent.orange }} />}
+                        {notStarted && <RadioButtonUncheckedIcon sx={{ fontSize: 12, color: colors.text.dim }} />}
                       </Box>
                       <TaskHeading title={item.title} done={done} ongoing={ongoing} />
                     </Box>

@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { TemplateField } from '@agentx/shared';
 
-interface TextItemLoc {
+export interface TextItemLoc {
   str: string;
   page: number;
   x: number;
@@ -62,7 +62,7 @@ export async function locatePdfFieldTargets(
   });
 }
 
-async function extractPdfTextItems(buffer: Buffer): Promise<TextItemLoc[]> {
+export async function extractPdfTextItems(buffer: Buffer): Promise<TextItemLoc[]> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const data = new Uint8Array(buffer);
   const pdf = await pdfjs.getDocument({ data, useSystemFonts: true } as unknown as object).promise;

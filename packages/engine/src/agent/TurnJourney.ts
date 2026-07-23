@@ -9,6 +9,7 @@
 import { getLogger } from '@agentx/shared';
 import { getRAGEngineInstance } from '../commands/builtin/rag_index.js';
 import { getKnowledgeBaseService } from '../knowledge-base/global-manager.js';
+import type { MasterKind } from '../document-studio/types.js';
 
 const logger = getLogger();
 
@@ -126,6 +127,86 @@ export function parseTemplateMentionIds(content: string): Array<{ templateId: st
       // keep raw
     }
     out.push({ templateId, name });
+  }
+  return out;
+}
+
+const MASTER_KINDS: MasterKind[] = ['layout', 'structure', 'standard', 'data', 'prior_artifact'];
+
+function parseColonOptionalRole<T extends string>(
+  token: string,
+  roles: readonly string[],
+  defaultRole: string,
+): { id: T; role: string } | null {
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(':');
+  if (parts.length === 2 && roles.includes(parts[0]!.trim())) {
+    const role = parts[0]!.trim();
+    const id = parts[1]!.trim();
+    if (!id) return null;
+    return { id: id as T, role };
+  }
+  return { id: trimmed as T, role: defaultRole };
+}
+
+/** `@master[role:id,...]` mentions — role is optional and defaults to `layout`. */
+export function parseMasterMentionIds(content: string): Array<{ masterId: string; role: MasterKind }> {
+  const out: Array<{ masterId: string; role: MasterKind }> = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@master\[([^\]]+)\]/g)) {
+    for (const raw of match[1]!.split(',')) {
+      const parsed = parseColonOptionalRole<MasterKind>(raw, MASTER_KINDS, 'layout');
+      if (!parsed || seen.has(parsed.id)) continue;
+      seen.add(parsed.id);
+      out.push({ masterId: parsed.id, role: parsed.role as MasterKind });
+    }
+  }
+  return out;
+}
+
+/** `@binder[binderId]` mentions. */
+export function parseBinderMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@binder');
+}
+
+/** `@dataset[mappingId]` mentions — resolved to a mapping input ref. */
+export function parseDatasetMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@dataset');
+}
+
+/** `@job[answerSetId]` or `@job[jobId]` mentions — resolved to an answer-set input ref. */
+export function parseJobMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@job');
+}
+
+/** `@kb[sourceId,sourceId]` mentions for Document Studio job inputs. */
+export function parseKbMentionIds(content: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@kb\[([^\]]+)\]/g)) {
+    for (const raw of match[1]!.split(',')) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+function parseSimpleMentionIds(content: string, prefix: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escaped}\\[([^\\]]+)\\]`, 'g');
+  for (const match of content.replace(/\u200b/g, '').matchAll(re)) {
+    for (const raw of match[1]!.split(',')) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
   }
   return out;
 }

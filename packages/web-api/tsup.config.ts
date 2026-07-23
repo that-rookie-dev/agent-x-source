@@ -35,10 +35,13 @@ export default defineConfig({
   // pdf.worker.mjs via a relative path at runtime. Bundling it breaks that
   // import because the worker file is not emitted alongside the bundle.
   // NOTE: @napi-rs/keyring must stay external — native .node binaries per platform.
+  // NOTE: @napi-rs/canvas must stay external — native .node binaries per platform
+  // (skia.darwin-arm64.node, skia.linux-x64-gnu.node, etc.). Bundling tries to
+  // resolve ALL platform variants and fails.
   // NOTE: esbuild must stay external — it spawns a native binary via a relative path
   // inside its package; bundling breaks canvas TSX compilation at runtime.
-  noExternal: [/^(?!onnxruntime-|pdfjs-dist|@napi-rs\/keyring|esbuild).*$/],
-  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist', '@napi-rs/keyring', 'esbuild'],
+  noExternal: [/^(?!onnxruntime-|pdfjs-dist|@napi-rs\/keyring|@napi-rs\/canvas|esbuild).*$/],
+  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist', '@napi-rs/keyring', '@napi-rs/canvas', 'esbuild'],
   banner: {
     js: "import { createRequire as __bannerCr } from 'module'; const require = __bannerCr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
   },

@@ -257,7 +257,7 @@ export class SlackBridge extends EventEmitter {
       const toolId = this.permToolIds.get(permId);
       this.permToolIds.delete(permId);
       const agent = this.userAgents.get(userId);
-      if (agent && toolId && choice !== 'allow_once') {
+      if (agent && toolId) {
         agent.recordToolPermissionDecision(toolId, choice);
       }
 

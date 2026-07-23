@@ -10,12 +10,10 @@ import {
   formatFileMentionToken,
   formatFolderMentionToken,
   formatKbMentionToken,
-  formatTemplateMentionToken,
   parseCrewMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
   parseKbMentionToken,
-  parseTemplateMentionToken,
 } from '../chat/mention-tokens';
 
 export interface MentionInputHandle {
@@ -31,8 +29,6 @@ export interface MentionInputHandle {
   insertFolderChip: (folder: { id: string; name: string; path: string; relativePath: string }) => void;
   /** Insert a Knowledge Base document chip (serializes as @kb[sourceId:name]). */
   insertKbChip: (source: { sourceId: string; name: string }) => void;
-  /** Insert a document template chip (serializes as @template[templateId:name]). */
-  insertTemplateChip: (template: { templateId: string; name: string }) => void;
   /** Sync a newly attached upload into an inline chip at the caret. */
   insertAttachmentChip: (attachment: { id: string; name: string }) => void;
 }
@@ -83,11 +79,6 @@ function serializeNode(node: Node): string {
     const sourceId = node.dataset.sourceId || '';
     const name = node.dataset.name || sourceId;
     return sourceId ? formatKbMentionToken(sourceId, name) : '';
-  }
-  if (chip === 'template') {
-    const templateId = node.dataset.templateId || '';
-    const name = node.dataset.name || templateId;
-    return templateId ? formatTemplateMentionToken(templateId, name) : '';
   }
   // Legacy crew mention spans
   const mention = node.dataset.mention;
@@ -209,17 +200,6 @@ function kbChipHtml(source: { sourceId: string; name: string }): string {
   return `<span data-chip="kb" data-source-id="${escapeHtml(source.sourceId)}" data-name="${escapeHtml(rawName)}" contenteditable="false" title="${title}" style="display:inline-flex;align-items:center;gap:3px;box-sizing:border-box;padding:0 5px 0 0;margin:0 1px;border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:0.55rem;font-weight:600;color:${colors.accent.purple};background:${alphaColor(colors.accent.purple, '12')};border:1px solid ${alphaColor(colors.accent.purple, '28')};user-select:none;white-space:nowrap;line-height:1.2;vertical-align:middle;max-width:200px;overflow:hidden"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;padding:0 3px;height:14px;border-radius:999px;font-size:0.42rem;font-weight:700;letter-spacing:0.02em;line-height:1;color:${colors.bg.primary};background:${colors.accent.purple};flex-shrink:0">${extLabel}</span><span style="overflow:hidden;text-overflow:ellipsis;max-width:160px">${label}</span></span>`;
 }
 
-function templateChipHtml(template: { templateId: string; name: string }): string {
-  const rawName = template.name || template.templateId || 'template';
-  const extRaw = rawName.includes('.') ? (rawName.split('.').pop() || '').toUpperCase() : '';
-  const ext = (extRaw || 'TPL').slice(0, 6);
-  const display = rawName.length > 24 ? `${rawName.slice(0, 24)}…` : rawName;
-  const label = escapeHtml(display);
-  const title = escapeHtml(`Template: ${rawName}`);
-  const extLabel = escapeHtml(ext);
-  return `<span data-chip="template" data-template-id="${escapeHtml(template.templateId)}" data-name="${escapeHtml(rawName)}" contenteditable="false" title="${title}" style="display:inline-flex;align-items:center;gap:3px;box-sizing:border-box;padding:0 5px 0 0;margin:0 1px;border-radius:999px;font-family:'JetBrains Mono',monospace;font-size:0.55rem;font-weight:600;color:${colors.accent.orange};background:${alphaColor(colors.accent.orange, '12')};border:1px solid ${alphaColor(colors.accent.orange, '28')};user-select:none;white-space:nowrap;line-height:1.2;vertical-align:middle;max-width:200px;overflow:hidden"><span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;padding:0 3px;height:14px;border-radius:999px;font-size:0.42rem;font-weight:700;letter-spacing:0.02em;line-height:1;color:${colors.bg.primary};background:${colors.accent.orange};flex-shrink:0">${extLabel}</span><span style="overflow:hidden;text-overflow:ellipsis;max-width:160px">${label}</span></span>`;
-}
-
 function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
   if (!text) return '';
   const parts = text.split(MENTION_TOKEN_SPLIT_RE);
@@ -235,10 +215,6 @@ function buildHtmlFromPlain(text: string, crewList: Crew[]): string {
     const kbTok = parseKbMentionToken(part);
     if (kbTok) {
       return kbChipHtml(kbTok);
-    }
-    const templateTok = parseTemplateMentionToken(part);
-    if (templateTok) {
-      return templateChipHtml(templateTok);
     }
     const crewTok = parseCrewMentionToken(part);
     if (crewTok) {
@@ -396,10 +372,6 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     replaceActiveQueryWithHtml(kbChipHtml(source));
   }, [replaceActiveQueryWithHtml]);
 
-  const insertTemplateChip = useCallback((template: { templateId: string; name: string }) => {
-    replaceActiveQueryWithHtml(templateChipHtml(template));
-  }, [replaceActiveQueryWithHtml]);
-
   const insertAttachmentChip = useCallback((attachment: { id: string; name: string }) => {
     const el = editorRef.current;
     if (!el) return;
@@ -457,9 +429,9 @@ const MentionInputComponent = React.forwardRef<MentionInputHandle, MentionInputP
     insertFileChip,
     insertFolderChip,
     insertKbChip,
-    insertTemplateChip,
+
     insertAttachmentChip,
-  }), [clear, insertMention, insertFileChip, insertFolderChip, insertKbChip, insertTemplateChip, insertAttachmentChip, setValue]);
+  }), [clear, insertMention, insertFileChip, insertFolderChip, insertKbChip, insertAttachmentChip, setValue]);
 
   const handleInput = useCallback(() => {
     if (isComposing.current) return;

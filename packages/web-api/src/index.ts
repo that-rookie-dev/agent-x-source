@@ -23,7 +23,6 @@ import { registerMarkdownRoutes } from './markdown-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { createApiService } from './services/ApiService.js';
 import { getKnowledgeBaseService } from './services/knowledge-base.js';
-import { getTemplateService } from './services/templates.js';
 import { neuralCortexRouter } from './routes/neural-cortex/index.js';
 import { integrationsRouter, handleMcpStdioOAuthCallback } from './integrations-api.js';
 import localModelRouter from './local-model-api.js';
@@ -34,7 +33,6 @@ import { router as healthRouter } from './routes/health.js';
 import { router as metricsRouter } from './routes/metrics.js';
 import { router as legacyRouter } from './routes/legacy.js';
 import { router as knowledgeBaseRouter } from './routes/knowledge-base.js';
-import { router as templatesRouter } from './routes/templates.js';
 import { DATA_DIR, SESSIONS_DIR, UPLOADS_DIR, UI_DIST } from './api-helpers.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -171,7 +169,6 @@ app.use('/api/jobs', jobsRouter({ api }));
 app.use('/', metricsRouter({ api }));
 app.use('/', legacyRouter({ api }));
 app.use('/api', knowledgeBaseRouter({ api }));
-app.use('/api', templatesRouter({ api }));
 
 // Global error handler
 app.use(errorHandler);
@@ -262,16 +259,6 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
       }
     } catch (e) {
       getLogger().warn('STARTUP', `Knowledge base manager init failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    try {
-      const templates = await getTemplateService();
-      if (templates) {
-        getLogger().info('STARTUP', 'Template library initialized');
-      } else {
-        getLogger().warn('STARTUP', 'Template library unavailable');
-      }
-    } catch (e) {
-      getLogger().warn('STARTUP', `Template library init failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     getLogger().info('SERVER', `Agent-X web API listening on ${HOST}:${port} (v${VERSION})`);
   });

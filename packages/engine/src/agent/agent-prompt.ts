@@ -37,6 +37,7 @@ import {
   createSystemOverrideSection,
   type SectionContext,
 } from '../prompt/assembly/index.js';
+import { createDocumentStudioSection } from './document-studio-prompts.js';
 
 /** Slice of Agent required by the prompt registration helpers. */
 export interface PromptRegistrationContext {
@@ -174,6 +175,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createPersonaToneSection(secCtx))
       .register(createWorkingDirectorySection(secCtx))
       .register(createRulesSection())
+      .register(createDocumentStudioSection())
       .register(createMissionPlanSection(secCtx.scopePath))
       .register(createThirdPartyServicesSection())
       .register(createQuestionnaireGuideSection())

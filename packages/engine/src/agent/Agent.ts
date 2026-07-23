@@ -20,7 +20,7 @@ import { Scope } from '../concurrency/Scope.js';
 import { getAttachmentService } from '../attachments/index.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentLifecycle } from './AgentLifecycle.js';
@@ -1863,22 +1863,6 @@ export class Agent {
     this.toolExecutor?.setInboundSourceChannel(messagingChannelInbound ? (options?.sourceChannel ?? null) : null);
     this.toolExecutor?.setInboundSourceThreadId(messagingChannelInbound ? (options?.channelId ?? null) : null);
     this.toolExecutor?.setInboundSourceMessageId(messagingChannelInbound ? (options?.sourceMessageId ?? null) : null);
-    // For voice sessions the interactive permission request is fully handled by
-    // bindPermissionHandler(); the prompt hook's extra event has no matching
-    // pendingPermissions entry and would leave the voice turn hanging.
-    if (this.options.promptProfile !== 'voice') {
-      this.toolExecutor?.setPermissionPromptHook((details) => {
-        this.emit({
-          type: 'permission_required',
-          requestId: randomUUID(),
-          tool: details.toolId,
-          path: details.path,
-          riskLevel: details.riskLevel,
-          forAutomation: details.forAutomation,
-          integrationPreview: details.integrationPreview,
-        });
-      });
-    }
     if (!options?.retry) {
       const clarificationBlock = buildClarificationPolicyInstruction(this.isMessagingChannelContext() || messagingChannelInbound);
       this.pendingInstruction = this.pendingInstruction
@@ -2027,6 +2011,7 @@ export class Agent {
 
     // Reset turn-level permission auto-approve from any prior batch approval
     this.turnApprovedAll = false;
+    this.toolExecutor?.getPermissionManager().revokeOneTimePermissions();
 
     const isCrewPrivate = this.options.promptProfile === 'crew_private';
 
@@ -2492,7 +2477,6 @@ export class Agent {
       this.toolExecutor?.setInboundSourceChannel(null);
       this.toolExecutor?.setInboundSourceThreadId(null);
       this.toolExecutor?.setInboundSourceMessageId(null);
-      this.toolExecutor?.setPermissionPromptHook(undefined);
       this.turnWebSearchPolicy = 'off';
       this.pendingVoiceMerge = null;
       this.todoDispositionThisTurn = null;
@@ -3412,6 +3396,7 @@ export class Agent {
     this.scope = new Scope();
     this.messages.push({ role: 'user', content: `/research ${question}` });
     this.turnApprovedAll = false;
+    this.toolExecutor?.getPermissionManager().revokeOneTimePermissions();
     const result = await researchHelper(
       {
         sessionId: this.sessionId,

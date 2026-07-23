@@ -5,12 +5,10 @@ import {
   formatFolderMentionToken,
   formatCrewMentionToken,
   formatKbMentionToken,
-  formatTemplateMentionToken,
   parseFileMentionToken,
   parseFolderMentionToken,
   parseCrewMentionToken,
   parseKbMentionToken,
-  parseTemplateMentionToken,
   isCompleteMentionToken,
   findActiveMentionQuery,
 } from '../src/chat/mention-tokens';
@@ -46,7 +44,6 @@ describe('mention tokens — bracket delimiters', () => {
     expect(isCompleteMentionToken('@folder[.]')).toBe(true);
     expect(isCompleteMentionToken('@crew[alice:Alice]')).toBe(true);
     expect(isCompleteMentionToken('@kb[src-1:Report%20Q1.pdf]')).toBe(true);
-    expect(isCompleteMentionToken('@template[tpl-1:Invoice.docx]')).toBe(true);
     expect(isCompleteMentionToken('@file[incomplete')).toBe(false);
   });
 
@@ -58,17 +55,6 @@ describe('mention tokens — bracket delimiters', () => {
     const parts = text.split(MENTION_TOKEN_SPLIT_RE).filter(Boolean);
     expect(parts).toEqual(['Summarize ', '@kb[src-abc:Tax%20Guide.pdf]', '?']);
     expect(findActiveMentionQuery(`see ${tok}?`)).toBeNull();
-  });
-
-  it('formats and parses Template mention tokens', () => {
-    const tok = formatTemplateMentionToken('tpl-abc', 'Invoice Master.docx');
-    expect(tok).toBe('@template[tpl-abc:Invoice%20Master.docx]');
-    expect(parseTemplateMentionToken(tok)).toEqual({ templateId: 'tpl-abc', name: 'Invoice Master.docx' });
-    const text = `Fill ${tok}?`;
-    const parts = text.split(MENTION_TOKEN_SPLIT_RE).filter(Boolean);
-    expect(parts).toEqual(['Fill ', '@template[tpl-abc:Invoice%20Master.docx]', '?']);
-    expect(findActiveMentionQuery(`see ${tok}?`)).toBeNull();
-    expect(isCompleteMentionToken(tok)).toBe(true);
   });
 
   it('does not reopen mention menu after a closed file token + ?', () => {

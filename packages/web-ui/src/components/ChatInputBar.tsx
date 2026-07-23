@@ -11,7 +11,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import RouteIcon from '@mui/icons-material/Route';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit, type ComposerTemplateHit } from './ComposerMentionMenu';
+import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit } from './ComposerMentionMenu';
 import { colors, alphaColor } from '../theme';
 import type { Crew } from '../api';
 
@@ -181,13 +181,6 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
     mentionInputRef.current?.insertKbChip({ sourceId: source.sourceId, name: source.name });
   }, [closeMentionMenu]);
 
-  const handleTemplateSelect = useCallback((template: ComposerTemplateHit) => {
-    suppressSendRef.current = true;
-    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
-    closeMentionMenu();
-    mentionInputRef.current?.insertTemplateChip({ templateId: template.templateId, name: template.name });
-  }, [closeMentionMenu]);
-
   const clearAndGetText = useCallback(() => {
     const text = mentionInputRef.current?.getValue() ?? '';
     mentionInputRef.current?.clear();
@@ -235,7 +228,6 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onSelectFile={handleFileSelect}
           onSelectFolder={handleFolderSelect}
           onSelectKb={handleKbSelect}
-          onSelectTemplate={handleTemplateSelect}
           onClose={closeMentionMenu}
         />
       )}

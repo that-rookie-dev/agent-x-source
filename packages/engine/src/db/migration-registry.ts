@@ -875,4 +875,122 @@ ALTER TABLE document_templates
 ALTER TABLE document_templates
   ADD COLUMN IF NOT EXISTS design_summary TEXT;
 ` },
+  { version: 19, name: 'doc_studio_masters', sql: `-- Document Studio masters: immutable input objects + honest analysis (spec §5.1).
+
+CREATE TABLE IF NOT EXISTS doc_masters (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'layout',
+  format TEXT NOT NULL DEFAULT 'other',
+  mime_type TEXT NOT NULL,
+  storage_id TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  analysis JSONB,
+  analysis_state TEXT NOT NULL DEFAULT 'pending',
+  analysis_error TEXT,
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_masters_kind ON doc_masters (kind);
+CREATE INDEX IF NOT EXISTS idx_doc_masters_updated ON doc_masters (updated_at DESC);
+` },
+  { version: 20, name: 'doc_studio_binders_answers_mappings', sql: `-- Document Studio binders, answer sets, and mappings (spec §5.4, §5.9).
+
+CREATE TABLE IF NOT EXISTS doc_binders (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  slots JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_binders_name ON doc_binders (name);
+
+CREATE TABLE IF NOT EXISTS doc_answer_sets (
+  id TEXT PRIMARY KEY,
+  values JSONB NOT NULL DEFAULT '{}'::jsonb,
+  provenance JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS doc_mappings (
+  id TEXT PRIMARY KEY,
+  data_master_id TEXT NOT NULL,
+  schema_ref TEXT NOT NULL,
+  entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+` },
+  { version: 21, name: 'doc_studio_jobs', sql: `-- Document Studio jobs, instance plans, artifacts, and manifests (spec §14).
+
+CREATE TABLE IF NOT EXISTS doc_jobs (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  spec JSONB NOT NULL,
+  recipe_id TEXT,
+  binder_id TEXT,
+  progress_done INTEGER NOT NULL DEFAULT 0,
+  progress_total INTEGER NOT NULL DEFAULT 0,
+  progress_detail TEXT,
+  artifacts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  manifest_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_jobs_status ON doc_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_doc_jobs_updated ON doc_jobs (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS doc_instances (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  index INTEGER NOT NULL,
+  binding_set_id TEXT,
+  path TEXT,
+  master_id TEXT,
+  status TEXT NOT NULL DEFAULT 'planned',
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_instances_job ON doc_instances (job_id);
+
+CREATE TABLE IF NOT EXISTS doc_artifacts (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  instance_index INTEGER,
+  path TEXT NOT NULL,
+  storage_id TEXT,
+  format TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  binding_set_id TEXT,
+  evidence_map JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_artifacts_job ON doc_artifacts (job_id);
+
+CREATE TABLE IF NOT EXISTS doc_manifests (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  rows JSONB NOT NULL DEFAULT '[]'::jsonb,
+  summary_ok INTEGER NOT NULL DEFAULT 0,
+  summary_failed INTEGER NOT NULL DEFAULT 0,
+  summary_skipped INTEGER NOT NULL DEFAULT 0
+);
+` },
+  { version: 22, name: 'doc_studio_job_checkpoint', sql: `-- Document Studio job checkpoint / cancel columns.
+ALTER TABLE doc_jobs ADD COLUMN IF NOT EXISTS step_results JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE doc_jobs ADD COLUMN IF NOT EXISTS error TEXT;
+ALTER TABLE doc_jobs ADD COLUMN IF NOT EXISTS cancelled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE doc_jobs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+` },
 ];

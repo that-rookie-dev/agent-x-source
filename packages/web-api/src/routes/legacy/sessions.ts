@@ -568,9 +568,13 @@ export function createSessionsRouter(): Router {
       const peek = eng.sessionManager.getSessionById(sessionId);
       if (!peek) { res.status(404).json({ error: 'not-found' }); return; }
       const existingAgent = eng.agent;
+      // Keep the agent alive when it's the same session — even if it's
+      // processing. Destroying a processing agent loses all in-memory turn
+      // state (thoughts, tool calls, responses) and forces a bare "executing"
+      // indicator with no context. The UI reconnects to the SSE stream to
+      // resume the live view.
       const keepAgent = !!existingAgent
-        && existingAgent.sessionId === sessionId
-        && !existingAgent.processing;
+        && existingAgent.sessionId === sessionId;
       if (!keepAgent) {
         destroyAgent();
       }
@@ -680,22 +684,27 @@ export function createSessionsRouter(): Router {
           (eng.agent && eng.agent.sessionId === sessionId ? eng.agent : null)
           ?? eng.boundSessionAgents?.get(sessionId)
           ?? null;
+        // Even when the agent was recreated (keepAgent=false because it was
+        // processing), mid-turn parts (thoughts, tool calls, responses) are
+        // still in the DB with message_id=null. Load them so the UI can
+        // rebuild the in-progress assistant bubble instead of showing a bare
+        // "executing" indicator with all prior turn content missing.
+        let orphanedActiveParts: Array<Record<string, unknown>> = [];
+        try {
+          const store = eng.sessionManager.getStorageAdapter?.();
+          const allParts = store?.getParts?.(sessionId) ?? [];
+          orphanedActiveParts = allParts.filter((p) => {
+            const mid = p['message_id'] ?? p['messageId'];
+            return mid == null || mid === '';
+          });
+        } catch { /* best-effort */ }
         if (agent) {
           const snap = agent.getTurnStateSnapshot();
           const phase = snap.phase;
           const active = phase !== 'idle' && phase !== 'done' && phase !== 'cancelled';
-          let activeParts: Array<Record<string, unknown>> = [];
-          if (active) {
-            try {
-              const store = eng.sessionManager.getStorageAdapter?.();
-              const allParts = store?.getParts?.(sessionId) ?? [];
-              // Mid-turn parts are stored with message_id null until the assistant row is persisted.
-              activeParts = allParts.filter((p) => {
-                const mid = p['message_id'] ?? p['messageId'];
-                return mid == null || mid === '';
-              });
-            } catch { /* best-effort */ }
-          }
+          // Use the agent's live parts when the turn is active; fall back to
+          // orphaned DB parts when the agent was recreated mid-turn.
+          const activeParts: Array<Record<string, unknown>> = active ? orphanedActiveParts : [];
           turnState = {
             phase,
             stage: snap.stage,
@@ -705,7 +714,23 @@ export function createSessionsRouter(): Router {
             ...(active ? {
               partialContent: agent.getPartialTurnContent?.() ?? '',
               activeParts,
-            } : {}),
+            } : (orphanedActiveParts.length > 0 ? {
+              // Agent was recreated but mid-turn parts exist in the DB —
+              // surface them so the UI can rebuild the assistant bubble.
+              partialContent: '',
+              activeParts: orphanedActiveParts,
+            } : {})),
+          };
+        } else if (orphanedActiveParts.length > 0) {
+          // No agent at all but parts exist — the turn was interrupted.
+          turnState = {
+            phase: 'working',
+            stage: 'Restoring…',
+            step: 0,
+            turnId: null,
+            startedAt: null,
+            partialContent: '',
+            activeParts: orphanedActiveParts,
           };
         }
       } catch { /* best-effort */ }

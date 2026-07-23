@@ -28,10 +28,71 @@ import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
 import { WorkflowEntryCard } from './WorkflowEntryCard';
 import { usePersonaName } from '../hooks/usePersonaName';
+import { InlineToolCall, type InlineToolData } from '../components/InlineToolCall';
 
 // Loaded only when the user opens a turn's workflow — chunk stays out of the
 // chat path and the modal DOM is destroyed on close.
 const WorkflowModal = lazy(() => import('./WorkflowModal').then((m) => ({ default: m.WorkflowModal })));
+
+/**
+ * Collapsed tools summary — shows a single line "N tools used" that expands
+ * to reveal all completed tool calls. Uses the same visual theme as
+ * ThoughtCollapse: monospace label, dim color, › chevron, collapsible body.
+ */
+function CollapsedToolsSummary({ tools }: { tools: InlineToolData[] }) {
+  const [open, setOpen] = useState(false);
+  const errorCount = tools.filter((t) => t.status === 'error').length;
+  const label = `${tools.length} tool${tools.length === 1 ? '' : 's'} used${errorCount > 0 ? ` (${errorCount} error${errorCount === 1 ? '' : 's'})` : ''}`;
+
+  return (
+    <Box sx={{ mb: 0.5 }}>
+      <Box
+        onClick={() => setOpen((v) => !v)}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.5,
+          cursor: 'pointer',
+          userSelect: 'none',
+          py: 0.15,
+          '&:hover .tools-label': { color: colors.text.secondary },
+        }}
+      >
+        <Typography
+          className="tools-label"
+          sx={{
+            fontSize: '0.68rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: colors.text.dim,
+            letterSpacing: '0.02em',
+            fontWeight: 400,
+          }}
+        >
+          {label}
+        </Typography>
+        <Typography
+          sx={{
+            fontSize: '0.62rem',
+            color: colors.text.dim,
+            opacity: 0.7,
+            transform: open ? 'rotate(90deg)' : 'none',
+            transition: 'transform 0.28s ease',
+            lineHeight: 1,
+          }}
+        >
+          ›
+        </Typography>
+      </Box>
+      <Collapse in={open} unmountOnExit>
+        <Box sx={{ mt: 0.5 }}>
+          {tools.map((tool) => (
+            <InlineToolCall key={tool.id} tool={tool} compactTop />
+          ))}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -165,19 +226,37 @@ function renderParts(
   // fallback card so users see a research summary without opening the workflow.
   const orderedAll = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(orderedAll);
-  const ordered = orderedAll.filter((p) => p.type !== 'tool');
-  const lastThinkingId = [...ordered].reverse().find((p) => p.type === 'thinking')?.id;
+  const ordered = orderedAll;
+
+  // A thinking block is "live" (expanded) only when it is the very last element
+  // in the ordered list AND we are streaming. As soon as any other element
+  // (tool call, text response, deep search, etc.) arrives after it, the
+  // thinking collapses — matching the user's mental model that thinking is
+  // provisional and gets replaced by the actual output.
+  const lastPartId = ordered.length > 0 ? ordered[ordered.length - 1].id : undefined;
   const lastTextId = [...ordered].reverse().find((p) => p.type === 'text' && p.content?.trim())?.id;
+
+  // Collect tool parts for collapsed display. Tools are hidden from the inline
+  // message flow and shown as a single collapsible "Tools" summary, similar to
+  // the thinking collapse theme. Running tools are always visible.
+  const toolParts = ordered.filter((p) => p.type === 'tool' && p.tool);
+  const runningTools = toolParts.filter((p) => p.tool!.status === 'running');
+  const doneTools = toolParts.filter((p) => p.tool!.status !== 'running');
+  // Show tools inline only when streaming and there are running tools; otherwise collapse all.
+  const showToolsInline = streaming && runningTools.length > 0;
 
   const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
       case 'thinking':
         if (!part.content?.trim()) return null;
+        // A thinking is "live" only if it is the very last part in the list.
+        // When any other element follows it (tool, text, etc.), it collapses.
+        const isLastPart = part.id === lastPartId;
         return (
           <ThoughtCollapse
             key={part.id}
             text={part.content}
-            live={streaming && part.id === lastThinkingId}
+            live={streaming && isLastPart}
           />
         );
       case 'text':
@@ -267,6 +346,15 @@ function renderParts(
             <SubAgentChip agent={part.agent} />
           </Box>
         );
+      case 'tool':
+        // Tools are hidden from the inline message flow. Running tools are
+        // shown inline during streaming so the user sees live progress. Done
+        // tools are collapsed into a single "N tools used" summary line.
+        if (!part.tool) return null;
+        if (showToolsInline && part.tool.status === 'running') {
+          return <InlineToolCall key={part.id} tool={part.tool} />;
+        }
+        return null;
       default:
         return null;
     }
@@ -278,6 +366,14 @@ function renderParts(
       return node ? <React.Fragment key={part.id}>{node}</React.Fragment> : null;
     });
 
+  // Collapsed tools summary — shows a single line like "12 tools used" that
+  // expands to reveal all completed tool calls. Similar visual theme to
+  // ThoughtCollapse. Skipped when there are no done tools or when all tools
+  // are running (running tools are shown inline above).
+  const toolSummary = doneTools.length > 0 ? (
+    <CollapsedToolsSummary key="__tools_summary__" tools={doneTools.map((p) => p.tool!)} />
+  ) : null;
+
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
   // Tighter stack so conversational beats read as one living stream, not a card deck.
   const stackSx = { display: 'flex', flexDirection: 'column', gap: 0.75 } as const;
@@ -285,6 +381,7 @@ function renderParts(
     return (
       <Box sx={stackSx}>
         {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx)) : null}
+        {toolSummary}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
         {renderSlice(ordered.slice(firstTextIdx))}
       </Box>
@@ -294,6 +391,7 @@ function renderParts(
   return (
     <Box sx={stackSx}>
       {renderSlice(ordered)}
+      {toolSummary}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
