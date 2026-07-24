@@ -640,6 +640,8 @@ describe('Agent', () => {
         setPermissionRequestHandler: vi.fn(),
         setBeforeToolHook: vi.fn(),
         setScopePath: vi.fn(),
+        isTurnAborted: vi.fn(() => false),
+        getPermissionManager: vi.fn(() => ({ grant: vi.fn(), deny: vi.fn(), allowAll: vi.fn(), isAllAllowed: vi.fn(() => false), check: vi.fn(() => null) })),
       };
 
       const agent = createTestAgent({
@@ -678,6 +680,8 @@ describe('Agent', () => {
         setPermissionRequestHandler: vi.fn(),
         setBeforeToolHook: vi.fn(),
         setScopePath: vi.fn(),
+        isTurnAborted: vi.fn(() => false),
+        getPermissionManager: vi.fn(() => ({ grant: vi.fn(), deny: vi.fn(), allowAll: vi.fn(), isAllAllowed: vi.fn(() => false), check: vi.fn(() => null) })),
       };
 
       const agent = createTestAgent({

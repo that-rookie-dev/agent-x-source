@@ -293,6 +293,9 @@ export class Agent {
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
   private pendingPermissions = new Map<string, { resolve: (choice: PermissionHandlerResult) => void; toolName: string; path: string; riskLevel: string }>();
+  private permissionQueue: Array<{ toolId: string; path: string; riskLevel: string; context?: { args?: unknown; integrationPreview?: string }; resolve: (value: PermissionHandlerResult) => void }> | undefined;
+  private activePermissionId: string | null = null;
+  private processPermissionQueueFn: ((choice?: PermissionHandlerResult) => void) | undefined;
   private turnApprovedAll = false;
   private _onPart?: PartPersistFn;
   private options: Readonly<AgentOptions>;
@@ -604,6 +607,9 @@ export class Agent {
       pendingPermissions: this.pendingPermissions,
       emit: (event) => this.emit(event),
       persistPermissionGrant: (toolId, decision) => this.persistPermissionGrant(toolId, decision),
+      permissionQueue: this.permissionQueue,
+      activePermissionId: this.activePermissionId,
+      processPermissionQueue: this.processPermissionQueueFn,
     };
   }
 
@@ -3300,7 +3306,11 @@ export class Agent {
 
   /** Re-attach interactive permission prompts after an ephemeral automation run. */
   bindPermissionHandler(): void {
-    bindPermissionHandlerHelper(this._permissionCtx());
+    const ctx = this._permissionCtx();
+    bindPermissionHandlerHelper(ctx);
+    // Capture values the helper set on the ctx so they persist across _permissionCtx() calls.
+    this.permissionQueue = ctx.permissionQueue;
+    this.processPermissionQueueFn = ctx.processPermissionQueue;
   }
 
   /**

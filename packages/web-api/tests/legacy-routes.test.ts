@@ -40,6 +40,7 @@ vi.mock('../src/config-redaction.js', () => ({
   redactConfigForClient: vi.fn((cfg: unknown) => cfg),
   mergeConfigPreservingSecrets: vi.fn((a: unknown, b: unknown) => b),
   redactProvidersForClient: vi.fn((p: unknown) => p),
+  scrubPersistedSecretPlaceholders: vi.fn(() => null),
   REDACTED_SECRET: '***',
 }));
 

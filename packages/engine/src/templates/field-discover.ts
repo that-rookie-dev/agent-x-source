@@ -37,14 +37,14 @@ export async function extractTemplatePlainText(
   }
   // Best-effort for unknown / legacy .doc: treat as latin1 text scrape.
   if (format === 'doc' || format === 'other') {
-    const asText = buffer.toString('utf8').replace(/[^\x09\x0a\x0d\x20-\x7e]/g, ' ');
+    const asText = buffer.toString('utf8').replace(/[^\t\n\r\x20-\x7e]/g, ' ');
     return asText.replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT_CHARS);
   }
   return '';
 }
 
 function basenameSafe(name: string): string {
-  return name.replace(/[^\w.\-]+/g, '_').slice(0, 80) || 'file';
+  return name.replace(/[^\w.-]+/g, '_').slice(0, 80) || 'file';
 }
 
 function mimeForFormat(format: TemplateFormat): string {
