@@ -1,9 +1,9 @@
 {
   "name": "@agentx/desktop",
-  "version": "0.9.12",
+  "version": "0.9.13",
   "private": true,
   "description": "Agent-X — Your AI Wingman (Desktop)",
-  "homepage": "https://that-rookie-dev.github.io/agent-x/",
+  "homepage": "https://agent-x.in/",
   "author": "Sivaprakash Rajendran <sivaprakash.rajendran.316@gmail.com>",
   "main": "./dist/main.js",
   "scripts": {

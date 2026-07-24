@@ -1,4 +1,4 @@
--- Markdown canvas documents table.
+-- Markdown documents table (historically named "canvases"; renamed to "markdowns" in V015).
 -- Previously created by MarkdownDocumentStore.ensureSchema().
 
 CREATE TABLE IF NOT EXISTS canvases (

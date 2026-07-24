@@ -43,19 +43,8 @@ export function syncChannelSuperSessionContext(
       ? e.sessionManager.getSessionById(e.agent.currentSessionId)
       : null);
 
-  if (active?.scopePath) {
-    channelAgent.setScopePath(active.scopePath);
-    // Persist the scope path to the channel session so it survives server restarts.
-    // Without this, the channel session keeps its original scope_path (e.g. "/" from
-    // process.cwd()) and the next ensureChannelAgent() restores a broken scope.
-    try {
-      const sessionId = channelSessionIdForBinding(channel);
-      const channelSession = e.sessionManager.getSessionById(sessionId);
-      if (channelSession && channelSession.scopePath !== active.scopePath) {
-        e.sessionManager.getStorageAdapter().updateSession(sessionId, { scopePath: active.scopePath });
-      }
-    } catch { /* best-effort */ }
-  }
+  // Channel agents keep their own app-files scope for internal deliverables.
+  // Do not overwrite with the user's workspace (that is for chat agents only).
 
   channelAgent.setLinkedContextSessionId(active?.id ?? null);
 

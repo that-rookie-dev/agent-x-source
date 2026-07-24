@@ -1,18 +1,13 @@
 import type { Request, Response } from 'express';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { getDataDir, getDefaultWorkspaceDir, getLogger } from '@agentx/shared';
+import { getDataDir, getLogger } from '@agentx/shared';
 import { getEngine } from './engine.js';
-
-function resolveScopePath(scopePath?: string): string {
-  if (scopePath && scopePath.trim()) return scopePath.trim();
-  return getDefaultWorkspaceDir();
-}
+import { getActiveWorkspacePath } from './workspace.js';
 
 /** POST /api/agent-x-core/session — create or return the lifelong Agent-X core session. */
-export async function postAgentXCoreSession(req: Request, res: Response): Promise<void> {
+export async function postAgentXCoreSession(_req: Request, res: Response): Promise<void> {
   try {
-    const body = req.body as { scopePath?: string } | undefined;
     const eng = getEngine();
     const cfg = eng.configManager.load();
     if (!cfg.provider.activeProvider || !cfg.provider.activeModel) {
@@ -30,7 +25,7 @@ export async function postAgentXCoreSession(req: Request, res: Response): Promis
     };
 
     const existing = mgr.findAgentXCoreSession?.() ?? null;
-    const scopePath = resolveScopePath(body?.scopePath);
+    const scopePath = getActiveWorkspacePath();
     const session = mgr.ensureAgentXCoreSession?.(
       cfg.provider.activeProvider,
       cfg.provider.activeModel,

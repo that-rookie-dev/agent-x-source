@@ -26,7 +26,9 @@ const BUILTIN_PATTERNS: Array<{ name: string; regex: RegExp; normalize?: (s: str
   { name: 'email', regex: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi },
   { name: 'phone', regex: /\b(?:\+?\d{1,3}[\s-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g },
   { name: 'ssn', regex: /\b\d{3}-\d{2}-\d{4}\b/g },
-  { name: 'credit_card', regex: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g, normalize: (s) => s.replace(/[-\s]/g, '') },
+  // Dash-separated or continuous 16 digits only. Space-separated 4-digit groups
+  // are common in payroll/tax tables and must NOT be treated as cards.
+  { name: 'credit_card', regex: /\b(?:\d{4}-){3}\d{4}\b|\b\d{16}\b/g, normalize: (s) => s.replace(/[-\s]/g, '') },
   { name: 'api_key', regex: /\b(?:sk|api[_-]?key|apikey|token|passwd|password)\s*[:=]\s*["']?[a-zA-Z0-9_-]{16,}["']?\b/gi },
 ];
 

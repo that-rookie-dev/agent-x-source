@@ -24,8 +24,6 @@ import PsychologyIcon from '@mui/icons-material/Psychology';
 import RadarIcon from '@mui/icons-material/Radar';
 import Tabs from '@mui/material/Tabs';
 import Tab from '@mui/material/Tab';
-import Checkbox from '@mui/material/Checkbox';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import { config, providers as provApi, models as modelsApi, type AgentXConfig, type ProviderInfo, type ModelInfo, type BenchmarkRunResult } from '../api';
 import {
   settingsTheme,
@@ -41,7 +39,7 @@ import {
   settingsTextFieldSx,
 } from '../styles/settings-theme';
 import { SettingsSectionHeader } from './settings/SettingsSectionHeader';
-import { ModelBenchmarkRunner, ModelBenchmarkScanner, gradeAllowsAgentX } from './settings/ModelBenchmarkRunner';
+import { ModelBenchmarkRunner, ModelBenchmarkScanner, BenchmarkGradeAck, canProceedWithBenchmarkGrade } from './settings/ModelBenchmarkRunner';
 
 import { colors, alphaColor } from '../theme';
 import { buildLocalBaseUrl, parseLocalEndpoint, defaultLocalPort } from '../utils/local-provider-endpoint';
@@ -219,6 +217,7 @@ export function ProvidersPanel() {
   const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
   const [benchmarkRunning, setBenchmarkRunning] = useState(false);
   const [limitedOverride, setLimitedOverride] = useState(false);
+  const [standbyOverride, setStandbyOverride] = useState(false);
   const [scanRequested, setScanRequested] = useState(false);
   const [modelsTab, setModelsTab] = useState(0);
 
@@ -343,6 +342,7 @@ export function ProvidersPanel() {
     setPickerStep('select');
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     setScanRequested(false);
     setPickerLoading(true);
     setModelPickerOpen(true);
@@ -367,6 +367,7 @@ export function ProvidersPanel() {
       : defaultEffort);
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     setScanRequested(false);
     setPickerStep('select');
   };
@@ -375,6 +376,7 @@ export function ProvidersPanel() {
     if (!pickerSelectedModel) return;
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     setScanRequested(true);
     setPickerStep('benchmark');
   };
@@ -384,14 +386,13 @@ export function ProvidersPanel() {
     setScanRequested(false);
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
   };
 
   const canConfirmModel = Boolean(
-    pickerSelectedModel &&
-    benchmarkResult &&
-    !benchmarkRunning &&
-    (gradeAllowsAgentX(benchmarkResult.grade) ||
-      (benchmarkResult.grade === 'LIMITED' && limitedOverride)),
+    pickerSelectedModel
+    && !benchmarkRunning
+    && canProceedWithBenchmarkGrade(benchmarkResult?.grade, { limitedOverride, standbyOverride }),
   );
 
   const confirmModelPicker = async () => {
@@ -763,29 +764,14 @@ export function ProvidersPanel() {
                   onRunningChange={setBenchmarkRunning}
                 />
               )}
-              {benchmarkResult?.grade === 'LIMITED' && !benchmarkRunning && (
-                <FormControlLabel
-                  sx={{ mt: 1.5, ml: 0 }}
-                  control={
-                    <Checkbox
-                      size="small"
-                      checked={limitedOverride}
-                      onChange={(e) => setLimitedOverride(e.target.checked)}
-                      sx={{ color: settingsTheme.accent.amber, '&.Mui-checked': { color: settingsTheme.accent.amber } }}
-                    />
-                  }
-                  label={
-                    <Typography sx={{ ...settingsMonoSx, fontSize: '0.58rem', color: settingsTheme.text.secondary }}>
-                      Acknowledge LIMITED clearance — proceed with constraints
-                    </Typography>
-                  }
-                />
-              )}
-              {benchmarkResult?.grade === 'STANDBY' && !benchmarkRunning && (
-                <Alert severity="error" sx={{ mt: 1.5, bgcolor: `${alphaColor(settingsTheme.accent.alert, '12')}`, fontSize: '0.65rem', ...settingsMonoSx }}>
-                  Model not cleared for agentic workloads. Select a different model or re-scan after switching providers.
-                </Alert>
-              )}
+              <BenchmarkGradeAck
+                grade={benchmarkResult?.grade}
+                running={benchmarkRunning}
+                limitedOverride={limitedOverride}
+                standbyOverride={standbyOverride}
+                onLimitedChange={setLimitedOverride}
+                onStandbyChange={setStandbyOverride}
+              />
             </Box>
           )}
         </DialogContent>

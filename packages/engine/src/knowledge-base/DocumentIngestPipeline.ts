@@ -4,6 +4,7 @@ import { extractFromPath } from '../attachments/extract.js';
 import type { MemoryFabric } from '../neural/MemoryFabric.js';
 import { RagDocument } from '../neural/RagDocument.js';
 import type { OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { linkSimilarChunks } from '../neural/retrieval/index.js';
 import type { KnowledgeBaseSourceStore } from './KnowledgeBaseSourceStore.js';
 
 const logger = getLogger();
@@ -70,7 +71,8 @@ export class DocumentIngestPipeline {
       });
 
       const chunkEmbeddings: number[][] = [];
-      const textsToEmbed = rawChunks.map((c) => c.content);
+      // Embed contextualized text (Title › Section › body), not bare body.
+      const textsToEmbed = rawChunks.map((c) => c.embedText || c.content);
       const embedProgress = (done: number) =>
         55 + Math.floor((done / Math.max(textsToEmbed.length, 1)) * 27);
 
@@ -99,6 +101,7 @@ export class DocumentIngestPipeline {
       await emit('indexing', 82, 'Building knowledge graph');
 
       let prevChunkId: string | null = null;
+      const createdChunks: Array<{ id: string; content: string; embedding?: number[]; sourceId?: string; provenance?: { index?: number } }> = [];
       const indexReportEvery = Math.max(1, Math.ceil(rawChunks.length / 8));
       for (let i = 0; i < rawChunks.length; i++) {
         const chunk = rawChunks[i]!;
@@ -112,11 +115,15 @@ export class DocumentIngestPipeline {
           sessionId: source.sessionId,
           embedding: embedding && embedding.length > 0 ? embedding : undefined,
           unitType: 'chunk',
+          headingPath: chunk.headingPath,
           provenance: {
             sourceName: source.name,
             pageNumber,
             index: chunk.index,
             kind: 'chunk',
+            headingPath: chunk.headingPath,
+            embedText: chunk.embedText,
+            edgeRole: 'order',
           },
         });
         await fabric.bindEdge({
@@ -126,14 +133,22 @@ export class DocumentIngestPipeline {
           weight: 1,
         });
         if (prevChunkId) {
+          // FOLLOWS = reading order only (not semantic relatedness).
           await fabric.bindEdge({
             sourceNodeId: prevChunkId,
             targetNodeId: chunkNode.id,
-            relationshipType: 'NEXT_STEP',
-            weight: 0.5,
+            relationshipType: 'FOLLOWS',
+            weight: 0.4,
           });
         }
         prevChunkId = chunkNode.id;
+        createdChunks.push({
+          id: chunkNode.id,
+          content: chunk.content,
+          embedding: embedding && embedding.length > 0 ? embedding : undefined,
+          sourceId: source.id,
+          provenance: { index: chunk.index },
+        });
 
         const shouldReport =
           i === 0
@@ -158,6 +173,20 @@ export class DocumentIngestPipeline {
 
       await emit('indexing', 94, 'Finalizing index');
       await emit('ready', 100, `Indexed ${pages.length} pages / ${rawChunks.length} chunks`);
+
+      // Phase 11: semantic similarity edges (non-blocking).
+      void linkSimilarChunks(fabric, createdChunks).then((r) => {
+        logger.info('KB_SIMILARITY_EDGES', 'Linked similar chunks', {
+          sourceId: source.id,
+          linked: r.linked,
+          skipped: r.skipped,
+        });
+      }).catch((err) => {
+        logger.warn('KB_SIMILARITY_EDGES', 'Similarity linking failed', {
+          sourceId: source.id,
+          error: (err as Error).message,
+        });
+      });
     } catch (err) {
       const message = (err as Error).message;
       logger.warn('KB_INGEST_FAILED', 'Knowledge base ingest failed', { sourceId: source.id, error: message });

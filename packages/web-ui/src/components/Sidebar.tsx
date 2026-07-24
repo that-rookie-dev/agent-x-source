@@ -27,6 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import { auth, setAuthToken } from '../api';
 import { invalidateApiCache, invalidateCoreSessionCache } from '../perf/api-cache';
 import { useAppCore } from '../store/AppContext';
+import { usePersonaName } from '../hooks/usePersonaName';
 import { colors } from '../theme';
 import { layout } from '../styles/layout';
 import type { PanelId } from '../pages/Console';
@@ -38,27 +39,27 @@ interface Props {
   unreadNotificationCount?: number;
 }
 
-const NAV_ITEMS: { id: PanelId; icon: ReactNode; label: string }[] = [
-  { id: 'dashboard', icon: <DashboardIcon sx={{ fontSize: 16 }} />, label: 'Dashboard' },
-  { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: 'Agent-X' },
-  { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
-  { id: 'calls', icon: <PhoneInTalkIcon sx={{ fontSize: 16 }} />, label: 'Calls' },
-  { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },
-  { id: 'markdown', icon: <ArticleOutlinedIcon sx={{ fontSize: 16 }} />, label: 'Markdown' },
-  { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
-  { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
-  { id: 'knowledge-base', icon: <LibraryBooksIcon sx={{ fontSize: 16 }} />, label: 'Knowledge Base' },
-  { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
-  { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
-  // { id: 'plugins', icon: ExtensionIcon, label: 'Plugins' },
-];
-
 const MODE_CYCLE = ['dark', 'light', 'system'] as const;
 
 export function Sidebar({ active, onNavigate, highlightCrews, unreadNotificationCount = 0 }: Props) {
   const { setAuthenticated } = useAppCore();
   const navigate = useNavigate();
   const { mode, setMode } = useColorScheme();
+  const personaName = usePersonaName();
+
+  const navItems: { id: PanelId; icon: ReactNode; label: string }[] = [
+    { id: 'dashboard', icon: <DashboardIcon sx={{ fontSize: 16 }} />, label: 'Dashboard' },
+    { id: 'agent-x', icon: <IconSparkles {...tablerNavProps} />, label: personaName },
+    { id: 'chat', icon: <ChatIcon sx={{ fontSize: 16 }} />, label: 'Chat' },
+    { id: 'calls', icon: <PhoneInTalkIcon sx={{ fontSize: 16 }} />, label: 'Calls' },
+    { id: 'notifications', icon: <NotificationsNoneIcon sx={{ fontSize: 16 }} />, label: 'Notifications' },
+    { id: 'markdown', icon: <ArticleOutlinedIcon sx={{ fontSize: 16 }} />, label: 'Markdown' },
+    { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
+    { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
+    { id: 'knowledge-base', icon: <LibraryBooksIcon sx={{ fontSize: 16 }} />, label: 'Knowledge Base' },
+    { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
+    { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
+  ];
 
   const currentMode = mode ?? 'dark';
   const cycleMode = () => {
@@ -95,7 +96,7 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
       </Tooltip>
 
       {/* Nav items */}
-      {NAV_ITEMS.map((item) => (
+      {navItems.map((item) => (
         <Tooltip key={item.id} title={item.label} placement="right">
           <IconButton
             onClick={() => onNavigate(item.id)}

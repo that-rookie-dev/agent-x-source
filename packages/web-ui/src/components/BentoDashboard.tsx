@@ -1,69 +1,71 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useColorScheme } from '@mui/material/styles';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import CircularProgress from '@mui/material/CircularProgress';
-import ChatIcon from '@mui/icons-material/Chat';
-import ForumIcon from '@mui/icons-material/Forum';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import TelegramIcon from '@mui/icons-material/Telegram';
-import HeadphonesIcon from '@mui/icons-material/Headphones';
-import SlackIcon from '@mui/icons-material/Forum';
-import EmailIcon from '@mui/icons-material/Email';
 import MicIcon from '@mui/icons-material/Mic';
+import SmartToyIcon from '@mui/icons-material/SmartToy';
 import ScheduleIcon from '@mui/icons-material/Schedule';
-import StorageIcon from '@mui/icons-material/Storage';
+import GroupsIcon from '@mui/icons-material/Groups';
+import MemoryIcon from '@mui/icons-material/Memory';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
-import SensorsIcon from '@mui/icons-material/Sensors';
-import CloudIcon from '@mui/icons-material/Cloud';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { useAppCore, useAppLive } from '../store/AppContext';
 import { usePageVisible } from '../hooks/usePageVisible';
-import { useLocationPermission } from '../hooks/useLocationPermission';
-import { PanelHeader } from './PanelHeader';
 import { VoiceAgentCard, VoiceAgentHeaderControls } from './voice/VoiceAgentCard';
-import { VoiceParticleField, type ParticlePhase } from './voice/VoiceParticleField';
 import { VoiceConnectionPulses } from './voice/VoiceConnectionPulses';
+import { usePersonaName } from '../hooks/usePersonaName';
 import { colors, alphaColor, MONO } from '../theme';
 import {
   sessions as sessionsApi,
-  bridges,
   automation,
   webuiActive,
   subagents,
   runtime,
+  performance as performanceApi,
+  config as configApi,
 } from '../api';
-import type { SessionInfo, BridgeStatus, AutomationTaskRecord, SubAgentTaskInfo, SystemMetrics, Weather } from '../api';
-
-interface ChannelDef {
-  id: string;
-  name: string;
-  icon: ReactNode;
-  status: BridgeStatus | null;
-  loading: boolean;
-}
-
-const CHANNELS: ChannelDef[] = [
-  { id: 'telegram', name: 'Telegram', icon: <TelegramIcon sx={{ fontSize: 18, color: '#0088cc' }} />, status: null, loading: true },
-  { id: 'discord', name: 'Discord', icon: <HeadphonesIcon sx={{ fontSize: 18, color: '#5865f2' }} />, status: null, loading: true },
-  { id: 'slack', name: 'Slack', icon: <SlackIcon sx={{ fontSize: 18, color: '#ecb22e' }} />, status: null, loading: true },
-  { id: 'email', name: 'Email', icon: <EmailIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />, status: null, loading: true },
-];
+import type {
+  SessionInfo,
+  AutomationTaskRecord,
+  SubAgentTaskInfo,
+  SystemMetrics,
+  PerformanceShowcaseResponse,
+  PerformancePresetId,
+} from '../api';
 
 const MODE_CYCLE = ['dark', 'light', 'system'] as const;
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  return `${date} · ${time}`;
-}
+const PRESET_ORDER: PerformancePresetId[] = ['quiet', 'balanced', 'moderate', 'ultimate'];
+
+const PRESET_LABEL: Record<PerformancePresetId, string> = {
+  quiet: 'Quiet',
+  balanced: 'Balanced',
+  moderate: 'Moderate',
+  ultimate: 'Ultimate',
+};
+
+const PRESET_BUDGET: Record<PerformancePresetId, number> = {
+  quiet: 25,
+  balanced: 40,
+  moderate: 70,
+  ultimate: 80,
+};
+
+const PRESET_SHORT: Record<PerformancePresetId, string> = {
+  quiet: 'Q',
+  balanced: 'B',
+  moderate: 'M',
+  ultimate: 'U',
+};
+
+/** Dashboard is mounted only while the panel is open — also pause when the tab is hidden. */
+const METRICS_MS = 4_000;
+const ACTIVITY_MS = 6_000;
+const HEALTH_MS = 15_000;
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -71,103 +73,6 @@ function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return `${h}h ${m}m`;
-}
-
-function shortModel(model?: string): string {
-  if (!model) return '—';
-  const parts = model.split('/');
-  return parts[parts.length - 1] || model;
-}
-
-function BentoCard({ title, icon, action, children, colSpan, sx, voiceAgentCard }: {
-  title: string;
-  icon?: ReactNode;
-  action?: ReactNode;
-  children: ReactNode;
-  colSpan?: number;
-  sx?: object;
-  voiceAgentCard?: boolean;
-}) {
-  return (
-    <Box sx={{
-      height: '100%',
-      gridColumn: colSpan ? { sm: `span ${colSpan}`, md: `span ${colSpan}`, lg: `span ${colSpan}` } : undefined,
-      border: `1px solid ${colors.border.default}`,
-      borderRadius: '8px',
-      bgcolor: colors.bg.secondary,
-      overflow: 'hidden',
-      display: 'flex',
-      flexDirection: 'column',
-      // Mobile keeps a readable floor; lg rows are fixed so cards must be allowed to shrink.
-      minHeight: { xs: 140, lg: 0 },
-      ...sx,
-    }}
-      data-bento-card
-      {...(voiceAgentCard ? { 'data-voice-agent-card': true } : {})}
-    >
-      <PanelHeader title={title} icon={icon} action={action} compact />
-      <Box sx={{ flex: 1, minHeight: 0, p: 1.5, display: 'flex', flexDirection: 'column', gap: 1, overflow: 'hidden' }}>
-        {children}
-      </Box>
-    </Box>
-  );
-}
-
-function StatRow({ label, value, color, loading }: { label: string; value: string | number; color?: string; loading?: boolean }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
-      <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim, letterSpacing: '0.04em' }}>
-        {label}
-      </Typography>
-      {loading ? (
-        <CircularProgress size={10} sx={{ color: colors.text.dim }} />
-      ) : (
-        <Typography sx={{ fontSize: '0.72rem', fontFamily: MONO, color: color || colors.text.secondary, fontWeight: 600 }}>
-          {value}
-        </Typography>
-      )}
-    </Box>
-  );
-}
-
-function StatusBadge({ color, label }: { color: string; label: string }) {
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-      <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: color, flexShrink: 0 }} />
-      <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color }}>{label}</Typography>
-    </Box>
-  );
-}
-
-function channelStatusLabel(status: BridgeStatus | null, loading: boolean): { label: string; color: string } {
-  if (loading) return { label: 'Checking…', color: colors.text.dim };
-  if (!status) return { label: 'Unknown', color: colors.text.dim };
-  if (status.error) return { label: 'Error', color: colors.accent.red };
-  if (status.connected) return { label: 'Connected', color: colors.accent.green };
-  if (status.configured) return { label: 'Disconnected', color: colors.accent.orange };
-  return { label: 'Not configured', color: colors.text.dim };
-}
-
-function taskColor(status: AutomationTaskRecord['status']): string {
-  switch (status) {
-    case 'active': return colors.accent.green;
-    case 'paused': return colors.accent.orange;
-    case 'cancelled': return colors.accent.red;
-    case 'completed': return colors.text.dim;
-    default: return colors.text.dim;
-  }
-}
-
-function subagentColor(status: SubAgentTaskInfo['status']): string {
-  switch (status) {
-    case 'running': return colors.accent.green;
-    case 'queued': return colors.accent.orange;
-    case 'pending': return colors.accent.blue;
-    case 'completed': return colors.text.dim;
-    case 'failed': return colors.accent.red;
-    case 'cancelled': return colors.accent.red;
-    default: return colors.text.dim;
-  }
 }
 
 function formatBytes(bytes: number): string {
@@ -181,26 +86,341 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-function weatherDescription(code: number): string {
-  // WMO Weather interpretation codes (Open-Meteo)
-  if (code === 0) return 'Clear sky';
-  if ([1, 2, 3].includes(code)) return 'Partly cloudy';
-  if ([45, 48].includes(code)) return 'Foggy';
-  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return 'Rain';
-  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'Snow';
-  if ([95, 96, 99].includes(code)) return 'Thunderstorm';
-  return 'Unknown';
+function shortModel(model?: string): string {
+  if (!model) return '—';
+  const parts = model.split('/');
+  return parts[parts.length - 1] || model;
 }
 
-function formatClientDateTime(timezone: string): { time: string; date: string } {
-  const now = new Date();
-  try {
-    const time = now.toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    const date = now.toLocaleDateString('en-US', { timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    return { time, date };
-  } catch {
-    return { time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }), date: now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) };
-  }
+function meterColor(pct: number): string {
+  if (pct >= 85) return colors.accent.red;
+  if (pct >= 65) return colors.accent.orange;
+  return colors.accent.cyan;
+}
+
+function Panel({
+  title,
+  icon,
+  action,
+  children,
+  sx,
+  voiceAgentCard,
+}: {
+  title: string;
+  icon?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  sx?: object;
+  voiceAgentCard?: boolean;
+}) {
+  return (
+    <Box
+      data-bento-card
+      {...(voiceAgentCard ? { 'data-voice-agent-card': true } : {})}
+      sx={{
+        height: '100%',
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: '10px',
+        border: `1px solid ${colors.border.default}`,
+        bgcolor: colors.bg.secondary,
+        overflow: 'hidden',
+        ...sx,
+      }}
+    >
+      <Box sx={{
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 1,
+        px: 1.25,
+        py: 0.85,
+        borderBottom: `1px solid ${colors.border.subtle}`,
+        bgcolor: alphaColor(colors.bg.tertiary, '66'),
+      }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+          {icon}
+          <Typography sx={{
+            fontSize: '0.62rem',
+            fontFamily: MONO,
+            fontWeight: 700,
+            letterSpacing: '1.4px',
+            color: colors.text.secondary,
+            textTransform: 'uppercase',
+          }}>
+            {title}
+          </Typography>
+        </Box>
+        {action}
+      </Box>
+      <Box sx={{
+        flex: 1,
+        minHeight: 0,
+        p: voiceAgentCard ? 0 : 1.25,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
+/** Arc meter with a cut at the bottom where the label sits. */
+function ArcMeter({
+  label,
+  value,
+  max = 100,
+  display,
+  accent,
+  hint,
+  size = 86,
+}: {
+  label: string;
+  value: number;
+  max?: number;
+  display: string;
+  accent: string;
+  hint?: string;
+  size?: number;
+}) {
+  const pct = Math.max(0, Math.min(100, (value / Math.max(1, max)) * 100));
+  const stroke = 7;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  // ~270° sweep with gap at bottom for the label.
+  const sweep = 0.75;
+  const track = c * sweep;
+  const fill = track * (pct / 100);
+  const rotate = 135; // start at lower-left so the gap opens downward
+
+  return (
+    <Box sx={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: 0.35,
+      minWidth: size + 4,
+    }}>
+      <Box sx={{ position: 'relative', width: size, height: size }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={alphaColor(colors.border.strong, '66')}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${track} ${c}`}
+            transform={`rotate(${rotate} ${size / 2} ${size / 2})`}
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={accent}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${fill} ${c}`}
+            transform={`rotate(${rotate} ${size / 2} ${size / 2})`}
+            style={{
+              transition: 'stroke-dasharray 480ms cubic-bezier(0.22, 1, 0.36, 1)',
+              filter: `drop-shadow(0 0 6px ${alphaColor(accent, '66')})`,
+            }}
+          />
+        </svg>
+        <Box sx={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pt: 0.25,
+        }}>
+          <Typography sx={{ fontSize: '0.78rem', fontFamily: MONO, fontWeight: 700, color: accent, lineHeight: 1 }}>
+            {display}
+          </Typography>
+        </Box>
+        <Typography sx={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 2,
+          textAlign: 'center',
+          fontSize: '0.5rem',
+          fontFamily: MONO,
+          fontWeight: 700,
+          letterSpacing: '1px',
+          color: colors.text.dim,
+        }}>
+          {label}
+        </Typography>
+      </Box>
+      {hint && (
+        <Typography sx={{
+          fontSize: '0.48rem',
+          fontFamily: MONO,
+          color: colors.text.dim,
+          textAlign: 'center',
+          maxWidth: size + 24,
+          lineHeight: 1.25,
+        }}>
+          {hint}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+function LiveDot({ on }: { on: boolean }) {
+  return (
+    <Box
+      component="span"
+      sx={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        minWidth: 8,
+        minHeight: 8,
+        flexShrink: 0,
+        borderRadius: '50%',
+        boxSizing: 'border-box',
+        bgcolor: on ? colors.accent.green : colors.accent.red,
+        animation: on ? 'axLivePulse 1.8s ease-out infinite' : 'none',
+        '@keyframes axLivePulse': {
+          '0%': { boxShadow: `0 0 0 0 ${alphaColor(colors.accent.green, '55')}` },
+          '70%': { boxShadow: `0 0 0 7px ${alphaColor(colors.accent.green, '00')}` },
+          '100%': { boxShadow: `0 0 0 0 ${alphaColor(colors.accent.green, '00')}` },
+        },
+      }}
+    />
+  );
+}
+
+function HeaderSep() {
+  return (
+    <Typography component="span" sx={{
+      fontSize: '0.7rem',
+      fontFamily: MONO,
+      color: colors.text.dim,
+      opacity: 0.55,
+      flexShrink: 0,
+      userSelect: 'none',
+      lineHeight: 1,
+    }}>
+      ·
+    </Typography>
+  );
+}
+
+function InsightRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 1 }}>
+      <Typography sx={{ fontSize: '0.52rem', fontFamily: MONO, color: colors.text.dim, letterSpacing: '0.5px' }}>
+        {label}
+      </Typography>
+      <Typography sx={{
+        fontSize: '0.58rem',
+        fontFamily: MONO,
+        color: colors.text.secondary,
+        fontWeight: 600,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        maxWidth: '62%',
+        textAlign: 'right',
+      }}>
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
+function EmptyHint({ children }: { children: ReactNode }) {
+  return (
+    <Typography sx={{
+      fontSize: '0.65rem',
+      fontFamily: MONO,
+      color: colors.text.dim,
+      py: 1.5,
+      textAlign: 'center',
+    }}>
+      {children}
+    </Typography>
+  );
+}
+
+function ActivityRow({
+  title,
+  meta,
+  status,
+  statusColor,
+  onClick,
+}: {
+  title: string;
+  meta?: string;
+  status: string;
+  statusColor: string;
+  onClick?: () => void;
+}) {
+  return (
+    <Box
+      onClick={onClick}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        px: 0.85,
+        py: 0.65,
+        borderRadius: '6px',
+        border: `1px solid ${colors.border.subtle}`,
+        bgcolor: alphaColor(colors.bg.primary, '80'),
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'border-color 150ms ease, transform 150ms ease',
+        '&:hover': onClick ? {
+          borderColor: alphaColor(statusColor, '55'),
+          transform: 'translateY(-1px)',
+        } : undefined,
+      }}
+    >
+      <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: statusColor, flexShrink: 0 }} />
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{
+          fontSize: '0.68rem',
+          fontFamily: MONO,
+          color: colors.text.primary,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}>
+          {title}
+        </Typography>
+        {meta && (
+          <Typography sx={{ fontSize: '0.52rem', fontFamily: MONO, color: colors.text.dim }}>
+            {meta}
+          </Typography>
+        )}
+      </Box>
+      <Typography sx={{
+        fontSize: '0.5rem',
+        fontFamily: MONO,
+        fontWeight: 700,
+        letterSpacing: '0.6px',
+        color: statusColor,
+        textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        {status}
+      </Typography>
+    </Box>
+  );
 }
 
 export function BentoDashboard() {
@@ -209,171 +429,153 @@ export function BentoDashboard() {
   const { healthData, serverOnline, refreshHealth } = useAppLive();
   const visible = usePageVisible();
   const { mode, setMode } = useColorScheme();
+  const personaName = usePersonaName();
   const mounted = useRef(true);
 
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [channels, setChannels] = useState<ChannelDef[]>(CHANNELS);
-  const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
   const [voiceActiveForPulses, setVoiceActiveForPulses] = useState(false);
   const [voiceSearchWeb, setVoiceSearchWeb] = useState(false);
   const [voiceBypassChip, setVoiceBypassChip] = useState(false);
-  const [voiceParticlePhase, setVoiceParticlePhase] = useState<ParticlePhase>('disabled');
-  const voiceCardRef = useRef<HTMLDivElement | null>(null);
-
-  // Track the Voice Agent card element for the particle field centering
-  useEffect(() => {
-    const el = document.querySelector('[data-voice-agent-card]') as HTMLDivElement | null;
-    if (el) voiceCardRef.current = el;
-  }, []);
 
   const [subagentTasks, setSubagentTasks] = useState<SubAgentTaskInfo[]>([]);
+  const [tasks, setTasks] = useState<AutomationTaskRecord[]>([]);
+  const [activeSessions, setActiveSessions] = useState<SessionInfo[]>([]);
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
-  const [weather, setWeather] = useState<Weather | null>(null);
-  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [perf, setPerf] = useState<PerformanceShowcaseResponse | null>(null);
+  const [presetSaving, setPresetSaving] = useState(false);
+  const [lastTick, setLastTick] = useState<number>(Date.now());
 
-  const location = useLocationPermission(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-
-  // Prevent space bar from scrolling the page while the dashboard is open.
-  // Space is used for push-to-talk and should never scroll the dashboard.
+  // Space is push-to-talk — never scroll the dashboard.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && e.target === document.body) {
-        e.preventDefault();
-      }
+      if (e.code === 'Space' && e.target === document.body) e.preventDefault();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const loadSessions = useCallback(async () => {
-    try {
-      const list = await sessionsApi.list();
-      if (!mounted.current) return;
-      const recent = [...list].sort((a, b) =>
-        new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
-      ).slice(0, 5);
-      setSessions(recent);
-    } catch {
-      if (!mounted.current) return;
-      setSessions([]);
-    }
-  }, []);
-
-  const loadChannels = useCallback(async () => {
-    const results = await Promise.allSettled([
-      bridges.telegram.status(),
-      bridges.discord.status(),
-      bridges.slack.status(),
-      bridges.email.status(),
-    ]);
-    if (!mounted.current) return;
-    setChannels((prev) => prev.map((ch, i) => {
-      const r = results[i];
-      const status = r?.status === 'fulfilled' ? (r.value as BridgeStatus) : null;
-      return { ...ch, status, loading: false };
-    }));
-  }, []);
-
-  const loadTasks = useCallback(async () => {
-    try {
-      const list = await automation.tasks();
-      if (!mounted.current) return;
-      setTasks(list);
-    } catch {
-      if (!mounted.current) return;
-      setTasks([]);
-    }
-  }, []);
-
-  const loadSubagents = useCallback(async () => {
-    try {
-      const list = await subagents.list();
-      if (!mounted.current) return;
-      setSubagentTasks(list);
-    } catch {
-      if (!mounted.current) return;
-      setSubagentTasks([]);
-    }
-  }, []);
-
   const loadMetrics = useCallback(async () => {
     try {
       const m = await runtime.metrics();
-      if (!mounted.current) return;
-      setMetrics(m);
-    } catch {
-      // ignore
-    }
+      if (mounted.current) setMetrics(m);
+    } catch { /* ignore */ }
   }, []);
 
-  // Fetch weather once location is resolved, and refresh on focus/visibility.
-  useEffect(() => {
-    if (!visible) return;
-    const coords = location.clientSituation;
-    if (!coords || coords.latitude == null || coords.longitude == null) {
-      setWeather(null);
-      setWeatherLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const fetchWeather = async () => {
-      try {
-        setWeatherLoading(true);
-        const w = await runtime.weather(coords.latitude!, coords.longitude!);
-        if (!cancelled) setWeather(w);
-      } catch {
-        if (!cancelled) setWeather(null);
-      } finally {
-        if (!cancelled) setWeatherLoading(false);
-      }
-    };
-    fetchWeather();
-    const id = setInterval(fetchWeather, 5 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [visible, location.clientSituation]);
+  const loadActivity = useCallback(async () => {
+    try {
+      const [agentList, autoList, sessionList, perfStatus] = await Promise.all([
+        subagents.list().catch(() => [] as SubAgentTaskInfo[]),
+        automation.tasks().catch(() => [] as AutomationTaskRecord[]),
+        sessionsApi.list().catch(() => [] as SessionInfo[]),
+        performanceApi.status().catch(() => null),
+      ]);
+      if (!mounted.current) return;
+      setSubagentTasks(agentList.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'pending'));
+      setTasks(autoList.filter((t) => t.status === 'active' || t.status === 'paused'));
+      setActiveSessions(
+        [...sessionList]
+          .filter((s) => s.turnStatus?.status === 'running' || s.status === 'active')
+          .sort((a, b) => {
+            const ar = a.turnStatus?.status === 'running' ? 1 : 0;
+            const br = b.turnStatus?.status === 'running' ? 1 : 0;
+            if (ar !== br) return br - ar;
+            return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+          })
+          .slice(0, 8),
+      );
+      if (perfStatus) setPerf(perfStatus);
+      setLastTick(Date.now());
+    } catch { /* ignore */ }
+  }, []);
 
+  // Presence ping — only while dashboard is visible.
   useEffect(() => {
     if (!visible) return;
-    const register = async () => { try { await webuiActive.register(); } catch { /* ignore */ } };
-    register();
-    const id = setInterval(register, 60000);
+    let cancelled = false;
+    const register = async () => {
+      if (cancelled) return;
+      try { await webuiActive.register(); } catch { /* ignore */ }
+    };
+    void register();
+    const id = setInterval(register, 60_000);
     return () => {
+      cancelled = true;
       clearInterval(id);
       webuiActive.unregister().catch(() => {});
     };
   }, [visible]);
 
-  // Single visibility-gated poll loop (was health 15s + loadAll 10s competing).
+  // Live metrics loop — stops the moment the tab hides or the panel unmounts.
+  useEffect(() => {
+    if (!visible || !serverOnline) return;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void loadMetrics();
+    };
+    tick();
+    const id = setInterval(tick, METRICS_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [visible, serverOnline, loadMetrics]);
+
+  // Activity + performance loop.
+  useEffect(() => {
+    if (!visible || !serverOnline) return;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void loadActivity();
+    };
+    tick();
+    const id = setInterval(tick, ACTIVITY_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [visible, serverOnline, loadActivity]);
+
+  // Health is slower — shared app store.
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
     const tick = () => {
       if (cancelled || document.hidden) return;
       void refreshHealth();
-      if (serverOnline) {
-        void loadSessions();
-        void loadChannels();
-        void loadTasks();
-        void loadSubagents();
-        void loadMetrics();
-      }
     };
     tick();
-    const id = setInterval(tick, 20000);
-    const onVis = () => { if (!document.hidden) tick(); };
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [visible, serverOnline, refreshHealth, loadSessions, loadChannels, loadTasks, loadSubagents, loadMetrics]);
+    const id = setInterval(tick, HEALTH_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [visible, refreshHealth]);
 
   const openSession = useCallback((id: string) => {
     navigate(`/console/chat/${id}`);
   }, [navigate]);
+
+  const applyPreset = useCallback(async (preset: PerformancePresetId) => {
+    if (presetSaving) return;
+    setPresetSaving(true);
+    try {
+      const cfg = await configApi.get();
+      await configApi.update({
+        ...cfg,
+        performance: {
+          ...cfg.performance,
+          preset,
+          budgetPercent: PRESET_BUDGET[preset],
+        },
+      });
+      const status = await performanceApi.status();
+      if (mounted.current) setPerf(status);
+      void import('../runtime-config-sync.js').then(({ emitRuntimeConfigChanged }) => {
+        emitRuntimeConfigChanged({ kind: 'performance' });
+      }).catch(() => {});
+    } catch {
+      /* best-effort */
+    } finally {
+      if (mounted.current) setPresetSaving(false);
+    }
+  }, [presetSaving]);
 
   const currentMode = mode ?? 'system';
   const cycleMode = () => {
@@ -386,158 +588,143 @@ export function BentoDashboard() {
       ? <ContrastIcon sx={{ fontSize: 16 }} />
       : <DarkModeOutlinedIcon sx={{ fontSize: 16 }} />;
 
-  const activeTaskCount = tasks.filter((t) => t.status === 'active').length;
-  const topTasks = tasks.slice(0, 3);
+  const activePreset = (perf?.showcase.activePreset ?? 'balanced') as PerformancePresetId;
+  const lanes = perf?.showcase.active;
+  const cpuPct = metrics?.cpu.system ?? metrics?.cpu.process ?? 0;
+  const memPct = metrics?.memory.percent ?? 0;
+  const runningSubs = subagentTasks.filter((t) => t.status === 'running').length;
+  const queuedSubs = subagentTasks.filter((t) => t.status === 'queued' || t.status === 'pending').length;
+  const activeAutos = tasks.filter((t) => t.status === 'active').length;
+  const pausedAutos = tasks.filter((t) => t.status === 'paused').length;
+  const runningTurns = activeSessions.filter((s) => s.turnStatus?.status === 'running');
+  const crewSessions = activeSessions.filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private');
+
+  const subCap = lanes?.subAgents ?? Math.max(1, runningSubs + queuedSubs);
+  const toolCap = lanes?.toolParallel ?? 1;
+  const llmCap = lanes?.llmGlobal ?? 1;
+  const bgCap = lanes?.backgroundConcurrency ?? 1;
+  const bgPool = perf?.backgroundPool;
+  const recommendedPreset = perf?.showcase.presets.find((p) => p.recommended)?.preset;
+  const host = perf?.showcase.host;
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', bgcolor: colors.bg.primary }}>
+    <Box sx={{
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      bgcolor: colors.bg.primary,
+      backgroundImage: `
+        radial-gradient(ellipse 80% 50% at 15% -10%, ${alphaColor(colors.accent.cyan, '12')}, transparent 55%),
+        radial-gradient(ellipse 60% 40% at 90% 0%, ${alphaColor(colors.accent.blue, '10')}, transparent 50%)
+      `,
+    }}>
+      {/* Top bar */}
       <Box sx={{
         flexShrink: 0,
-        px: 2, py: 1.5,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        px: 2,
+        py: 1.15,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 2,
         borderBottom: `1px solid ${colors.border.default}`,
-        bgcolor: colors.bg.secondary,
+        bgcolor: alphaColor(colors.bg.secondary, 'cc'),
+        backdropFilter: 'blur(10px)',
       }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <img src="/logo.png" alt="Agent-X" style={{ width: 24, height: 24, objectFit: 'contain' }} />
-          <Typography sx={{ fontSize: '1.1rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary, letterSpacing: '1px' }}>
-            AGENT-X
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          minWidth: 0,
+          flexWrap: 'wrap',
+          rowGap: 0.75,
+        }}>
+          <Typography sx={{
+            fontSize: '0.95rem',
+            fontWeight: 700,
+            fontFamily: MONO,
+            color: colors.text.primary,
+            letterSpacing: '1.2px',
+            flexShrink: 0,
+          }}>
+            Dashboard
           </Typography>
-          {healthData?.version && (
-            <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim, mt: 0.25 }}>
-              v{healthData.version}
-            </Typography>
-          )}
-          <Typography sx={{ fontSize: '0.55rem', fontFamily: MONO, color: colors.text.dim, letterSpacing: '2px', ml: 0.5 }}>
-            DASHBOARD
-          </Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <Box sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: serverOnline ? colors.accent.green : colors.accent.red }} />
-            <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: serverOnline ? colors.accent.green : colors.accent.red }}>
-              {serverOnline ? 'ONLINE' : 'OFFLINE'}
+          <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.85, flexShrink: 0 }}>
+            <LiveDot on={serverOnline && visible} />
+            <Typography sx={{
+              fontSize: '0.62rem',
+              fontFamily: MONO,
+              fontWeight: 600,
+              color: serverOnline ? colors.accent.green : colors.accent.red,
+              letterSpacing: '0.8px',
+            }}>
+              {serverOnline ? (visible ? 'Streaming' : 'Paused') : 'Offline'}
             </Typography>
           </Box>
+          <HeaderSep />
+          <Typography sx={{ fontSize: '0.62rem', fontFamily: MONO, color: colors.text.secondary, flexShrink: 0 }}>
+            {PRESET_LABEL[activePreset]}
+          </Typography>
+          <HeaderSep />
+          <Typography sx={{
+            fontSize: '0.62rem',
+            fontFamily: MONO,
+            color: colors.text.dim,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: { xs: 120, sm: 220 },
+          }}>
+            {shortModel(healthData?.config?.model)}
+          </Typography>
+          {metrics && (
+            <>
+              <HeaderSep />
+              <Typography sx={{ fontSize: '0.58rem', fontFamily: MONO, color: colors.text.dim, flexShrink: 0 }}>
+                up {formatUptime(metrics.uptime)}
+              </Typography>
+            </>
+          )}
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexShrink: 0 }}>
           {username && (
-            <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary }}>
+            <Typography sx={{ fontSize: '0.62rem', fontFamily: MONO, color: colors.text.secondary }}>
               {username}
             </Typography>
           )}
+          <Typography sx={{ fontSize: '0.58rem', fontFamily: MONO, color: colors.text.dim, display: { xs: 'none', sm: 'inline' } }}>
+            {new Date(lastTick).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </Typography>
           <Tooltip title={`Theme: ${currentMode}`}>
-            <IconButton onClick={cycleMode} sx={{ color: colors.text.dim, '&:hover': { color: colors.text.primary } }}>
+            <IconButton size="small" onClick={cycleMode} sx={{ color: colors.text.dim, '&:hover': { color: colors.text.primary } }}>
               {modeIcon}
             </IconButton>
           </Tooltip>
-
         </Box>
       </Box>
 
-      <Box sx={{ flex: 1, overflow: 'auto', p: 2, position: 'relative' }}>
-        {/* Mount visuals only while voice is active — avoids idle animation cost. */}
-        {voiceActiveForPulses && (
-          <>
-            <VoiceConnectionPulses active />
-            <VoiceParticleField
-              phase={voiceParticlePhase}
-              active
-              centerRef={voiceCardRef}
-            />
-          </>
-        )}
+      <Box sx={{ flex: 1, overflow: 'auto', p: { xs: 1.25, md: 1.5 }, position: 'relative' }}>
+        {voiceActiveForPulses && <VoiceConnectionPulses active />}
 
         <Box sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)', lg: 'repeat(4, 1fr)' },
-          gridTemplateRows: { lg: '220px 220px 220px' },
-          gap: 2,
-          alignItems: 'stretch',
           position: 'relative',
           zIndex: 1,
+          height: { lg: '100%' },
+          minHeight: { xs: 560, lg: 0 },
+          display: 'grid',
+          gap: 1.25,
+          // 3 equal columns: Voice = Crew+Sub-agents width; System = Automations width.
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+          gridTemplateRows: {
+            sm: 'auto auto minmax(180px, 1fr)',
+            lg: 'minmax(0, 0.88fr) minmax(200px, 0.92fr)',
+          },
         }}>
-          {/* Row 1: Recent conversations (col 1) | Voice Agent (cols 2-3, rows 1-2) | Channels (col 4) */}
-          <BentoCard
-            title="Recent conversations"
-            icon={<ChatIcon sx={{ fontSize: 18, color: colors.accent.purple }} />}
-            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '1' }, height: { lg: 220 }, maxHeight: { xs: 220, lg: 220 } }}
-          >
-            {sessions.length === 0 ? (
-              <Typography sx={{ fontSize: '0.72rem', color: colors.text.tertiary, mt: 1 }}>
-                No recent conversations.
-              </Typography>
-            ) : (
-              <Box sx={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 0.75,
-              }}>
-                {sessions.map((s) => {
-                  const isCrew = (s.contextKind ?? 'agent_x') === 'crew_private';
-                  const title = s.title || `Session ${s.id.slice(0, 8)}`;
-                  const isActive = s.status === 'active';
-                  return (
-                    <Box
-                      key={s.id}
-                      onClick={() => openSession(s.id)}
-                      sx={{
-                        display: 'flex', alignItems: 'center', gap: 1,
-                        p: 0.75,
-                        borderRadius: '6px',
-                        border: `1px solid ${colors.border.subtle}`,
-                        bgcolor: colors.bg.primary,
-                        cursor: 'pointer',
-                        transition: 'border-color 0.15s, transform 0.15s',
-                        '&:hover': { borderColor: colors.border.accent, transform: 'translateY(-1px)' },
-                      }}
-                    >
-                      <Box sx={{
-                        width: 24, height: 24, borderRadius: '5px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        bgcolor: alphaColor(isCrew ? colors.accent.purple : colors.accent.blue, 0.12),
-                        border: `1px solid ${alphaColor(isCrew ? colors.accent.purple : colors.accent.blue, 0.25)}`,
-                      }}>
-                        {isCrew ? <ForumIcon sx={{ fontSize: 13, color: colors.accent.purple }} /> : <SmartToyIcon sx={{ fontSize: 13, color: colors.accent.blue }} />}
-                      </Box>
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Typography sx={{ fontSize: '0.72rem', fontFamily: MONO, color: colors.text.primary, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {title}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.55rem', fontFamily: MONO, color: colors.text.dim }}>
-                          {formatDateTime(s.updatedAt || s.createdAt)}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                        {s.turnStatus?.status === 'running' && (
-                          <Box sx={{
-                            px: 0.5, py: 0.1, borderRadius: '4px', fontSize: '0.45rem',
-                            fontFamily: MONO, fontWeight: 700, lineHeight: 1.2,
-                            bgcolor: alphaColor(colors.accent.blue, 0.15), color: colors.accent.blue,
-                            border: `1px solid ${alphaColor(colors.accent.blue, 0.3)}`,
-                          }}>
-                            RUNNING
-                          </Box>
-                        )}
-                        {isActive && <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: colors.accent.green }} />}
-                        <Typography sx={{ fontSize: '0.55rem', fontFamily: MONO, color: colors.text.dim }}>
-                          {s.messageCount} msg
-                        </Typography>
-                      </Box>
-                    </Box>
-                  );
-                })}
-              </Box>
-            )}
-          </BentoCard>
-
-          {/* Voice Agent — centered 2x2 centerpiece */}
-          <BentoCard
-            title="Voice Agent"
-            icon={<MicIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}
+          <Panel
+            title={personaName}
+            icon={<MicIcon sx={{ fontSize: 15, color: colors.accent.blue }} />}
             action={
               <VoiceAgentHeaderControls
                 searchWeb={voiceSearchWeb}
@@ -546,183 +733,264 @@ export function BentoDashboard() {
                 onBypassChipChange={setVoiceBypassChip}
               />
             }
-            colSpan={2}
             voiceAgentCard
             sx={{
-              gridColumn: { lg: '2 / 4' },
-              gridRow: { lg: '1 / 3' },
-              height: { lg: '100%' },
-              maxHeight: { xs: 460, lg: 'none' },
-              border: `1px solid ${alphaColor(colors.accent.blue, '22')}`,
-              boxShadow: `0 0 24px ${alphaColor(colors.accent.blue, '08')}`,
-              bgcolor: alphaColor(colors.bg.secondary, 'cc'),
+              gridColumn: { sm: '1 / -1', lg: '1 / 3' },
+              gridRow: { sm: '1', lg: '1' },
+              border: `1px solid ${alphaColor(colors.accent.blue, '30')}`,
+              boxShadow: `0 0 28px ${alphaColor(colors.accent.blue, '08')}`,
+              background: `linear-gradient(165deg, ${alphaColor(colors.accent.blue, '08')} 0%, ${colors.bg.secondary} 42%)`,
             }}
           >
             <VoiceAgentCard
               onActiveChange={setVoiceActiveForPulses}
-              onPhaseChange={setVoiceParticlePhase}
               searchWeb={voiceSearchWeb}
               bypassChip={voiceBypassChip}
             />
-          </BentoCard>
+          </Panel>
 
-          <BentoCard
-            title="Channels"
-            icon={<StorageIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />}
-            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '1' }, height: { lg: 220 }, maxHeight: { xs: 220, lg: 220 } }}
-          >
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.25, flex: 1, minHeight: 0, overflowY: 'auto' }}>
-              {channels.map((ch) => {
-                const { label, color } = channelStatusLabel(ch.status, ch.loading);
-                return (
-                  <Box key={ch.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                      {ch.icon}
-                      <Typography sx={{ fontSize: '0.72rem', fontFamily: MONO, color: colors.text.secondary }}>{ch.name}</Typography>
-                    </Box>
-                    {ch.loading ? (
-                      <CircularProgress size={10} sx={{ color: colors.text.dim }} />
-                    ) : (
-                      <StatusBadge color={color} label={label} />
-                    )}
-                  </Box>
-                );
-              })}
-            </Box>
-          </BentoCard>
-
-          {/* Row 2: System status (col 1) | Automation (col 4) — Voice Agent continues in cols 2-3 */}
-          <BentoCard
-            title="System status"
-            icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.green }} />}
-            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '2' } }}
-          >
-            <StatRow label="Worker" value={serverOnline ? 'Online' : 'Offline'} color={serverOnline ? colors.accent.green : colors.accent.red} />
-            <StatRow label="Provider" value={healthData?.config?.provider || '—'} />
-            <StatRow label="Model" value={shortModel(healthData?.config?.model)} />
-            <StatRow label="Uptime" value={healthData ? formatUptime(healthData.uptime) : '—'} />
-            <StatRow label="Memory" value={healthData ? `${Math.round((healthData.memory?.heapUsed ?? 0) / 1024 / 1024)} MB` : '—'} />
-            <StatRow label="Sessions" value={healthData?.sessionCount ?? 0} />
-            <StatRow label="Sub-agents" value={healthData?.agentHealth?.activeSubAgents ?? 0} color={healthData?.agentHealth?.activeSubAgents ? colors.accent.blue : colors.text.dim} />
-          </BentoCard>
-
-          <BentoCard
-            title="Automation tasks"
-            icon={<ScheduleIcon sx={{ fontSize: 18, color: colors.accent.orange }} />}
-            sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '2' } }}
-          >
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <StatusBadge color={activeTaskCount > 0 ? colors.accent.green : colors.text.dim} label={`${activeTaskCount} active`} />
-              <StatusBadge color={colors.accent.orange} label={`${tasks.filter((t) => t.status === 'paused').length} paused`} />
-              <StatusBadge color={colors.text.dim} label={`${tasks.length} total`} />
-            </Box>
-            {topTasks.length === 0 ? (
-              <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
-                No automation tasks running.
+          <Panel
+            title="System"
+            icon={<MemoryIcon sx={{ fontSize: 15, color: colors.accent.cyan }} />}
+            action={
+              <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: colors.text.dim }}>
+                {metrics ? `up ${formatUptime(metrics.uptime)}` : '—'}
               </Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 1 }}>
-                {topTasks.map((t) => (
-                  <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '70%' }}>
-                      {t.title || t.displayId}
-                    </Typography>
-                    <StatusBadge color={taskColor(t.status)} label={t.status} />
-                  </Box>
-                ))}
-                {tasks.length > 3 && (
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO, mt: 0.25 }}>
-                    +{tasks.length - 3} more
-                  </Typography>
-                )}
-              </Box>
-            )}
-          </BentoCard>
-
-          <BentoCard
-            title="Sub-agents"
-            icon={<SmartToyIcon sx={{ fontSize: 18, color: colors.accent.blue }} />}
-            sx={{ gridColumn: { lg: '1' }, gridRow: { lg: '3' } }}
+            }
+            sx={{
+              gridColumn: { sm: '1 / -1', lg: '3' },
+              gridRow: { sm: '2', lg: '1' },
+            }}
           >
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <StatusBadge color={subagentTasks.filter((t) => t.status === 'running').length > 0 ? colors.accent.green : colors.text.dim} label={`${subagentTasks.filter((t) => t.status === 'running').length} running`} />
-              <StatusBadge color={colors.accent.orange} label={`${subagentTasks.filter((t) => t.status === 'queued' || t.status === 'pending').length} queued`} />
-              <StatusBadge color={colors.text.dim} label={`${subagentTasks.length} total`} />
-            </Box>
-            {subagentTasks.length === 0 ? (
-              <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
-                No active sub-agents.
-              </Typography>
-            ) : (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mt: 1 }}>
-                {subagentTasks.slice(0, 3).map((t) => (
-                  <Box
-                    key={t.id}
-                    onClick={() => t.parentSessionId && openSession(t.parentSessionId)}
-                    sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: t.parentSessionId ? 'pointer' : 'default' }}
-                  >
-                    <Typography sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '60%' }}>
-                      {t.instruction?.slice(0, 40) || t.id.slice(0, 8)}
-                    </Typography>
-                    <StatusBadge color={subagentColor(t.status)} label={t.status} />
-                  </Box>
-                ))}
-                {subagentTasks.length > 3 && (
-                  <Typography sx={{ fontSize: '0.55rem', color: colors.text.dim, fontFamily: MONO, mt: 0.25 }}>
-                    +{subagentTasks.length - 3} more
-                  </Typography>
-                )}
+            <Box sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 0.75,
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+            }}>
+              <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-around',
+                gap: 0.75,
+                flexShrink: 0,
+              }}>
+                <ArcMeter
+                  label="CPU"
+                  value={cpuPct}
+                  display={metrics ? `${cpuPct.toFixed(0)}%` : '—'}
+                  accent={meterColor(cpuPct)}
+                  hint={metrics ? `sys ${metrics.cpu.system}%` : '…'}
+                  size={64}
+                />
+                <ArcMeter
+                  label="RAM"
+                  value={memPct}
+                  display={metrics ? `${memPct.toFixed(0)}%` : '—'}
+                  accent={meterColor(memPct)}
+                  hint={metrics ? formatBytes(metrics.memory.used) : undefined}
+                  size={64}
+                />
               </Box>
-            )}
-          </BentoCard>
 
-          <BentoCard title="System metrics" icon={<SensorsIcon sx={{ fontSize: 18, color: colors.accent.green }} />} sx={{ gridColumn: { lg: '2' }, gridRow: { lg: '3' } }}>
-            <StatRow label="CPU (process)" value={metrics ? `${metrics.cpu.process}%` : '—'} color={metrics && metrics.cpu.process > 80 ? colors.accent.red : colors.text.secondary} />
-            <StatRow label="CPU (system)" value={metrics ? `${metrics.cpu.system}%` : '—'} />
-            <StatRow label="Memory used" value={metrics ? `${formatBytes(metrics.memory.used)} / ${formatBytes(metrics.memory.total)}` : '—'} />
-            <StatRow label="Memory %" value={metrics ? `${metrics.memory.percent}%` : '—'} color={metrics && metrics.memory.percent > 85 ? colors.accent.red : colors.text.secondary} />
-            <StatRow label="Heap used" value={metrics ? formatBytes(metrics.memory.heapUsed) : '—'} />
-            <StatRow label="Uptime" value={metrics ? formatUptime(metrics.uptime) : '—'} />
-          </BentoCard>
-
-          <BentoCard title="Time & location" icon={<AccessTimeIcon sx={{ fontSize: 18, color: colors.accent.cyan }} />} sx={{ gridColumn: { lg: '3' }, gridRow: { lg: '3' } }}>
-            {(() => {
-              const { time, date } = formatClientDateTime(location.timezone);
-              return (
-                <>
-                  <StatRow label="Time" value={time} />
-                  <StatRow label="Date" value={date} />
-                  <StatRow label="Timezone" value={location.timezone} />
-                  <StatRow
-                    label="Location"
-                    value={location.label || '—'}
-                    loading={location.state === 'checking'}
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.45, px: 0.15 }}>
+                <InsightRow label="Provider" value={healthData?.config?.provider || '—'} />
+                <InsightRow label="Model" value={shortModel(healthData?.config?.model)} />
+                <InsightRow label="Sessions" value={String(healthData?.sessionCount ?? '—')} />
+                <InsightRow
+                  label="Turns"
+                  value={`${runningTurns.length} live · ${crewSessions.length} crew`}
+                />
+                <InsightRow
+                  label="Host"
+                  value={host
+                    ? `${host.cpuCores}c · ${host.totalMemoryGB} GB · ${host.arch}`
+                    : '—'}
+                />
+                {host && (
+                  <InsightRow
+                    label="Free RAM"
+                    value={`${host.freeMemoryGB} GB · fit ${host.fitnessScore}%`}
                   />
-                </>
-              );
-            })()}
-          </BentoCard>
-
-          <BentoCard title="Weather" icon={<CloudIcon sx={{ fontSize: 18, color: colors.accent.purple }} />} sx={{ gridColumn: { lg: '4' }, gridRow: { lg: '3' } }}>
-            {weatherLoading ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-                <CircularProgress size={14} sx={{ color: colors.text.dim }} />
+                )}
+                <InsightRow
+                  label="Lanes"
+                  value={`${runningSubs + queuedSubs}/${subCap} agents · ${Math.min(llmCap, runningTurns.length)}/${llmCap} LLM`}
+                />
+                <InsightRow
+                  label="Tools / BG"
+                  value={`${toolCap} tools · ${bgCap} bg${bgPool ? ` · ${bgPool.running}r/${bgPool.pending}q` : ''}`}
+                />
+                {host && (
+                  <InsightRow
+                    label="Cortex"
+                    value={`${host.cortexTier}${host.localModelReady ? ' · ready' : ''}`}
+                  />
+                )}
+                {recommendedPreset && recommendedPreset !== activePreset && (
+                  <InsightRow
+                    label="Suggested"
+                    value={PRESET_LABEL[recommendedPreset]}
+                  />
+                )}
               </Box>
-            ) : weather ? (
-              <>
-                <StatRow label="Conditions" value={weatherDescription(weather.current.weatherCode)} />
-                <StatRow label="Temperature" value={`${weather.current.temperature}°C`} color={colors.accent.orange} />
-                <StatRow label="Wind" value={`${weather.current.windSpeed} km/h`} />
-                <StatRow label="Updated" value={new Date(weather.current.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} />
-              </>
-            ) : (
-              <Typography sx={{ fontSize: '0.65rem', color: colors.text.tertiary, mt: 1 }}>
-                Weather unavailable. Enable location access or wait for location detection.
-              </Typography>
-            )}
-          </BentoCard>
 
+              <Box sx={{ mt: 'auto', pt: 0.5 }}>
+                <Typography sx={{
+                  fontSize: '0.48rem',
+                  fontFamily: MONO,
+                  letterSpacing: '1px',
+                  color: colors.text.dim,
+                  mb: 0.45,
+                  textTransform: 'uppercase',
+                }}>
+                  Preset · {PRESET_LABEL[activePreset]} · {lanes?.budgetPercent ?? PRESET_BUDGET[activePreset]}%
+                </Typography>
+                <Box sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, 1fr)',
+                  gap: 0.4,
+                  opacity: presetSaving ? 0.6 : 1,
+                  pointerEvents: presetSaving ? 'none' : 'auto',
+                }}>
+                  {PRESET_ORDER.map((id) => {
+                    const active = activePreset === id;
+                    return (
+                      <Tooltip key={id} title={`${PRESET_LABEL[id]} · ${PRESET_BUDGET[id]}%`} arrow>
+                        <Box
+                          component="button"
+                          type="button"
+                          onClick={() => { void applyPreset(id); }}
+                          sx={{
+                            all: 'unset',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            py: 0.55,
+                            borderRadius: '6px',
+                            border: `1px solid ${active ? alphaColor(colors.accent.orange, '77') : colors.border.default}`,
+                            bgcolor: active ? alphaColor(colors.accent.orange, '18') : alphaColor(colors.bg.primary, '66'),
+                            color: active ? colors.accent.orange : colors.text.dim,
+                            transition: 'border-color 150ms ease, background-color 150ms ease, color 150ms ease',
+                            '&:hover': {
+                              borderColor: alphaColor(colors.accent.orange, '66'),
+                              color: colors.text.secondary,
+                            },
+                          }}
+                        >
+                          <Typography sx={{ fontSize: '0.58rem', fontFamily: MONO, fontWeight: 700, lineHeight: 1.1 }}>
+                            {PRESET_SHORT[id]}
+                          </Typography>
+                          <Typography sx={{
+                            fontSize: '0.42rem',
+                            fontFamily: MONO,
+                            letterSpacing: '0.4px',
+                            mt: 0.2,
+                            display: { xs: 'none', xl: 'block' },
+                          }}>
+                            {PRESET_LABEL[id]}
+                          </Typography>
+                        </Box>
+                      </Tooltip>
+                    );
+                  })}
+                </Box>
+              </Box>
+            </Box>
+          </Panel>
 
+          <Panel
+              title="Crew & turns"
+              icon={<GroupsIcon sx={{ fontSize: 15, color: colors.accent.cyan }} />}
+              action={
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: runningTurns.length ? colors.accent.green : colors.text.dim }}>
+                  {runningTurns.length} live · {crewSessions.length} crew
+                </Typography>
+              }
+              sx={{ gridColumn: { sm: '1' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                {activeSessions.length === 0 ? (
+                  <EmptyHint>No active turns</EmptyHint>
+                ) : (
+                  activeSessions.slice(0, 5).map((s) => {
+                    const running = s.turnStatus?.status === 'running';
+                    const isCrew = (s.contextKind ?? 'agent_x') === 'crew_private';
+                    return (
+                      <ActivityRow
+                        key={s.id}
+                        title={s.title || s.hostCrewName || `Session ${s.id.slice(0, 8)}`}
+                        meta={isCrew ? (s.hostCrewCallsign || 'crew') : shortModel(s.model || healthData?.config?.model)}
+                        status={running ? 'running' : 'active'}
+                        statusColor={running ? colors.accent.green : colors.text.dim}
+                        onClick={() => openSession(s.id)}
+                      />
+                    );
+                  })
+                )}
+              </Box>
+            </Panel>
+
+            <Panel
+              title="Sub-agents"
+              icon={<SmartToyIcon sx={{ fontSize: 15, color: colors.accent.blue }} />}
+              action={
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: runningSubs ? colors.accent.green : colors.text.dim }}>
+                  {runningSubs} run · {queuedSubs} q
+                </Typography>
+              }
+              sx={{ gridColumn: { sm: '2' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                {subagentTasks.length === 0 ? (
+                  <EmptyHint>Idle</EmptyHint>
+                ) : (
+                  subagentTasks.slice(0, 5).map((t) => (
+                    <ActivityRow
+                      key={t.id}
+                      title={t.instruction?.slice(0, 48) || t.id.slice(0, 8)}
+                      meta={t.background ? 'background' : t.parentSessionId?.slice(0, 8)}
+                      status={t.status}
+                      statusColor={
+                        t.status === 'running' ? colors.accent.green
+                          : t.status === 'queued' || t.status === 'pending' ? colors.accent.orange
+                            : colors.text.dim
+                      }
+                      onClick={t.parentSessionId ? () => openSession(t.parentSessionId!) : undefined}
+                    />
+                  ))
+                )}
+              </Box>
+            </Panel>
+
+            <Panel
+              title="Automations"
+              icon={<ScheduleIcon sx={{ fontSize: 15, color: colors.accent.orange }} />}
+              action={
+                <Typography sx={{ fontSize: '0.5rem', fontFamily: MONO, color: activeAutos ? colors.accent.green : colors.text.dim }}>
+                  {activeAutos} active · {pausedAutos} paused
+                </Typography>
+              }
+              sx={{ gridColumn: { sm: '3' }, gridRow: { sm: '3', lg: '2' }, minHeight: 0 }}
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                {tasks.length === 0 ? (
+                  <EmptyHint>None scheduled</EmptyHint>
+                ) : (
+                  tasks.slice(0, 5).map((t) => (
+                    <ActivityRow
+                      key={t.id}
+                      title={t.title || t.displayId}
+                      meta={t.nextRunAt ? `next ${new Date(t.nextRunAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : t.scheduleType}
+                      status={t.status}
+                      statusColor={t.status === 'active' ? colors.accent.green : colors.accent.orange}
+                      onClick={() => navigate('/console/automation')}
+                    />
+                  ))
+                )}
+              </Box>
+            </Panel>
         </Box>
       </Box>
     </Box>

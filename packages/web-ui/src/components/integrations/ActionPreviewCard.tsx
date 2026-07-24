@@ -11,6 +11,7 @@ export interface ActionPreviewCardProps {
   onAllowAlways: () => void;
   onDeny: () => void;
   onApproveAll?: () => void;
+  onSwitchToBypass?: () => void;
 }
 
 const RESULT_LABELS: Record<NonNullable<IntegrationActionPreview['resultType']>, string> = {
@@ -28,6 +29,7 @@ export function ActionPreviewCard({
   onAllowAlways,
   onDeny,
   onApproveAll,
+  onSwitchToBypass,
 }: ActionPreviewCardProps) {
   const isCritical = preview.riskLevel === 'critical';
   const isHigh = preview.riskLevel === 'high';
@@ -82,6 +84,22 @@ export function ActionPreviewCard({
         <Chip size="small" label="Allow once" onClick={onAllowOnce} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.green, '15'), color: colors.accent.green }} />
         <Chip size="small" label="Always allow" onClick={onAllowAlways} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.blue, '15'), color: colors.accent.blue }} />
         <Chip size="small" label="Deny" onClick={onDeny} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red }} />
+        {onSwitchToBypass && (
+          <Chip
+            size="small"
+            label="Switch to bypass mode"
+            onClick={onSwitchToBypass}
+            sx={{
+              cursor: 'pointer',
+              height: 20,
+              fontSize: '0.5rem',
+              bgcolor: alphaColor(colors.accent.orange, '18'),
+              color: colors.accent.orange,
+              border: `1px solid ${alphaColor(colors.accent.orange, '40')}`,
+              '&:hover': { bgcolor: alphaColor(colors.accent.orange, '30') },
+            }}
+          />
+        )}
       </Box>
     </Box>
   );

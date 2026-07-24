@@ -11,15 +11,16 @@ import ShieldIcon from '@mui/icons-material/Shield';
 import { colors, alphaColor, MONO } from '../../theme';
 import { useVoiceOptional, useVoiceCommsOptional } from './VoiceProvider';
 import { voiceDisabledReason } from '../../voice/support';
-import { VoiceWaveform } from './VoiceWaveform';
 import { CommsSpinner } from './CommsSpinner';
-import type { ParticlePhase } from './VoiceParticleField';
-import { voice as voiceApi, providers as providersApi, models as modelsApi } from '../../api';
+import { VoiceParticleField, type ParticlePhase } from './VoiceParticleField';
+import { VoiceTranscriptPanel } from './VoiceTranscriptPanel';
+import { voice as voiceApi, providers as providersApi, models as modelsApi, modelBenchmark } from '../../api';
 import type { ConfiguredProvider, ModelInfo, VoiceConfig } from '../../api';
 import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
+import { usePersonaName } from '../../hooks/usePersonaName';
 
 /**
- * Voice Agent card for the Bento dashboard — futuristic centerpiece.
+ * Voice Agent card for the Bento dashboard — call-modal style centerpiece.
  *
  * Uses a segregated voice-only session (__channel__:voice) with a lean prompt
  * profile. The comms session lives in VoiceProvider so it stays alive across
@@ -27,11 +28,10 @@ import { KOKORO_VOICE_PROFILES } from '../../voice/voice-config';
  * voiceActive and comms state from context.
  *
  * Features:
- *  - Particle physics canvas background (80+ particles, phase-reactive)
+ *  - Full-bleed particle field (same language as CrewCallModal)
  *  - Circular mic button with phase-reactive glow
- *  - Toggle chips (web search, bypass) in card header — icon-only, circular
- *  - Provider/model profile dropdowns inside card (separate voice config)
- *  - No message listing, questionnaire, or deep web search UI
+ *  - Right transcript pane (latest 25, call-style logs, recycle on demand)
+ *  - Toggle chips + provider/model dropdowns in the card header
  */
 
 type ButtonPhase = 'disabled' | 'connecting' | 'idle' | 'recording' | 'thinking' | 'speaking';
@@ -49,6 +49,7 @@ export function VoiceAgentCard({
 }) {
   const voiceCtx = useVoiceOptional();
   const commsCtx = useVoiceCommsOptional();
+  const personaName = usePersonaName();
   const envBlocked = voiceDisabledReason();
   const voiceActive = voiceCtx?.voiceActive ?? false;
   const setVoiceActive = voiceCtx?.setVoiceActive;
@@ -108,116 +109,171 @@ export function VoiceAgentCard({
     return comms?.statusLabel || (comms?.isDuplex ? 'Listening…' : 'Hold Space to speak');
   })();
 
+  // Live lines: partial while recording; agent text while speaking (and briefly after,
+  // while agentText is still held — VoiceTranscriptPanel sticks it until history lands).
+  // Do not feed finalTranscript during thinking — that duplicated the user turn.
+  const liveUser = phase === 'recording'
+    ? (comms?.session.partialTranscript || '').trim()
+    : '';
+  const liveAgent = (phase === 'speaking' || phase === 'idle')
+    ? (comms?.session.agentText || '').trim()
+    : '';
+
+  // Reload history when a turn settles, and when thinking starts (user utterance just persisted).
+  const transcriptRefresh = phase === 'idle' || phase === 'disabled' || phase === 'thinking'
+    ? `${comms?.session.finalTranscript ?? ''}|${comms?.session.agentText ?? ''}|${voiceActive}|${phase}`
+    : 'live';
+
   return (
     <Box sx={{
       position: 'relative',
       display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 0.75,
+      flexDirection: { xs: 'column', sm: 'row' },
       height: '100%',
-      minHeight: 200,
-      py: 1,
+      minHeight: 0,
       overflow: 'hidden',
     }}>
-      {/* Mic button + waveform overlay */}
-      <Box sx={{ position: 'relative', zIndex: 2 }}>
-        <Tooltip title={sessionReady ? (voiceActive ? 'Click to disable voice' : 'Click to enable voice') : 'Deploy voice kit first'}>
-          <Box
-            onClick={handleClick}
-            sx={{
-              width: 64,
-              height: 64,
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: sessionReady ? 'pointer' : 'default',
-              transition: 'all 0.25s ease',
-              position: 'relative',
-              border: `2px solid ${phaseColor(phase, true)}`,
-              bgcolor: phase === 'disabled'
-                ? alphaColor(colors.text.dim, '0a')
-                : phase === 'idle' || phase === 'connecting'
-                  ? alphaColor(colors.accent.blue, '14')
-                  : phase === 'recording'
-                    ? alphaColor(colors.accent.green, '1a')
-                    : phase === 'speaking'
-                      ? alphaColor(colors.accent.purple, '1a')
-                      : alphaColor(colors.accent.orange, '14'),
-              '&:hover': sessionReady && phase === 'idle' ? {
-                borderColor: colors.accent.blue,
-                transform: 'scale(1.05)',
-                boxShadow: `0 0 20px ${alphaColor(colors.accent.blue, '44')}`,
-              } : {},
-              ...(phase === 'connecting' && {
-                animation: 'voicePulseLink 1.4s ease-in-out infinite',
-                '@keyframes voicePulseLink': {
-                  '0%, 100%': { boxShadow: `0 0 10px ${alphaColor(colors.accent.blue, '33')}` },
-                  '50%': { boxShadow: `0 0 22px ${alphaColor(colors.accent.blue, '66')}` },
-                },
-              }),
-              ...(phase === 'recording' && {
-                animation: 'voicePulseRec 1.5s ease-in-out infinite',
-                '@keyframes voicePulseRec': {
-                  '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.green, '44')}` },
-                  '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.green, '77')}` },
-                },
-              }),
-              ...(phase === 'speaking' && {
-                animation: 'voicePulseSpeak 1.2s ease-in-out infinite',
-                '@keyframes voicePulseSpeak': {
-                  '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.purple, '44')}` },
-                  '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.purple, '77')}` },
-                },
-              }),
-            }}
-          >
-            {phase === 'recording' || phase === 'speaking' ? (
-              <Box sx={{ width: '100%', height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <VoiceWaveform
-                  level={waveLevel}
-                  active
-                  accent={phase === 'recording' ? colors.accent.green : colors.accent.purple}
-                  bars={12}
-                  height={36}
-                />
-              </Box>
-            ) : phase === 'connecting' ? (
-              <CommsSpinner color={colors.accent.blue} size={28} />
-            ) : phase === 'thinking' ? (
-              <CommsSpinner color={colors.accent.orange} size={28} />
-            ) : phase === 'disabled' ? (
-              <MicOffIcon sx={{ fontSize: 26, color: colors.text.dim, opacity: 0.5 }} />
-            ) : (
-              <MicIcon sx={{ fontSize: 26, color: colors.accent.blue }} />
-            )}
-          </Box>
-        </Tooltip>
+      {/* Particle stage | transcript — call-modal style equal split */}
+      <Box sx={{
+        position: 'relative',
+        flex: { xs: '0 0 auto', sm: '0 0 50%' },
+        width: { sm: '50%' },
+        minWidth: 0,
+        minHeight: { xs: 168, sm: 0 },
+        overflow: 'hidden',
+        bgcolor: alphaColor(colors.bg.primary, '40'),
+      }}>
+        <Box sx={{ position: 'absolute', inset: 0, zIndex: 0, opacity: voiceActive && sessionReady ? 1 : 0.55 }}>
+          <VoiceParticleField
+            phase={particlePhase}
+            active={phase !== 'disabled'}
+            level={waveLevel}
+          />
+        </Box>
+
+        <Box sx={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+        }}>
+          <Tooltip title={sessionReady ? (voiceActive ? 'Click to disable voice' : 'Click to enable voice') : 'Deploy voice kit first'}>
+            <Box
+              onClick={handleClick}
+              sx={{
+                width: 58,
+                height: 58,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: sessionReady ? 'pointer' : 'default',
+                transition: 'all 0.25s ease',
+                pointerEvents: 'auto',
+                border: `2px solid ${phaseColor(phase, true)}`,
+                bgcolor: phase === 'disabled'
+                  ? alphaColor(colors.text.dim, '0a')
+                  : phase === 'idle' || phase === 'connecting'
+                    ? alphaColor(colors.accent.blue, '14')
+                    : phase === 'recording'
+                      ? alphaColor(colors.accent.green, '1a')
+                      : phase === 'speaking'
+                        ? alphaColor(colors.accent.purple, '1a')
+                        : alphaColor(colors.accent.orange, '14'),
+                backdropFilter: 'blur(6px)',
+                '&:hover': sessionReady && phase === 'idle' ? {
+                  borderColor: colors.accent.blue,
+                  transform: 'scale(1.05)',
+                  boxShadow: `0 0 20px ${alphaColor(colors.accent.blue, '44')}`,
+                } : {},
+                ...(phase === 'connecting' && {
+                  animation: 'voicePulseLink 1.4s ease-in-out infinite',
+                  '@keyframes voicePulseLink': {
+                    '0%, 100%': { boxShadow: `0 0 10px ${alphaColor(colors.accent.blue, '33')}` },
+                    '50%': { boxShadow: `0 0 22px ${alphaColor(colors.accent.blue, '66')}` },
+                  },
+                }),
+                ...(phase === 'recording' && {
+                  animation: 'voicePulseRec 1.5s ease-in-out infinite',
+                  '@keyframes voicePulseRec': {
+                    '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.green, '44')}` },
+                    '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.green, '77')}` },
+                  },
+                }),
+                ...(phase === 'speaking' && {
+                  animation: 'voicePulseSpeak 1.2s ease-in-out infinite',
+                  '@keyframes voicePulseSpeak': {
+                    '0%, 100%': { boxShadow: `0 0 12px ${alphaColor(colors.accent.purple, '44')}` },
+                    '50%': { boxShadow: `0 0 28px ${alphaColor(colors.accent.purple, '77')}` },
+                  },
+                }),
+              }}
+            >
+              {phase === 'connecting' ? (
+                <CommsSpinner color={colors.accent.blue} size={26} />
+              ) : phase === 'thinking' ? (
+                <CommsSpinner color={colors.accent.orange} size={26} />
+              ) : phase === 'disabled' ? (
+                <MicOffIcon sx={{ fontSize: 24, color: colors.text.dim, opacity: 0.5 }} />
+              ) : phase === 'recording' ? (
+                <MicIcon sx={{ fontSize: 24, color: colors.accent.green }} />
+              ) : phase === 'speaking' ? (
+                <MicIcon sx={{ fontSize: 24, color: colors.accent.purple }} />
+              ) : (
+                <MicIcon sx={{ fontSize: 24, color: colors.accent.blue }} />
+              )}
+            </Box>
+          </Tooltip>
+        </Box>
+
+        <Box sx={{
+          position: 'absolute',
+          left: 12,
+          right: 12,
+          bottom: 10,
+          zIndex: 2,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          pointerEvents: 'none',
+        }}>
+          <Typography sx={{
+            fontSize: '0.58rem',
+            fontFamily: MONO,
+            letterSpacing: '0.1em',
+            color: phase === 'disabled'
+              ? colors.text.dim
+              : phase === 'recording'
+                ? colors.accent.green
+                : phase === 'speaking'
+                  ? colors.accent.purple
+                  : phase === 'thinking'
+                    ? colors.accent.orange
+                    : phase === 'connecting'
+                      ? colors.accent.blue
+                      : colors.text.primary,
+            px: 0.75,
+            py: 0.35,
+            borderRadius: '4px',
+            bgcolor: alphaColor(colors.bg.primary, '8a'),
+            border: `1px solid ${colors.border.default}`,
+            transition: 'color 0.2s',
+          }}>
+            {statusText}
+          </Typography>
+        </Box>
       </Box>
 
-      <Typography sx={{
-        fontSize: '0.6rem',
-        fontFamily: MONO,
-        color: phase === 'disabled'
-          ? colors.text.dim
-          : phase === 'recording'
-            ? colors.accent.green
-            : phase === 'speaking'
-              ? colors.accent.purple
-              : phase === 'thinking'
-                ? colors.accent.orange
-                : phase === 'connecting'
-                  ? colors.accent.blue
-                  : colors.text.secondary,
-        textAlign: 'center',
-        letterSpacing: '0.03em',
-        transition: 'color 0.2s',
-        zIndex: 2,
-      }}>
-        {statusText}
-      </Typography>
+      <VoiceTranscriptPanel
+        liveUser={liveUser}
+        liveAgent={liveAgent}
+        refreshToken={transcriptRefresh}
+        agentLabel={personaName}
+      />
     </Box>
   );
 }
@@ -363,7 +419,7 @@ export function VoiceAgentHeaderControls({
     return () => window.removeEventListener('agentx:voice-updated', onVoiceUpdated);
   }, []);
 
-  // Load models when provider changes (local engine only)
+  // Load cleared (benchmarked) models when provider changes (local engine only)
   useEffect(() => {
     if (engine !== 'stt_llm_tts') return;
     const providerId = voiceProvider || defaultProvider;
@@ -372,8 +428,13 @@ export function VoiceAgentHeaderControls({
     setLoadingModels(true);
     void (async () => {
       try {
-        const m = await providersApi.models(providerId);
-        if (!cancelled) setModels(m);
+        const [all, cleared] = await Promise.all([
+          providersApi.models(providerId),
+          modelBenchmark.cleared(providerId).catch(() => ({ models: [] as Array<{ modelId: string }> })),
+        ]);
+        if (cancelled) return;
+        const allowed = new Set(cleared.models.map((m) => m.modelId));
+        setModels(all.filter((m) => allowed.has(m.id)));
       } catch { /* ignore */ }
       finally { if (!cancelled) setLoadingModels(false); }
     })();
@@ -559,6 +620,11 @@ export function VoiceAgentHeaderControls({
                 >
                   <em>Use default ({defaultModel ? defaultModel.split('/').pop() : '—'})</em>
                 </MenuItem>
+                {models.length === 0 && (
+                  <MenuItem disabled sx={{ fontSize: '0.65rem', fontFamily: MONO, color: colors.text.dim }}>
+                    No cleared models — run a benchmark in Providers
+                  </MenuItem>
+                )}
                 {models.map((m) => (
                   <MenuItem
                     key={m.id}

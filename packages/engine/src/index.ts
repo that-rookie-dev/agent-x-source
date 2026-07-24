@@ -35,6 +35,11 @@ export type { AgentOptions } from './agent/Agent.js';
 export type { CheckpointAction, FailureRecord, TaskExecutorResult, TaskPlan, TaskStep } from './agent/TaskExecutor.js';
 export type { PartPersistFn } from './agent/AiSdkStreamHandler.js';
 export { createAiSdkModel } from './agent/AiSdkBridge.js';
+export {
+  shouldForceNamedToolChoice,
+  isUnsupportedToolChoiceError,
+  toolChoiceModelKey,
+} from './providers/tool-choice-policy.js';
 export { summarizePermissionArgs } from './agent/agent-helpers.js';
 export { ResponseFormatter } from './agent/ResponseFormatter.js';
 export type { FormattedSegment } from './agent/ResponseFormatter.js';
@@ -156,6 +161,27 @@ export { LocalEmbeddingProvider } from './neural/LocalEmbeddingProvider.js';
 export { OnnxEmbeddingProvider, setDefaultEmbeddingCacheDir, EMBEDDING_DIMENSION, setEmbedderInstance, getEmbedderInstance } from './neural/OnnxEmbeddingProvider.js';
 export { vectorMemoryPrefetch } from './neural/VectorMemoryPrefetch.js';
 export type { VectorMemoryPrefetchOptions, VectorMemoryPrefetchResult } from './neural/VectorMemoryPrefetch.js';
+export {
+  RETRIEVAL_DEFAULTS,
+  getRetrievalSettings,
+  setRetrievalOverrides,
+  resetRetrievalOverrides,
+  buildEmbedText,
+  resolveEmbedTextForNode,
+  applyScoreGate,
+  heuristicRerank,
+  mergeRrf,
+  expandEvidenceNeighborhood,
+  linkSimilarChunks,
+  packEvidenceBlocks,
+  formatEvidenceCitation,
+  EMPTY_EVIDENCE_MARKER,
+  runRetrievalEval,
+  assertBaselineGate,
+  loadFrozenBaseline,
+} from './neural/retrieval/index.js';
+
+
 export { UserChatMemoryIngester, USER_PROFILE_TAG, shouldExtractUserChatMemory } from './neural/UserChatMemoryIngester.js';
 export type { UserChatMemoryFact } from './neural/UserChatMemoryIngester.js';
 export { ChatTurnMemoryIngester, CHAT_MEMORY_TAG } from './neural/ChatTurnMemoryIngester.js';
@@ -266,6 +292,22 @@ export { NOTIFY_TOOL_IDS } from './automation/infer-automation-tools.js';
 export type { ScheduledJob } from './scheduler/index.js';
 export { TaskManager } from './agent/TaskManager.js';
 export type { TaskContext } from './agent/TaskManager.js';
+export { TodoManager } from './agent/TodoManager.js';
+export {
+  MAX_COMPLETION_CONTINUATIONS,
+  evaluateTurnCompletionGate,
+  estimateEnumeratedTaskCount,
+  getIncompleteTodos,
+  isChecklistFullyComplete,
+  buildCompletionContinuationPrompt,
+} from './agent/TurnCompletionGate.js';
+export type { TurnCompletionBlockReason, TurnCompletionGateResult, IncompleteTodo } from './agent/TurnCompletionGate.js';
+export type { TodoStatus } from './agent/TodoManager.js';
+export {
+  getSessionTodoManager,
+  registerSessionTodoManager,
+  unregisterSessionTodoManager,
+} from './tools/TodoAccess.js';
 export { AgentOrchestrator } from './agent/AgentOrchestrator.js';
 export type { OrchestrationPlan, OrchestrationStep } from './agent/AgentOrchestrator.js';
 export { DefaultTelemetryBus } from './telemetry/index.js';
@@ -412,6 +454,14 @@ export { ThemeEngine } from './communication/visuals/ThemeEngine.js';
 export { createChannelAdapter } from './communication/visuals/ChannelAdapter.js';
 export type { ChannelAdapter, ChannelRenderContext } from './communication/visuals/ChannelAdapter.js';
 export { configureBackgroundTaskPool, getBackgroundTaskPool } from './runtime/BackgroundTaskPool.js';
+export {
+  applyPerformanceGovernor,
+  getPerformanceLanes,
+  getLlmConcurrencyLimits,
+  getAttachmentWorkerLimit,
+  registerPerformanceTuneTarget,
+} from './performance/PerformanceGovernor.js';
+export type { PerformanceTuneTarget, PerformanceLanesPatch } from './performance/PerformanceGovernor.js';
 export { Semaphore } from './concurrency/Semaphore.js';
 export { Mutex } from './concurrency/Mutex.js';
 export { Fiber } from './concurrency/Fiber.js';
@@ -459,3 +509,46 @@ export type {
   KnowledgeBaseStatusListener,
   DocumentIngestPipelineOptions,
 } from './knowledge-base/index.js';
+export {
+  TemplateService,
+  TemplateStore,
+  getTemplateService,
+  setTemplateService,
+  detectTemplateFormat,
+  isFillableFormat,
+  scanTemplatePlaceholders,
+  fillTemplateBuffer,
+} from './templates/index.js';
+export type { TemplateServiceOptions } from './templates/TemplateService.js';
+export {
+  DocumentStudioService,
+  getDocumentStudioService,
+  setDocumentStudioService,
+  JobRunner,
+  PrimitiveRegistry,
+  ComposeRegistry,
+  validateJobSpec,
+  defaultJobPolicies,
+  registerDocumentStudioTools,
+  unregisterDocumentStudioTools,
+  DOC_STUDIO_TOOL_CATALOG,
+  DOC_STUDIO_TOOL_DEFINITIONS,
+  DOC_STUDIO_TOOL_IDS,
+  DocumentStudioEventBus,
+  documentStudioEventBus,
+  DOCUMENT_STUDIO_EVENT_NAMES,
+  formatSseEvent,
+} from './document-studio/index.js';
+export type {
+  JobSpec,
+  JobStep,
+  JobPolicies,
+  JobStatus,
+  Job as DocStudioJob,
+  Master as DocStudioMaster,
+  Binder as DocStudioBinder,
+  DocStudioToolCatalogEntry,
+  DocumentStudioEventPayloads,
+  DocumentStudioEvent,
+  DocumentStudioEventName,
+} from './document-studio/index.js';

@@ -191,6 +191,7 @@ export function runAgentTurnAsync(
     signal?: AbortSignal;
     /** Resolved user attachments (storage id + metadata). */
     attachments?: TurnAttachment[];
+    todoDisposition?: 'continue' | 'skip' | 'defer';
   },
 ): void {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -330,6 +331,7 @@ export function runAgentTurnAsync(
     ...(extra?.crewSuggestionRequested ? { crewSuggestionRequested: true } : {}),
     ...(extra?.signal ? { signal: extra.signal } : {}),
     ...(extra?.attachments ? { attachments: extra.attachments } : {}),
+    ...(extra?.todoDisposition ? { todoDisposition: extra.todoDisposition } : {}),
   })
     .then((message) => {
       turnCompleted = true;

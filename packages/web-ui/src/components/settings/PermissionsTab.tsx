@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, useDeferredValue } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -7,8 +7,10 @@ import Tooltip from '@mui/material/Tooltip';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
 import InputBase from '@mui/material/InputBase';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import UndoIcon from '@mui/icons-material/Undo';
 import SecurityIcon from '@mui/icons-material/Security';
+import CircularProgress from '@mui/material/CircularProgress';
 import { settingsPermissionTools, settingsPermissions, type PermissionToolEntry } from '../../api';
 import {
   settingsTheme,
@@ -93,12 +95,14 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
   const [filter, setFilter] = useState<'all' | 'overridden' | 'allow' | 'ask' | 'deny'>('all');
   const [resetting, setResetting] = useState(false);
   const [activeTab, setActiveTab] = useState<'native' | 'mcp'>('native');
+  const [isFilterPending, startFilterTransition] = useTransition();
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
   // Fetch tools + permissions only once on mount.
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     settingsPermissionTools.list()
       .then((result) => {
         if (cancelled) return;
@@ -111,6 +115,15 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
   }, []);
 
   const permissions = value ?? {};
+  const deferredSearch = useDeferredValue(search);
+
+  const changeFilter = (next: typeof filter) => {
+    startFilterTransition(() => setFilter(next));
+  };
+
+  const changeActiveTab = (next: typeof activeTab) => {
+    startFilterTransition(() => { setActiveTab(next); setFilter('all'); });
+  };
 
   /** Resolve the effective decision for a tool: override > backend default > risk heuristic. */
   const effectiveDecision = (tool: PermissionToolEntry): ToolDecision =>
@@ -154,8 +167,8 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
     } else if (filter !== 'all') {
       result = result.filter((t) => effectiveDecision(t) === filter);
     }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.trim().toLowerCase();
       result = result.filter((t) =>
         t.id.toLowerCase().includes(q) ||
         t.name.toLowerCase().includes(q) ||
@@ -164,7 +177,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
       );
     }
     return result;
-  }, [activeBase, permissions, filter, search, activeTab]);
+  }, [activeBase, permissions, filter, deferredSearch, activeTab]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, PermissionToolEntry[]> = {};
@@ -202,7 +215,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
             onClick={resetToDefault}
             disabled={overriddenCount === 0 || resetting}
             sx={settingsBtnDangerSx}
-            startIcon={<RefreshIcon sx={{ fontSize: 14 }} />}
+            startIcon={<RestartAltIcon sx={{ fontSize: 14 }} />}
           >
             {resetting ? 'Resetting…' : 'Reset to Default'}
           </Button>
@@ -234,7 +247,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
           {filterChips.map((chip) => (
             <Box
               key={chip.id}
-              onClick={() => setFilter(chip.id)}
+              onClick={() => changeFilter(chip.id)}
               sx={{
                 cursor: 'pointer',
                 px: 1,
@@ -252,6 +265,14 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
             </Box>
           ))}
         </Box>
+        {isFilterPending && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+            <CircularProgress size={12} thickness={5} sx={{ color: settingsTheme.accent.hud }} />
+            <Typography sx={{ fontSize: '0.6rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+              Updating…
+            </Typography>
+          </Box>
+        )}
 
         {/* Native / MCP tabs */}
         <Box sx={{ display: 'flex', gap: 0.5, mb: 1.5, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
@@ -259,7 +280,7 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
             <Button
               key={tab}
               size="small"
-              onClick={() => { setActiveTab(tab); setFilter('all'); }}
+              onClick={() => changeActiveTab(tab)}
               sx={{
                 textTransform: 'none',
                 fontSize: '0.72rem',
@@ -275,9 +296,12 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
         </Box>
 
         {loading && (
-          <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, ...settingsMonoSx, mb: 1 }}>
-            Loading tools…
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+            <CircularProgress size={16} thickness={5} sx={{ color: settingsTheme.accent.hud }} />
+            <Typography sx={{ fontSize: '0.75rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+              Loading tools…
+            </Typography>
+          </Box>
         )}
 
         {!loading && filteredTools.length === 0 && (
@@ -411,9 +435,15 @@ export function PermissionsTab({ value, onChange }: PermissionsTabProps) {
                         <IconButton
                           size="small"
                           onClick={() => resetTool(tool.id)}
-                          sx={{ color: settingsTheme.text.dim, '&:hover': { color: settingsTheme.accent.hud }, padding: '2px' }}
+                          sx={{
+                            color: settingsTheme.text.dim,
+                            border: `1px solid ${settingsTheme.border.default}`,
+                            borderRadius: '4px',
+                            padding: '2px',
+                            '&:hover': { color: settingsTheme.accent.hud, borderColor: settingsTheme.accent.hud },
+                          }}
                         >
-                          <RefreshIcon sx={{ fontSize: 12 }} />
+                          <UndoIcon sx={{ fontSize: 12 }} />
                         </IconButton>
                       </Tooltip>
                     )}

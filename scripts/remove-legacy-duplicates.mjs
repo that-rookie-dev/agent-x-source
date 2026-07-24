@@ -12,9 +12,8 @@ const FILE = new URL('../packages/web-api/src/routes/legacy.ts', import.meta.url
 // (method, path) pairs extracted from routes/legacy/*.ts split modules.
 const DUPLICATES = [
   // files.ts
-  ['get', '/api/cwd'],
-  ['get', '/api/cwd/default'],
-  ['post', '/api/cwd'],
+  ['get', '/api/workspace'],
+  ['post', '/api/workspace'],
   ['get', '/api/filesystem/dirs'],
   ['post', '/api/files/upload'],
   ['get', '/api/files'],

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { StoredAttachment, AttachmentPreview } from '@agentx/shared';
 import { getLogger } from '@agentx/shared';
 import { WorkerPool } from '../workers/WorkerPool.js';
+import { getAttachmentWorkerLimit } from '../performance/PerformanceGovernor.js';
 
 const ALLOWED_MIMES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
@@ -169,6 +170,15 @@ export class AttachmentService {
     return this.registry[id] ?? null;
   }
 
+  /** Reuse an existing workspace registration when the same absolute path was already attached. */
+  findByOriginalPath(originalPath: string): StoredAttachment | null {
+    const target = originalPath;
+    for (const a of Object.values(this.registry)) {
+      if (a.originalPath === target) return a;
+    }
+    return null;
+  }
+
   /** Resolves the best available absolute path for reading. */
   async resolveAttachmentPath(id: string): Promise<string | null> {
     const a = this.registry[id];
@@ -219,21 +229,30 @@ export class AttachmentService {
     }
   }
 
+  private extractionPoolMax = 0;
+
   private getExtractionPool(): WorkerPool {
-    if (!this.extractionPool) {
-      this.extractionPool = new WorkerPool({
-        workerPath: new URL('./workers/AttachmentExtractWorker.js', import.meta.url),
-        minWorkers: 0,
-        maxWorkers: 1,
-        idleTimeoutMs: 60_000,
-        inlineHandler: async (task) => {
-          const { path, mimeType } = (task.payload ?? {}) as { path?: string; mimeType?: string };
-          if (!path || !mimeType) throw new Error('Invalid extract task payload');
-          const { extractFromPath } = await import('./extract.js');
-          return extractFromPath(path, mimeType);
-        },
-      });
+    const maxWorkers = getAttachmentWorkerLimit();
+    if (this.extractionPool && this.extractionPoolMax === maxWorkers) {
+      return this.extractionPool;
     }
+    if (this.extractionPool) {
+      void this.extractionPool.terminate();
+      this.extractionPool = null;
+    }
+    this.extractionPoolMax = maxWorkers;
+    this.extractionPool = new WorkerPool({
+      workerPath: new URL('./workers/AttachmentExtractWorker.js', import.meta.url),
+      minWorkers: 0,
+      maxWorkers,
+      idleTimeoutMs: 60_000,
+      inlineHandler: async (task) => {
+        const { path, mimeType } = (task.payload ?? {}) as { path?: string; mimeType?: string };
+        if (!path || !mimeType) throw new Error('Invalid extract task payload');
+        const { extractFromPath } = await import('./extract.js');
+        return extractFromPath(path, mimeType);
+      },
+    });
     return this.extractionPool;
   }
 
@@ -266,9 +285,40 @@ export class AttachmentService {
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      getLogger().warn('ATTACHMENT_PREVIEW', `${id}: ${message}`);
+      getLogger().warn('ATTACHMENT_PREVIEW', `${id}: pool extract failed — ${message}`);
       preview = { kind: 'error', content: message };
     }
+
+    // In-process fallback when the worker pool fails (common for PDFs in some runtimes).
+    if (preview.kind === 'error') {
+      try {
+        const { extractFromPath } = await import('./extract.js');
+        preview = await extractFromPath(path, a.mimeType);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        getLogger().warn('ATTACHMENT_PREVIEW', `${id}: inline extract failed — ${message}`);
+        preview = { kind: 'error', content: message };
+      }
+    }
+
+    // Last resort for PDFs: zero-dep stream extractor used by pdf_read.
+    if (
+      preview.kind === 'error'
+      && (a.mimeType === 'application/pdf' || /\.pdf$/i.test(a.filename))
+    ) {
+      try {
+        const buffer = await readFile(path);
+        const { extractPdfTextFromBuffer } = await import('../tools/builtin/documents.js');
+        const text = extractPdfTextFromBuffer(buffer);
+        if (text.trim()) {
+          preview = { kind: 'text', content: text };
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        getLogger().warn('ATTACHMENT_PREVIEW', `${id}: pdf buffer extract failed — ${message}`);
+      }
+    }
+
     if (preview.kind === 'text') {
       this.textCache.set(id, preview.content ?? '');
     }

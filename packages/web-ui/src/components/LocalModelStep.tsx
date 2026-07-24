@@ -8,6 +8,7 @@ import { CapabilityIcon } from './CapabilityIcon';
 import { DownloadIndicator, type ActiveDownload } from './DownloadIndicator';
 import { localModel } from '../api';
 import { colors, alphaColor } from '../theme';
+import { WizardStepHeader } from './setup/wizard-ui';
 
 interface ModelOption {
   id: string;
@@ -326,14 +327,15 @@ export function LocalModelStep({
 
   return (
     <Box style={baseStyles.root}>
-      <Box style={baseStyles.header}>
-        <Box>
-          <Typography variant="h6" style={baseStyles.title}>Local Model Setup</Typography>
-          <Typography variant="body2" style={baseStyles.subtitle}>
-            Download a small local model for offline memory, embeddings, and distillation. Main chat still uses your cloud provider.
-          </Typography>
+      <Box sx={{ position: 'relative' }}>
+        <WizardStepHeader
+          codename="MODULE · LOCAL MODEL"
+          title="Local Model Setup"
+          subtitle="Download a small local model for offline memory, embeddings, and distillation. Main chat still uses your cloud provider."
+        />
+        <Box sx={{ position: 'absolute', top: 0, right: 0 }}>
+          <DownloadIndicator downloads={activeDownloads} onClear={onClearDownload} />
         </Box>
-        <DownloadIndicator downloads={activeDownloads} onClear={onClearDownload} />
       </Box>
 
       <Typography style={baseStyles.sectionTitle}>YOUR SYSTEM</Typography>

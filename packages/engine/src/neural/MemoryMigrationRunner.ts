@@ -7,6 +7,7 @@
  * external PostgreSQL.
  */
 import type { Pool } from 'pg';
+import { resetContentTsvCache } from './fabric-search.js';
 
 export interface Migration {
   version: number;
@@ -445,6 +446,50 @@ export const MIGRATIONS: Migration[] = [
       DROP TABLE IF EXISTS knowledge_sources CASCADE;
     `,
   },
+  {
+    version: 22,
+    name: 'memory_nodes_content_tsv_hybrid',
+    sql: `
+      -- Lexical index for hybrid (BM25-ish via tsvector) + vector retrieval.
+      ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS content_tsv tsvector;
+
+      UPDATE memory_nodes
+         SET content_tsv = to_tsvector('english', coalesce(label, '') || ' ' || coalesce(content, ''))
+       WHERE content_tsv IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_memory_nodes_content_tsv
+        ON memory_nodes USING GIN (content_tsv);
+
+      CREATE OR REPLACE FUNCTION memory_nodes_content_tsv_update() RETURNS trigger AS $$
+      BEGIN
+        NEW.content_tsv := to_tsvector('english', coalesce(NEW.label, '') || ' ' || coalesce(NEW.content, ''));
+        RETURN NEW;
+      END
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS trg_memory_nodes_content_tsv ON memory_nodes;
+      CREATE TRIGGER trg_memory_nodes_content_tsv
+        BEFORE INSERT OR UPDATE OF label, content ON memory_nodes
+        FOR EACH ROW EXECUTE PROCEDURE memory_nodes_content_tsv_update();
+    `,
+  },
+  {
+    version: 23,
+    name: 'chunk_order_edges_follows',
+    sql: `
+      -- Migrate sequential chunk adjacency from NEXT_STEP → FOLLOWS (order only).
+      -- Only rewrite edges between chunk unit_types so mission/plan NEXT_STEP edges stay intact.
+      UPDATE memory_edges e
+         SET relationship_type = 'FOLLOWS',
+             updated_at = NOW()
+        FROM memory_nodes s, memory_nodes t
+       WHERE e.source_node_id = s.id
+         AND e.target_node_id = t.id
+         AND e.relationship_type = 'NEXT_STEP'
+         AND s.unit_type = 'chunk'
+         AND t.unit_type = 'chunk';
+    `,
+  },
 ];
 
 export class MemoryMigrationRunner {
@@ -467,6 +512,7 @@ export class MemoryMigrationRunner {
       );
       const appliedSet = new Set(applied.map((r) => r.version));
       let appliedCount = 0;
+      let appliedHybridFts = false;
 
       for (const migration of MIGRATIONS) {
         if (appliedSet.has(migration.version)) continue;
@@ -476,9 +522,14 @@ export class MemoryMigrationRunner {
           [migration.version, migration.name]
         );
         appliedCount++;
+        if (migration.version === 22) appliedHybridFts = true;
       }
 
       await client.query('COMMIT');
+      if (appliedHybridFts) {
+        // Allow lexicalSearch to re-probe content_tsv after migration.
+        resetContentTsvCache();
+      }
       const currentVersion = Math.max(...MIGRATIONS.map((m) => m.version), 0);
       return { applied: appliedCount, currentVersion };
     } catch (e) {

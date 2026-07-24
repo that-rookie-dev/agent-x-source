@@ -10,9 +10,10 @@ export interface PermissionBannerProps {
   pendingCount: number;
   onRespond: () => void;
   onApproveAll: () => void;
+  onSwitchToBypass?: () => void;
 }
 
-export const PermissionBanner = memo(function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll }: PermissionBannerProps) {
+export const PermissionBanner = memo(function PermissionBanner({ prompt, pendingCount, onRespond, onApproveAll, onSwitchToBypass }: PermissionBannerProps) {
   const [instructMode, setInstructMode] = useState(false);
   const [instruction, setInstruction] = useState('');
 
@@ -97,6 +98,22 @@ export const PermissionBanner = memo(function PermissionBanner({ prompt, pending
         <Chip size="small" label={prompt.forAutomation ? 'Allow for automations' : 'Always'} onClick={() => handleRespond('allow_always')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.blue, '15'), color: colors.accent.blue, '&:hover': { bgcolor: alphaColor(colors.accent.blue, '30') } }} />
         <Chip size="small" label="Deny" onClick={() => handleRespond('deny')} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.red, '15'), color: colors.accent.red, '&:hover': { bgcolor: alphaColor(colors.accent.red, '30') } }} />
         <Chip size="small" label="Instruct" onClick={() => setInstructMode((v) => !v)} sx={{ cursor: 'pointer', height: 20, fontSize: '0.5rem', bgcolor: alphaColor(colors.accent.purple, '15'), color: colors.accent.purple, '&:hover': { bgcolor: alphaColor(colors.accent.purple, '30') } }} />
+        {onSwitchToBypass && (
+          <Chip
+            size="small"
+            label="Switch to bypass mode"
+            onClick={() => onSwitchToBypass()}
+            sx={{
+              cursor: 'pointer',
+              height: 20,
+              fontSize: '0.5rem',
+              bgcolor: alphaColor(colors.accent.orange, '18'),
+              color: colors.accent.orange,
+              border: `1px solid ${alphaColor(colors.accent.orange, '40')}`,
+              '&:hover': { bgcolor: alphaColor(colors.accent.orange, '30') },
+            }}
+          />
+        )}
       </Box>
       {instructMode && (
         <Box sx={{ display: 'flex', gap: 0.75, mt: 1, alignItems: 'flex-end' }}>

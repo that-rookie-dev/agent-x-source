@@ -2,22 +2,13 @@
  * Embedding model download step for the setup wizard.
  *
  * Shows a sci-fi themed progress UI with progress for the RAM-tier model only
- * (via /neural-cortex/embeddings/*), rotating status messages, and starfield.
+ * (via /neural-cortex/embeddings/*) and rotating status messages.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
-import Button from '@mui/material/Button';
 import { embeddingModels, type EmbeddingModelProgress, type EmbeddingModelStatus } from '../api';
-import { colors, alphaColor, resolveColor } from '../theme';
-
-/** Convert a resolved hex color to "r, g, b" channels for canvas rgba() templates. */
-function hexToRgbChannels(hex: string): string {
-  const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
-  const n = parseInt(full, 16);
-  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
-}
+import { colors, alphaColor } from '../theme';
 
 // ── Sci-fi status messages (rotate every 3% progress, non-repeating) ────────
 const STATUS_MESSAGES = [
@@ -93,75 +84,22 @@ function mapProgressModels(models: EmbeddingModelProgress[]): ModelProgressState
 }
 
 interface EmbeddingModelDownloadProps {
-  onComplete: () => void;
-  /** Called when the user skips the download. Defaults to onComplete if not supplied. */
+  /** @deprecated Prefer onReadyChange — footer actions moved to wizard bottom nav. */
+  onComplete?: () => void;
+  /** @deprecated Prefer wizard bottom-nav Skip. */
   onSkip?: () => void;
+  /** Fired when download reaches a terminal ready/error state. */
+  onReadyChange?: (ready: boolean) => void;
+  /** Optional tier notice shown inside the Initializing Neural Core card. */
+  banner?: { headline: string; body: string };
 }
 
-export function EmbeddingModelDownload({ onComplete, onSkip }: EmbeddingModelDownloadProps) {
+export function EmbeddingModelDownload({ onReadyChange, banner }: EmbeddingModelDownloadProps) {
   const [models, setModels] = useState<ModelProgressState[]>([]);
   const [allComplete, setAllComplete] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [statusMessage, setStatusMessage] = useState(STATUS_MESSAGES[0]!);
   const usedMessageIndices = useRef<Set<number>>(new Set([0]));
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // ── Starfield animation ──────────────────────────────────────────────────
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let raf = 0;
-    const starRgb = hexToRgbChannels(resolveColor(colors.accent.blue));
-    const fadeRgb = hexToRgbChannels(resolveColor(colors.bg.primary));
-    const stars: Array<{ x: number; y: number; z: number; size: number; speed: number; opacity: number }> = [];
-    const STAR_COUNT = 120;
-
-    const resize = () => {
-      canvas.width = canvas.offsetWidth;
-      canvas.height = canvas.offsetHeight;
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    for (let i = 0; i < STAR_COUNT; i++) {
-      stars.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        z: Math.random(),
-        size: Math.random() * 1.5 + 0.3,
-        speed: Math.random() * 0.15 + 0.02,
-        opacity: Math.random() * 0.6 + 0.2,
-      });
-    }
-
-    const animate = () => {
-      ctx.fillStyle = `rgba(${fadeRgb}, 0.15)`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      for (const star of stars) {
-        star.y += star.speed;
-        if (star.y > canvas.height) {
-          star.y = 0;
-          star.x = Math.random() * canvas.width;
-        }
-        const twinkle = 0.7 + 0.3 * Math.sin(Date.now() * 0.001 + star.x);
-        ctx.fillStyle = `rgba(${starRgb}, ${star.opacity * twinkle})`;
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      raf = requestAnimationFrame(animate);
-    };
-    animate();
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', resize);
-    };
-  }, []);
 
   // ── Start download + SSE progress stream ─────────────────────────────────
   const startDownload = useCallback(async () => {
@@ -197,16 +135,16 @@ export function EmbeddingModelDownload({ onComplete, onSkip }: EmbeddingModelDow
     return cleanup;
   }, []);
 
-  const skipDownload = useCallback(() => {
-    (onSkip ?? onComplete)();
-  }, [onComplete, onSkip]);
-
   // Auto-start on mount.
   useEffect(() => {
     let cleanup: (() => void) | undefined;
     void (async () => { cleanup = await startDownload(); })();
     return () => { cleanup?.(); };
   }, [startDownload]);
+
+  useEffect(() => {
+    onReadyChange?.(allComplete && !hasError);
+  }, [allComplete, hasError, onReadyChange]);
 
   // ── Overall percentage = total downloaded MB / total downloadable MB ──────
   const totalDownloadedMB = models.reduce((sum, m) => sum + m.downloadedMB, 0);
@@ -235,9 +173,6 @@ export function EmbeddingModelDownload({ onComplete, onSkip }: EmbeddingModelDow
 
   return (
     <Box sx={{ position: 'relative', width: '100%', minHeight: 420, overflow: 'hidden', borderRadius: 1, bgcolor: colors.bg.primary, border: `1px solid ${colors.border.default}` }}>
-      {/* Starfield canvas background */}
-      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.6 }} />
-
       {/* Content */}
       <Box sx={{ position: 'relative', zIndex: 3, p: 4, display: 'flex', flexDirection: 'column', gap: 3, minHeight: 420, justifyContent: 'center' }}>
         {/* Header */}
@@ -257,6 +192,34 @@ export function EmbeddingModelDownload({ onComplete, onSkip }: EmbeddingModelDow
             Initializing Neural Core
           </Typography>
         </Box>
+
+        {banner && (
+          <Box sx={{
+            maxWidth: 560,
+            mx: 'auto',
+            width: '100%',
+            p: 2,
+            borderRadius: 1,
+            border: `1px solid ${alphaColor(colors.accent.cyan, 0.35)}`,
+            borderLeft: `3px solid ${colors.accent.cyan}`,
+            bgcolor: alphaColor(colors.accent.cyan, 0.06),
+          }}>
+            <Typography sx={{
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: '0.52rem',
+              letterSpacing: '2px',
+              color: colors.accent.cyan,
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              mb: 1,
+            }}>
+              {banner.headline}
+            </Typography>
+            <Typography sx={{ fontSize: '0.72rem', color: colors.text.secondary, lineHeight: 1.6 }}>
+              {banner.body}
+            </Typography>
+          </Box>
+        )}
 
         {/* Overall progress indicator */}
         <Box sx={{ textAlign: 'center', mb: 1 }}>
@@ -328,48 +291,6 @@ export function EmbeddingModelDownload({ onComplete, onSkip }: EmbeddingModelDow
           </Typography>
         </Box>
 
-        {/* Proceed / Skip button */}
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, gap: 1.5 }}>
-          {hasError && (
-            <Button
-              onClick={() => { skipDownload(); }}
-              sx={{
-                color: colors.text.dim,
-                fontFamily: '"JetBrains Mono", monospace"',
-                fontSize: '0.72rem',
-                letterSpacing: 0.5,
-                textTransform: 'none',
-              }}
-            >
-              Skip Neural Core →
-            </Button>
-          )}
-          <Button
-            variant="contained"
-            onClick={onComplete}
-            disabled={!allComplete || hasError}
-            sx={{
-              bgcolor: allComplete ? colors.accent.green : colors.bg.tertiary,
-              color: allComplete ? colors.bg.primary : colors.text.dim,
-              fontWeight: 700,
-              px: 4,
-              py: 1,
-              fontFamily: '"JetBrains Mono", monospace"',
-              fontSize: '0.8rem',
-              letterSpacing: 1,
-              textTransform: 'uppercase',
-              borderRadius: 1,
-              boxShadow: 'none',
-              transition: 'all 0.3s',
-              '&:hover': allComplete ? {
-                bgcolor: colors.accent.green,
-                boxShadow: 'none',
-              } : {},
-            }}
-          >
-            {allComplete ? '◆ Proceed to Callsign →' : hasError ? '◆ Download Failed' : '◆ Downloading...'}
-          </Button>
-        </Box>
       </Box>
     </Box>
   );

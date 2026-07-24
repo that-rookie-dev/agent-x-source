@@ -26,8 +26,7 @@ import {
   resetCatalogSeedInflight,
   applyWebSearchConfigFromAgentConfig,
   setLocalModelConfig,
-  configureBackgroundTaskPool,
-  setOnnxThreadConfig,
+  applyPerformanceGovernor,
   MarkdownDocumentStore,
   setMarkdownDocumentStoreInstance,
   InMemoryQueue,
@@ -41,7 +40,12 @@ import {
   getPersonaStore,
 } from '@agentx/engine';
 import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding, ClientSituation } from '@agentx/shared';
-import { resolveRuntimeSettings, getDataDir, getLogger } from '@agentx/shared';
+import {
+  getDataDir,
+  getLogger,
+  resolveWorkspacePath,
+  ensureBuiltinWorkspaceDir,
+} from '@agentx/shared';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 // Pool type resolved via PostgresStorageAdapter's return type to avoid pg type resolution issues
@@ -111,11 +115,12 @@ function safeLoadConfig(configManager: ConfigManager): AgentXConfig | null {
   }
 }
 
-export function applyRuntimeSettings(config: AgentXConfig | null): void {
-  const resolved = resolveRuntimeSettings(config?.runtime);
-  configureBackgroundTaskPool(resolved.backgroundConcurrency);
-  setOnnxThreadConfig(resolved.onnxIntraOpThreads, resolved.onnxInterOpThreads);
+export function applyPerformanceSettings(config: AgentXConfig | null): void {
+  applyPerformanceGovernor(config?.performance);
 }
+
+/** @deprecated Use applyPerformanceSettings */
+export const applyRuntimeSettings = applyPerformanceSettings;
 
 export function syncLocalModelConfig(configManager: ConfigManager): void {
   try {
@@ -150,9 +155,12 @@ export function getEngine(): EngineState {
   }
 
   syncLocalModelConfig(configManager);
-  applyRuntimeSettings(loadedConfig);
+  applyPerformanceSettings(loadedConfig);
 
-  const toolkit = createDefaultToolkit(process.cwd());
+  const initialWorkspace = loadedConfig
+    ? resolveWorkspacePath(loadedConfig.workspacePath)
+    : ensureBuiltinWorkspaceDir();
+  const toolkit = createDefaultToolkit(initialWorkspace);
   const pluginRegistry = new PluginRegistry();
   const integrationHub = new IntegrationHub({
     getDek: () => state?.dek ?? null,
@@ -204,7 +212,7 @@ export function getEngine(): EngineState {
     );
   }
 
-  const lazyHydrate = loadedConfig?.runtime?.lazyStorageCache !== false;
+  const lazyHydrate = loadedConfig?.performance?.lazyStorageCache !== false;
   let storageAdapter: StorageAdapter;
   let pgAdapter: PostgresStorageAdapter | null = null;
 
@@ -358,7 +366,8 @@ export function getEngine(): EngineState {
       // Ensure CrewManager is bound to the live adapter (covers deferred→ready swaps).
       if (state) state.crewManager.setStore(store);
       if (state) {
-        // Rebuild roster rows lost when the async PG write queue never drained.
+        // Rebuild *custom* roster rows lost when the async PG write queue never drained.
+        // Hub hosts are ignored inside recoverFromSessionHosts (catalog re-recruit instead).
         const hosts = store.listSessions(500)
           .filter((s) => (s.contextKind ?? 'agent_x') === 'crew_private' && s.hostCrewId)
           .map((s) => ({
@@ -458,7 +467,7 @@ export function setEngineDEK(dek: Buffer | null): void {
     try {
       if (normalized) {
         applyWebSearchConfigFromAgentConfig(state.configManager.load());
-        applyRuntimeSettings(state.configManager.load());
+        applyPerformanceSettings(state.configManager.load());
       }
     } catch { /* not configured yet */ }
 

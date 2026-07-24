@@ -8,6 +8,14 @@ import * as shell from './shell.js';
 import { getRAGEngineInstance } from '../../commands/builtin/rag_index.js';
 import { getMemoryFabricInstance } from '../../neural/MemoryFabric.js';
 import { getEmbedderInstance } from '../../neural/OnnxEmbeddingProvider.js';
+import {
+  getRetrievalSettings,
+  applyScoreGate,
+  heuristicRerank,
+  toEvidenceUnit,
+  packEvidenceBlocks,
+  EMPTY_EVIDENCE_MARKER,
+} from '../../neural/retrieval/index.js';
 import { knowledgeBaseSearch } from './knowledge-base-search.js';
 import { cortexMemorySearch } from './cortex-memory-search.js';
 import { USER_PROFILE_TAG } from '../../neural/UserChatMemoryIngester.js';
@@ -175,30 +183,55 @@ export async function memorySearch(args: Record<string, unknown>, context: ToolE
   const isSuper = sessionFilter === null;
   if (fabric && embedder) {
     try {
+      const settings = getRetrievalSettings();
       const embedding = await embedder.embed(query);
-      const [chatNodes, profileNodes] = await Promise.all([
-        fabric.vectorSearch(embedding, { limit: 8, tag: CHAT_MEMORY_TAG, sessionId: sessionFilter }),
+      const overFetch = Math.max(8, settings.vectorOverFetch);
+      const [chatRaw, profileRaw] = await Promise.all([
+        settings.hybridEnabled
+          ? fabric.hybridSearch(embedding, query, {
+              limit: overFetch,
+              tag: CHAT_MEMORY_TAG,
+              sessionId: sessionFilter,
+              vectorLimit: overFetch,
+              lexicalLimit: overFetch,
+            })
+          : fabric.vectorSearch(embedding, { limit: overFetch, tag: CHAT_MEMORY_TAG, sessionId: sessionFilter }),
         isSuper
-          ? fabric.vectorSearch(embedding, { limit: 5, tag: USER_PROFILE_TAG, sessionId: null })
+          ? (settings.hybridEnabled
+              ? fabric.hybridSearch(embedding, query, {
+                  limit: overFetch,
+                  tag: USER_PROFILE_TAG,
+                  sessionId: null,
+                  vectorLimit: overFetch,
+                  lexicalLimit: overFetch,
+                })
+              : fabric.vectorSearch(embedding, { limit: overFetch, tag: USER_PROFILE_TAG, sessionId: null }))
           : Promise.resolve([]),
       ]);
-      const lines: string[] = [];
-      if (chatNodes.length > 0) {
-        lines.push('=== PAST CONVERSATIONS ===');
-        chatNodes.forEach((n, i) => {
-          const body = (n.content ?? '').replace(/\n+/g, ' ').slice(0, 350);
-          lines.push(`[${i + 1}] ${n.label ?? 'chat'}\n${body}${body.length >= 350 ? '…' : ''}`);
-        });
+      const gateRank = (nodes: typeof chatRaw, keep: number) => {
+        let next = applyScoreGate(nodes, { minScore: settings.minScoreMemory, maxPerSource: settings.maxChunksPerSource });
+        if (settings.rerankEnabled) next = heuristicRerank(query, next);
+        return next.slice(0, keep);
+      };
+      const chatNodes = gateRank(chatRaw, 8);
+      const profileNodes = gateRank(profileRaw, 5);
+      const units = [...profileNodes, ...chatNodes]
+        .map((n, i) => toEvidenceUnit(n, i))
+        .filter((u): u is NonNullable<typeof u> => !!u);
+      if (units.length === 0) {
+        return { success: true, output: EMPTY_EVIDENCE_MARKER, metadata: { count: 0 } };
       }
-      if (profileNodes.length > 0) {
-        lines.push('\n=== USER PROFILE ===');
-        profileNodes.forEach((n, i) => {
-          lines.push(`[${i + 1}] ${n.label ?? 'profile'}: ${(n.content ?? '').slice(0, 200)}`);
-        });
-      }
-      if (lines.length > 0) {
-        return { success: true, output: lines.join('\n'), metadata: { count: chatNodes.length + profileNodes.length } };
-      }
+      const packed = packEvidenceBlocks(units, {
+        maxChars: settings.maxEvidenceCharsCompact,
+        maxLineChars: settings.maxEvidenceLineChars,
+        logLabel: 'memory_search_alias',
+        candidatesIn: chatRaw.length + profileRaw.length,
+      });
+      return {
+        success: true,
+        output: `Memory matches (${packed.count}). Cite [E#] when using these facts.\n\n${packed.text}`,
+        metadata: { count: packed.count, evidenceIds: packed.evidenceIds },
+      };
     } catch { /* fall through to legacy memory */ }
   }
 

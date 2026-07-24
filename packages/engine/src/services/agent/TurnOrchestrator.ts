@@ -10,9 +10,11 @@ import {
 } from '@agentx/shared';
 import { streamText, stepCountIs } from 'ai';
 import { ConcurrencyLimiter } from '../../concurrency/ConcurrencyLimiter.js';
+import { getLlmConcurrencyLimits } from '../../performance/PerformanceGovernor.js';
 import { createAiSdkModel, createAiSdkTools } from '../../agent/AiSdkBridge.js';
 import { createAiSdkStreamHandler } from '../../agent/AiSdkStreamHandler.js';
 import { buildCompletionMessages } from '../../agent/context-profile.js';
+import { modelMessageContentToText, estimateToolSchemaChars } from '../../agent/agent-helpers.js';
 import { reconcileIntegrationHintWithActiveTools } from '../../integrations/integration-tool-availability.js';
 import type { ThirdPartyTurnPolicy } from '../../integrations/third-party-access.js';
 import { buildGoogleAiSdkProviderOptions } from '../../providers/google/gemini-metadata.js';
@@ -26,8 +28,6 @@ const WEB_SEARCH_TOOLS = new Set([
 
 /** Shared concurrency limiter for all in-flight LLM provider calls. */
 const LLM_CONCURRENCY_LIMITER = new ConcurrencyLimiter();
-const LLM_GLOBAL_CONCURRENCY = Number(process.env['AGENTX_LLM_CONCURRENCY'] ?? '4');
-const LLM_PROVIDER_CONCURRENCY = Number(process.env['AGENTX_PROVIDER_CONCURRENCY'] ?? '2');
 
 /** Extract the latest user text from history, stripping per-turn boundary markers. */
 export function deriveLastUserText(messages: CompletionMessage[]): string {
@@ -189,11 +189,16 @@ export class TurnOrchestrator implements ITurnOrchestrator {
       this.host.turnState.setStage('thinking');
       this.host.emit({ type: 'loading_start', stage: 'thinking' });
 
-      // Limit global and per-provider LLM concurrency.
-      releaseGlobal = await LLM_CONCURRENCY_LIMITER.acquireGlobal(LLM_GLOBAL_CONCURRENCY, abortSignal);
+      // Soft concurrency from Settings → Performance (env overrides still win if set).
+      const envGlobal = Number(process.env['AGENTX_LLM_CONCURRENCY']);
+      const envProvider = Number(process.env['AGENTX_PROVIDER_CONCURRENCY']);
+      const limits = getLlmConcurrencyLimits();
+      const llmGlobal = Number.isFinite(envGlobal) && envGlobal >= 1 ? envGlobal : limits.global;
+      const llmProvider = Number.isFinite(envProvider) && envProvider >= 1 ? envProvider : limits.perProvider;
+      releaseGlobal = await LLM_CONCURRENCY_LIMITER.acquireGlobal(llmGlobal, abortSignal);
       releaseProvider = await LLM_CONCURRENCY_LIMITER.acquire(
         this.host.config.provider.activeProvider,
-        LLM_PROVIDER_CONCURRENCY,
+        llmProvider,
         abortSignal,
       );
 
@@ -248,14 +253,7 @@ export class TurnOrchestrator implements ITurnOrchestrator {
             if (!cont) throw new Error('STEP_CAP_STOP');
             stepCapContinuations++;
           }
-          if (
-            stepNumber === 0
-            && this.host.turnWebSearchPolicy === 'forced'
-            && this.host.forcedWebSearchToolName
-            && tools[this.host.forcedWebSearchToolName]
-          ) {
-            return { toolChoice: { type: 'tool' as const, toolName: this.host.forcedWebSearchToolName } };
-          }
+          // Required tools are driven by turn instructions; keep toolChoice auto.
           const provider = this.host.missionContextProvider;
           if (!provider || stepNumber === 0) return {};
           const { revision, block } = provider();
@@ -377,7 +375,7 @@ export class TurnOrchestrator implements ITurnOrchestrator {
       }
 
       if (!content) {
-        content = 'I was unable to generate a response. This model may not support function calling — try switching to GPT-4o, Claude, or Gemini.';
+        content = 'I was unable to generate a response. This model may not support function calling — switch to a tool-capable model and try again.';
       }
 
       const usage = await result.usage;
@@ -596,40 +594,28 @@ export class TurnOrchestrator implements ITurnOrchestrator {
   }
 
   private modelMessageContentToText(content: unknown): string {
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content.map((part) => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part === 'object') {
-          const p = part as Record<string, unknown>;
-          if (typeof p.text === 'string') return p.text;
-          if (typeof p.toolName === 'string') return `tool:${p.toolName}`;
-          return JSON.stringify(part);
-        }
-        return '';
-      }).join('\n');
-    }
-    if (content == null) return '';
-    return JSON.stringify(content);
+    return modelMessageContentToText(content);
   }
 
   private estimateToolSchemaChars(tools: Record<string, unknown>): number {
-    let chars = 0;
-    for (const name of Object.keys(tools)) {
-      const t = tools[name] as { description?: string; inputSchema?: unknown } | undefined;
-      chars += JSON.stringify({ description: t?.description, inputSchema: t?.inputSchema }).length;
-    }
-    return chars;
+    return estimateToolSchemaChars(tools);
   }
 
   private estimateTurnInputTokens(
-    messages: Array<{ content: string }>,
+    messages: Array<{ content: string; attachments?: Array<{ type?: string }> }>,
     tools: Record<string, unknown>,
   ): number {
-    return estimatePromptTokens(
+    const textTokens = estimatePromptTokens(
       messages,
       Object.keys(tools).length,
       this.estimateToolSchemaChars(tools),
     );
+    let imageTokens = 0;
+    for (const m of messages) {
+      for (const a of m.attachments ?? []) {
+        if (a.type === 'image') imageTokens += 1_700;
+      }
+    }
+    return textTokens + imageTokens;
   }
 }

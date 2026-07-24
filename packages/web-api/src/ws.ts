@@ -34,6 +34,33 @@ interface SubAgentRecord { id: string; name: string; task: string; status: 'runn
 interface CrewInfo { crewId: string; name: string; callsign: string; color?: string; icon?: string; confidence?: string; reasons?: string[] }
 interface ToolCallRecord { id: string; name: string; args: unknown; status: string; result?: string; elapsed?: number; metadata?: Record<string, unknown> }
 
+function buildPersistMetadata(
+  extra?: {
+    thinking?: string;
+    thinkingStartedAt?: number;
+    thinkingDoneAt?: number;
+    subAgents?: SubAgentRecord[];
+    turnTokens?: number;
+    turnCostUsd?: number;
+    metadata?: MessageMetadata;
+  },
+  crew?: CrewInfo,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { ...(extra?.metadata as Record<string, unknown> | undefined) };
+  if (extra?.thinking) metadata['thinking'] = extra.thinking;
+  if (extra?.thinkingStartedAt != null) metadata['thinkingStartedAt'] = extra.thinkingStartedAt;
+  if (extra?.thinkingDoneAt != null) metadata['thinkingDoneAt'] = extra.thinkingDoneAt;
+  if (extra?.subAgents && extra.subAgents.length > 0) metadata['subAgents'] = extra.subAgents;
+  if (extra?.turnTokens != null) metadata['turnTokens'] = extra.turnTokens;
+  if (extra?.turnCostUsd != null) metadata['turnCostUsd'] = extra.turnCostUsd;
+  if (crew) {
+    metadata['crewId'] = crew.crewId;
+    metadata['crewName'] = crew.name;
+    metadata['callsign'] = crew.callsign;
+  }
+  return metadata;
+}
+
 function appendContextFile(
   sessionId: string,
   role: string,
@@ -78,12 +105,7 @@ function appendContextFile(
           plan: extra?.plan ? JSON.stringify(extra.plan) : undefined,
           parts: extra?.parts,
           attachments: extra?.attachments,
-          metadata: {
-            ...extra?.metadata,
-            crewId: crew.crewId,
-            crewName: crew.name,
-            callsign: crew.callsign,
-          },
+          metadata: buildPersistMetadata(extra, crew),
         });
       }
     } catch { /* best-effort */ }
@@ -96,7 +118,7 @@ function appendContextFile(
     const store = eng.sessionManager.getStorageAdapter();
     if (store?.insertMessage) {
       // Augment with the active provider/model if the caller didn't supply them.
-      const metadata: Record<string, unknown> = { ...(extra?.metadata as Record<string, unknown> | undefined) };
+      const metadata = buildPersistMetadata(extra);
       if (!metadata['provider'] || !metadata['model']) {
         try {
           const cfg = eng.configManager.load();
@@ -124,8 +146,18 @@ function appendContextFile(
 /**
  * Directly persist a message to PostgreSQL — independent of WebSocket subscription.
  */
-export function persistMessageDirect(sessionId: string, role: string, content: string, extra?: { thinking?: string; toolCalls?: ToolCallRecord[]; metadata?: MessageMetadata }): void {
-  appendContextFile(sessionId, role, content, undefined, extra);
+export function persistMessageDirect(
+  sessionId: string,
+  role: string,
+  content: string,
+  extra?: {
+    thinking?: string;
+    toolCalls?: ToolCallRecord[];
+    metadata?: MessageMetadata;
+    attachments?: unknown;
+  },
+): void {
+  appendContextFile(sessionId, role, content, undefined, extra as { attachments?: NormalizedAttachment[] } | undefined);
 }
 
 let wss: WebSocketServer | null = null;
@@ -356,6 +388,7 @@ async function handleWsMessage(ws: WebSocket, msg: { type: string; [key: string]
               event: 'background_task_complete',
               data: {
                 type: 'background_task_complete',
+                sessionId,
                 taskId: task.id,
                 childSessionId: task.childSessionId ?? task.id,
                 tokensUsed,
@@ -417,6 +450,8 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
   let perTurnCostUsd: number | undefined;
   const accumulatedParts: MessagePart[] = [];
   let textBuffer = '';
+  /** Last assistant message id written this subscription — used to patch late sub-agent completions. */
+  let lastPersistedAssistantId: string | undefined;
 
   function flushTextBuffer(): void {
     const clean = stripToolNoise(textBuffer);
@@ -458,6 +493,24 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
   } {
     const toolCalls = Array.from(toolCallMap.values());
     const subAgents = Array.from(subAgentMap.values());
+    // Ensure every sub-agent is represented in parts (chronological cards on restore).
+    for (const sa of subAgents) {
+      const idx = accumulatedParts.findIndex((p) => p.type === 'subagent' && p.agent?.id === sa.id);
+      const agentPart: MessagePart = {
+        type: 'subagent',
+        id: sa.id,
+        agent: {
+          id: sa.id,
+          name: sa.name,
+          task: sa.task,
+          status: sa.status,
+          result: sa.result,
+          kind: 'sub_agent',
+        },
+      };
+      if (idx >= 0) accumulatedParts[idx] = agentPart;
+      else accumulatedParts.push(agentPart);
+    }
     let parts = accumulatedParts.length > 0
       ? JSON.parse(JSON.stringify(accumulatedParts)) as MessagePart[]
       : undefined;
@@ -475,12 +528,47 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     return extra;
   }
 
+  function persistAssistantTurnPatch(sessionId: string, messageId: string | undefined, patch: {
+    thinking?: string;
+    thinkingStartedAt?: number | null;
+    thinkingDoneAt?: number;
+    subAgents?: SubAgentRecord[];
+    parts?: MessagePart[];
+    content?: string;
+  }): void {
+    if (!sessionId || !messageId) return;
+    try {
+      const eng = getEngine();
+      const store = eng.sessionManager.getStorageAdapter();
+      const existing = store.getMessages?.(sessionId)?.find((m) => m.id === messageId);
+      if (!existing) return;
+      const prevMeta = typeof existing.metadata === 'string'
+        ? (() => { try { return JSON.parse(existing.metadata) as Record<string, unknown>; } catch { return {}; } })()
+        : { ...(existing.metadata as Record<string, unknown> | undefined) };
+      const metadata: Record<string, unknown> = { ...prevMeta };
+      if (patch.thinking) metadata['thinking'] = patch.thinking;
+      if (patch.thinkingStartedAt != null) metadata['thinkingStartedAt'] = patch.thinkingStartedAt;
+      if (patch.thinkingDoneAt != null) metadata['thinkingDoneAt'] = patch.thinkingDoneAt;
+      if (patch.subAgents) metadata['subAgents'] = patch.subAgents;
+      store.updateMessage?.(sessionId, messageId, {
+        ...(patch.content != null ? { content: patch.content } : {}),
+        ...(patch.parts ? { parts: patch.parts } : {}),
+        metadata,
+      });
+    } catch { /* best-effort */ }
+  }
+
   unsubscribeFromAgent = agent.events.on((event: EngineEvent) => {
     const evType: string = event.type;
     broadcast({
       type: 'engine_event',
       event: evType,
-      data: event,
+      sessionId: subscribedSessionId || undefined,
+      data: {
+        ...(event as unknown as Record<string, unknown>),
+        // Stamp owning session so clients can isolate mid-turn streams after navigation.
+        ...(subscribedSessionId ? { sessionId: subscribedSessionId } : {}),
+      },
     });
 
     // Accumulate thinking deltas
@@ -491,7 +579,9 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     if (event.type === 'thinking_delta' || event.type === 'reasoning_delta') {
       if (thinkingStartedAt == null) thinkingStartedAt = Date.now();
       const delta = event.content ?? (event.type === 'thinking_delta' ? event.text : undefined) ?? '';
-      accumulatedThinking += delta;
+      // Metadata accumulator only — parts are already persisted via Agent.onPart.
+      // Re-persisting here doubled every reasoning token (HTTPHTTP / word word).
+      if (delta) accumulatedThinking = appendStreamText(accumulatedThinking, delta);
     }
 
     // Track plan steps
@@ -510,10 +600,8 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
     if (event.type === 'stream_chunk') {
       const delta = event.content ?? '';
       if (delta && !/Calling:|✅ Result:|\[STEP \d+\]/.test(delta)) {
+        // Buffer for message_received parts JSON only — text-delta rows come from onPart.
         textBuffer = appendStreamText(textBuffer, delta);
-        if (currentSessionId) {
-          persistPart(currentSessionId, { type: 'text-delta', content: delta, timestamp: Date.now() });
-        }
       }
     }
 
@@ -525,7 +613,21 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
       const eventArgs = event.args ?? description;
       if (toolName === 'delegate_to_subagent') {
         const id = event.callId ?? `sub-${Date.now()}-${subAgentMap.size}`;
-        subAgentMap.set(id, { id, name: 'Sub-Agent', task: description, status: 'running' });
+        const sa: SubAgentRecord = { id, name: 'Sub-Agent', task: description, status: 'running' };
+        subAgentMap.set(id, sa);
+        accumulatedParts.push({
+          type: 'subagent',
+          id,
+          agent: { id, name: sa.name, task: sa.task, status: 'running', kind: 'sub_agent' },
+        });
+        persistPart(currentSessionId, {
+          type: 'subagent',
+          toolName: 'delegate_to_subagent',
+          toolCallId: id,
+          content: description,
+          toolArgs: { name: sa.name, task: sa.task, status: 'running', kind: 'sub_agent' },
+          timestamp: Date.now(),
+        });
       } else {
         const id = event.callId ?? `tool-${Date.now()}-${toolCallMap.size}`;
         toolCallMap.set(id, { id, name: toolName, args: eventArgs, status: 'running' });
@@ -555,8 +657,30 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
         const id = event.callId;
         if (id && subAgentMap.has(id)) {
           const sa = subAgentMap.get(id)!;
-          sa.status = 'done';
+          // Background delegates stay running until background_task_complete.
+          const looksBackground = /background|running|spawned|child session/i.test(resultStr)
+            && !/failed|error/i.test(resultStr.slice(0, 80));
+          const successFlag = metadata?.['success'];
+          const failed = successFlag === false || /^error\b/i.test(resultStr.trim());
+          sa.status = failed ? 'error' : looksBackground ? 'running' : 'done';
           sa.result = resultStr;
+          const partIdx = accumulatedParts.findIndex((p) => p.type === 'subagent' && p.agent?.id === id);
+          if (partIdx >= 0 && accumulatedParts[partIdx]?.agent) {
+            accumulatedParts[partIdx] = {
+              ...accumulatedParts[partIdx]!,
+              agent: { ...accumulatedParts[partIdx]!.agent!, status: sa.status, result: sa.result },
+            };
+          }
+          persistPart(currentSessionId, {
+            type: 'subagent',
+            toolName: 'delegate_to_subagent',
+            toolCallId: id,
+            content: sa.task,
+            toolArgs: { name: sa.name, task: sa.task, status: sa.status, kind: 'sub_agent' },
+            toolResult: resultStr,
+            toolSuccess: sa.status !== 'error',
+            timestamp: Date.now(),
+          });
         }
       } else {
         const id = event.callId;
@@ -625,6 +749,159 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
       }
     }
 
+    // Bind callId → childSessionId so restore opens the right transcript.
+    if (event.type === 'child_session_started' && event.kind !== 'crew_worker') {
+      const childId = event.childSessionId;
+      const label = event.label || 'Sub-Agent';
+      let matched: SubAgentRecord | undefined;
+      for (const sa of subAgentMap.values()) {
+        if (sa.status === 'running' && (!matched || sa.task.includes(label) || label.includes(sa.task.slice(0, 40)))) {
+          matched = sa;
+        }
+      }
+      if (!matched) {
+        for (const sa of subAgentMap.values()) {
+          if (sa.status === 'running') { matched = sa; break; }
+        }
+      }
+      if (matched && childId) {
+        const oldId = matched.id;
+        subAgentMap.delete(oldId);
+        matched.id = childId;
+        matched.name = label || matched.name;
+        subAgentMap.set(childId, matched);
+        const partIdx = accumulatedParts.findIndex((p) => p.type === 'subagent' && p.agent?.id === oldId);
+        if (partIdx >= 0 && accumulatedParts[partIdx]?.agent) {
+          accumulatedParts[partIdx] = {
+            ...accumulatedParts[partIdx]!,
+            id: childId,
+            agent: { ...accumulatedParts[partIdx]!.agent!, id: childId, name: matched.name },
+          };
+        }
+        if (currentSessionId) {
+          persistPart(currentSessionId, {
+            type: 'subagent',
+            toolName: 'delegate_to_subagent',
+            toolCallId: childId,
+            content: matched.task,
+            toolArgs: { name: matched.name, task: matched.task, status: matched.status, kind: 'sub_agent' },
+            timestamp: Date.now(),
+          });
+        }
+      }
+    }
+
+    if (event.type === 'child_session_complete' || event.type === 'background_task_complete') {
+      const childId = event.type === 'background_task_complete'
+        ? (event.childSessionId || event.taskId)
+        : event.childSessionId;
+      const success = event.type === 'background_task_complete'
+        ? event.success !== false
+        : event.success;
+      const summary = event.type === 'background_task_complete' ? event.summary : undefined;
+      const instruction = event.type === 'background_task_complete' ? event.instruction : undefined;
+      const taskId = event.type === 'background_task_complete' ? event.taskId : undefined;
+      const ids = [childId, taskId].filter(Boolean) as string[];
+      let sa: SubAgentRecord | undefined;
+      for (const id of ids) {
+        if (subAgentMap.has(id)) { sa = subAgentMap.get(id); break; }
+      }
+      if (!sa) {
+        for (const candidate of subAgentMap.values()) {
+          if (candidate.status === 'running') { sa = candidate; break; }
+        }
+      }
+      const nextStatus: SubAgentRecord['status'] = success ? 'done' : 'error';
+      if (sa) {
+        sa.status = nextStatus;
+        if (summary) sa.result = summary;
+        const partIdx = accumulatedParts.findIndex((p) => p.type === 'subagent' && p.agent?.id === sa!.id);
+        if (partIdx >= 0 && accumulatedParts[partIdx]?.agent) {
+          accumulatedParts[partIdx] = {
+            ...accumulatedParts[partIdx]!,
+            agent: { ...accumulatedParts[partIdx]!.agent!, status: sa.status, result: sa.result },
+          };
+        }
+      }
+      // Always patch the persisted assistant row (including late completions after resetAccumulators).
+      if (currentSessionId && ids.length > 0) {
+        try {
+          const eng = getEngine();
+          const store = eng.sessionManager.getStorageAdapter();
+          const allMsgs = store.getMessages?.(currentSessionId) ?? [];
+          const targetId = lastPersistedAssistantId
+            || [...allMsgs].reverse().find((m) => m.role === 'assistant')?.id;
+          const existing = targetId ? allMsgs.find((m) => m.id === targetId) : undefined;
+          if (targetId) lastPersistedAssistantId = targetId;
+          if (existing) {
+            const prevMeta = typeof existing.metadata === 'string'
+              ? (() => { try { return JSON.parse(existing.metadata) as Record<string, unknown>; } catch { return {}; } })()
+              : { ...(existing.metadata as Record<string, unknown> | undefined) };
+            const prevSubs = Array.isArray(prevMeta['subAgents'])
+              ? [...(prevMeta['subAgents'] as SubAgentRecord[])]
+              : [];
+            const subIdx = prevSubs.findIndex((s) => ids.includes(s.id));
+            const patched: SubAgentRecord = subIdx >= 0
+              ? {
+                ...prevSubs[subIdx]!,
+                id: childId || prevSubs[subIdx]!.id,
+                status: nextStatus,
+                ...(summary ? { result: summary } : {}),
+              }
+              : {
+                id: childId || ids[0]!,
+                name: 'Sub-Agent',
+                task: String(instruction || sa?.task || ''),
+                status: nextStatus,
+                ...(summary ? { result: summary } : {}),
+              };
+            if (subIdx >= 0) prevSubs[subIdx] = patched;
+            else prevSubs.push(patched);
+            const prevParts = Array.isArray(existing.parts) ? [...existing.parts] as MessagePart[] : [];
+            const pIdx = prevParts.findIndex((p) => p.type === 'subagent' && p.agent && ids.includes(p.agent.id));
+            if (pIdx >= 0 && prevParts[pIdx]?.agent) {
+              prevParts[pIdx] = {
+                ...prevParts[pIdx]!,
+                id: patched.id,
+                agent: {
+                  ...prevParts[pIdx]!.agent!,
+                  id: patched.id,
+                  status: patched.status,
+                  result: patched.result,
+                  task: patched.task || prevParts[pIdx]!.agent!.task,
+                },
+              };
+            }
+            persistAssistantTurnPatch(currentSessionId, targetId, {
+              subAgents: prevSubs,
+              parts: prevParts.length > 0 ? prevParts : undefined,
+            });
+            persistPart(currentSessionId, {
+              type: 'subagent',
+              toolName: 'delegate_to_subagent',
+              toolCallId: patched.id,
+              content: patched.task,
+              toolArgs: { name: patched.name, task: patched.task, status: patched.status, kind: 'sub_agent' },
+              toolResult: patched.result,
+              toolSuccess: patched.status !== 'error',
+              timestamp: Date.now(),
+            });
+          }
+        } catch { /* best-effort */ }
+      } else if (sa && currentSessionId) {
+        persistPart(currentSessionId, {
+          type: 'subagent',
+          toolName: 'delegate_to_subagent',
+          toolCallId: sa.id,
+          content: sa.task,
+          toolArgs: { name: sa.name, task: sa.task, status: sa.status, kind: 'sub_agent' },
+          toolResult: sa.result,
+          toolSuccess: sa.status !== 'error',
+          timestamp: Date.now(),
+        });
+      }
+    }
+
     // Persist conversation to session context files
     try {
       const eng = getEngine();
@@ -662,18 +939,30 @@ export function subscribeToAgent(agent: { events: { on: (handler: EventHandler) 
           const text = repairStreamTextGlitches(stripToolNoise(msg?.content ?? ''));
           const crew = msg?.crew;
           if (sessionId && text) {
-            const thinkingText = accumulatedThinking || undefined;
+            const thinkingText = accumulatedThinking
+              ? repairStreamTextGlitches(accumulatedThinking)
+              : undefined;
             const extra = buildExtra(thinkingText);
             extra.attachments = msg?.attachments;
+            if (typeof msg?.id === 'string') lastPersistedAssistantId = msg.id;
             if (isUpdate && msg?.id) {
               const store = eng.sessionManager.getStorageAdapter();
               const existing = store.getMessages?.(sessionId)?.find((m) => m.id === msg.id);
               const existingParts = Array.isArray(existing?.parts) ? existing.parts : [];
               const newParts = Array.isArray(extra.parts) ? extra.parts : [];
-              const mergedParts = newParts.length > 0 ? [...existingParts, ...newParts] : existingParts;
+              // Prefer the richer turn snapshot over naive concat (avoids duplicate tools/subagents).
+              const mergedParts = newParts.length > 0 ? newParts : existingParts;
+              const prevMeta = typeof existing?.metadata === 'string'
+                ? (() => { try { return JSON.parse(existing.metadata as string) as Record<string, unknown>; } catch { return {}; } })()
+                : { ...(existing?.metadata as Record<string, unknown> | undefined) };
+              const metadata = {
+                ...prevMeta,
+                ...buildPersistMetadata(extra),
+              };
               store.updateMessage?.(sessionId, msg.id, {
                 content: text,
                 ...(mergedParts.length > 0 ? { parts: mergedParts } : {}),
+                metadata,
                 ...(msg?.attachments ? { attachments: msg.attachments } : {}),
               });
             } else {

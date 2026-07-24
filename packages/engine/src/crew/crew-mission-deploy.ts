@@ -1,8 +1,10 @@
 import type { Crew, CrewCreateInput } from '@agentx/shared';
+import { hubCatalogIdFromCallsign } from '@agentx/shared';
 import type { CrewManager } from '../crew/CrewManager.js';
 import type { Agent } from '../agent/Agent.js';
 import type { CrewMatchCandidate } from '@agentx/shared';
 import type { CrewMember } from '../agent/CrewOrchestrator.js';
+import { parseCrewMentionKeys } from '../agent/crew-mission-helpers.js';
 import { getCrewSuggestionService } from './get-crew-store.js';
 
 export type CrewCatalogRecruitStore = {
@@ -39,11 +41,16 @@ function findRosterCrewForHubReference(crewManager: CrewManager, crew: Crew): Cr
 function createHubCrewFromCatalogEntry(
   crewManager: CrewManager,
   catalog: NonNullable<Awaited<ReturnType<CrewCatalogRecruitStore['getCatalogEntry']>>>,
-): Crew {
+): Crew | null {
   const existing = crewManager.list().find(
     (c) => c.catalogId === catalog.id || callsignsMatch(c.callsign, catalog.callsign),
   );
   if (existing) return existing;
+
+  // Respect intentional deactivation — do not silently re-recruit from leftover refs.
+  if (crewManager.isIntentionallyDeleted(catalog.id, catalog.id)) {
+    return null;
+  }
 
   const input: CrewCreateInput = {
     id: catalog.id,
@@ -84,10 +91,14 @@ export async function ensureHubCrewOnRoster(
   const catalogId = crew.catalogId ?? (crew.id.startsWith('hub-') ? crew.id : undefined);
   if (!catalogId || !catalogStore) return crew;
 
+  if (crewManager.isIntentionallyDeleted(crew.id, catalogId)) {
+    return crew;
+  }
+
   const catalog = await catalogStore.getCatalogEntry(catalogId);
   if (!catalog) return crew;
 
-  return createHubCrewFromCatalogEntry(crewManager, catalog);
+  return createHubCrewFromCatalogEntry(crewManager, catalog) ?? crew;
 }
 
 /** Recruit mission crew to roster and wire them into the active agent (Agent-X sessions only). */
@@ -101,6 +112,7 @@ export async function ensureCrewMembersOnRoster(
 
   for (const member of members) {
     const crew = await ensureHubCrewOnRoster(crewManager, member.crew, catalogStore);
+    if (!crewManager.get(crew.id)) continue;
     crewManager.enable(crew.id);
     if (agent) {
       agent.addCrewMember(crew);
@@ -110,6 +122,89 @@ export async function ensureCrewMembersOnRoster(
   }
 
   return resolved;
+}
+
+function matchCrewByMentionKey(crew: Crew, key: string): boolean {
+  const k = key.trim().toLowerCase();
+  if (!k) return false;
+  return crew.callsign.toLowerCase() === k
+    || crew.id.toLowerCase() === k
+    || (crew.catalogId?.toLowerCase() === k)
+    || crew.name.toLowerCase() === k
+    || crew.name.toLowerCase().replace(/\s+/g, '_') === k
+    || hubCatalogIdFromCallsign(crew.callsign).toLowerCase() === k;
+}
+
+/**
+ * Resolve @crew mentions for group-chat routing: session roster → global roster → Hub catalog.
+ * Recruits missing hub specialists onto the session so explicit mentions never silently no-op.
+ */
+export async function resolveMentionedCrewMembers(
+  crewManager: CrewManager,
+  agent: Agent,
+  catalogStore: CrewCatalogRecruitStore | null,
+  content: string,
+): Promise<{ members: CrewMember[]; unresolved: string[] }> {
+  const keys = parseCrewMentionKeys(content);
+  if (keys.length === 0) return { members: [], unresolved: [] };
+
+  const members: CrewMember[] = [];
+  const unresolved: string[] = [];
+  const seenIds = new Set<string>();
+
+  for (const key of keys) {
+    let crew: Crew | undefined =
+      agent.getCrewMembers().find((m) => matchCrewByMentionKey(m.crew, key))?.crew
+      ?? crewManager.list().find((c) => matchCrewByMentionKey(c, key));
+
+    if (!crew && catalogStore) {
+      const catalogIds = [
+        key.startsWith('hub-') ? key : hubCatalogIdFromCallsign(key),
+        key,
+      ];
+      for (const catalogId of catalogIds) {
+        const catalog = await catalogStore.getCatalogEntry(catalogId);
+        if (!catalog) continue;
+        const recruited = createHubCrewFromCatalogEntry(crewManager, catalog);
+        if (recruited) {
+          crew = recruited;
+          break;
+        }
+      }
+    }
+
+    if (!crew) {
+      unresolved.push(key);
+      continue;
+    }
+
+    crew = await ensureHubCrewOnRoster(crewManager, crew, catalogStore);
+    // Must be on the global roster — skip ephemeral / intentionally deleted refs.
+    if (!crewManager.get(crew.id) || crew.enabled === false) {
+      unresolved.push(key);
+      continue;
+    }
+
+    crewManager.enable(crew.id);
+    agent.addCrewMember(crew);
+    agent.setCrewEnabled(crew.id, true);
+
+    const wired = agent.getCrewMembers().find((m) => m.crew.id === crew!.id);
+    const member: CrewMember = {
+      crew: wired?.crew ?? crew,
+      expertise: wired?.expertise ?? crew.expertise ?? [],
+      active: true,
+      tokensUsedThisSession: 0,
+      cpuTimeMs: 0,
+    };
+
+    if (!seenIds.has(member.crew.id)) {
+      seenIds.add(member.crew.id);
+      members.push(member);
+    }
+  }
+
+  return { members, unresolved };
 }
 
 export async function recruitCandidatesForMission(
@@ -139,6 +234,7 @@ export async function recruitCandidatesForMission(
       if (!catalog) continue;
 
       const crew = createHubCrewFromCatalogEntry(crewManager, catalog);
+      if (!crew) continue;
       crewManager.enable(crew.id);
       if (agent) {
         agent.addCrewMember(crew);

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, lazy, Suspense } from 'react';
 import Box from '@mui/material/Box';
+import Collapse from '@mui/material/Collapse';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import Tooltip from '@mui/material/Tooltip';
@@ -15,6 +16,7 @@ import { displayContent } from './utils';
 import { CrewAwareMarkdown, getWebCrewColor, StreamingMarkdown } from './ChatMarkdown';
 import { collectWebSourceUrls } from './web-source-urls';
 import { ChildSessionInlineCard, type ChildSessionCardProps } from './ChildSessionInlineCard';
+import { ThoughtCollapse } from './ThoughtCollapse';
 import { QuestionnaireMessage } from '../components/questionnaire/QuestionnaireMessage';
 import { CrewRosterPickerMessage } from '../components/crew/CrewRosterPickerMessage';
 import type { CrewMatchCandidate } from '@agentx/shared/browser';
@@ -25,10 +27,72 @@ import { formatVoiceTimingMs } from '../voice/timing';
 import { extractVoiceChannelBlock, stripVoiceChannelBlock } from './utils';
 import { ChartBlock } from './ChartBlock';
 import { WorkflowEntryCard } from './WorkflowEntryCard';
+import { usePersonaName } from '../hooks/usePersonaName';
+import { InlineToolCall, type InlineToolData } from '../components/InlineToolCall';
 
 // Loaded only when the user opens a turn's workflow — chunk stays out of the
 // chat path and the modal DOM is destroyed on close.
 const WorkflowModal = lazy(() => import('./WorkflowModal').then((m) => ({ default: m.WorkflowModal })));
+
+/**
+ * Collapsed tools summary — shows a single line "N tools used" that expands
+ * to reveal all completed tool calls. Uses the same visual theme as
+ * ThoughtCollapse: monospace label, dim color, › chevron, collapsible body.
+ */
+function CollapsedToolsSummary({ tools }: { tools: InlineToolData[] }) {
+  const [open, setOpen] = useState(false);
+  const errorCount = tools.filter((t) => t.status === 'error').length;
+  const label = `${tools.length} tool${tools.length === 1 ? '' : 's'} used${errorCount > 0 ? ` (${errorCount} error${errorCount === 1 ? '' : 's'})` : ''}`;
+
+  return (
+    <Box sx={{ mb: 0.5 }}>
+      <Box
+        onClick={() => setOpen((v) => !v)}
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 0.5,
+          cursor: 'pointer',
+          userSelect: 'none',
+          py: 0.15,
+          '&:hover .tools-label': { color: colors.text.secondary },
+        }}
+      >
+        <Typography
+          className="tools-label"
+          sx={{
+            fontSize: '0.68rem',
+            fontFamily: "'JetBrains Mono', monospace",
+            color: colors.text.dim,
+            letterSpacing: '0.02em',
+            fontWeight: 400,
+          }}
+        >
+          {label}
+        </Typography>
+        <Typography
+          sx={{
+            fontSize: '0.62rem',
+            color: colors.text.dim,
+            opacity: 0.7,
+            transform: open ? 'rotate(90deg)' : 'none',
+            transition: 'transform 0.28s ease',
+            lineHeight: 1,
+          }}
+        >
+          ›
+        </Typography>
+      </Box>
+      <Collapse in={open} unmountOnExit>
+        <Box sx={{ mt: 0.5 }}>
+          {tools.map((tool) => (
+            <InlineToolCall key={tool.id} tool={tool} compactTop />
+          ))}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
 
 function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
   const [expanded, setExpanded] = useState(false);
@@ -41,10 +105,12 @@ function SubAgentChip({ agent }: { agent: NonNullable<PartEntry['agent']> }) {
       }}>
         {agent.status === 'running' ? '◌' : agent.status === 'error' ? '✕' : '✓'} {agent.name}
       </Box>
-      {expanded && agent.result && (
-        <Box sx={{ mt: 0.5, p: 1, bgcolor: colors.bg.secondary, borderRadius: 1, fontSize: '0.6rem', whiteSpace: 'pre-wrap' }}>
-          {agent.result.slice(0, 2000)}
-        </Box>
+      {agent.result && (
+        <Collapse in={expanded} unmountOnExit>
+          <Box sx={{ mt: 0.5, p: 1, bgcolor: colors.bg.secondary, borderRadius: 1, fontSize: '0.6rem', whiteSpace: 'pre-wrap' }}>
+            {agent.result.slice(0, 2000)}
+          </Box>
+        </Collapse>
       )}
     </>
   );
@@ -106,13 +172,13 @@ function VoiceSummaryCard({ text }: { text: string }) {
           fontFamily: "'JetBrains Mono', monospace",
           color: colors.text.dim,
           flexShrink: 0,
-          transition: 'transform 0.15s',
+          transition: 'transform 0.28s ease',
           transform: expanded ? 'rotate(180deg)' : 'none',
         }}>
           ▾
         </Typography>
       </Box>
-      {expanded && (
+      <Collapse in={expanded} unmountOnExit>
         <Box sx={{ px: 1.25, pb: 1, pt: 0.25, borderTop: `1px solid ${alphaColor(colors.border.strong, '55')}` }}>
           <Typography sx={{
             fontSize: '0.62rem',
@@ -125,7 +191,7 @@ function VoiceSummaryCard({ text }: { text: string }) {
             {text}
           </Typography>
         </Box>
-      )}
+      </Collapse>
     </Box>
   );
 }
@@ -146,6 +212,7 @@ function renderParts(
       return !!(p.deepSearch?.bundle || p.deepSearch?.progress || p.deepSearch?.running);
     }
     if (p.type === 'text') return !!p.content?.trim();
+    if (p.type === 'thinking') return !!p.content?.trim();
     if (p.type === 'tool') return !!p.tool;
     if (p.type === 'chart') return !!p.chartJson;
     if (p.type === 'subagent') return !!p.agent;
@@ -159,16 +226,52 @@ function renderParts(
   // fallback card so users see a research summary without opening the workflow.
   const orderedAll = orderPartsForChatRender(filtered);
   const webSources = collectWebSourceUrls(orderedAll);
-  const ordered = orderedAll.filter((p) => p.type !== 'tool');
+  const ordered = orderedAll;
+
+  // A thinking block is "live" (expanded) only when it is the very last element
+  // in the ordered list AND we are streaming. As soon as any other element
+  // (tool call, text response, deep search, etc.) arrives after it, the
+  // thinking collapses — matching the user's mental model that thinking is
+  // provisional and gets replaced by the actual output.
+  const lastPartId = ordered.length > 0 ? ordered[ordered.length - 1].id : undefined;
+  const lastTextId = [...ordered].reverse().find((p) => p.type === 'text' && p.content?.trim())?.id;
+
+  // Collect tool parts for collapsed display. Tools are hidden from the inline
+  // message flow and shown as a single collapsible "Tools" summary, similar to
+  // the thinking collapse theme. Running tools are always visible.
+  const toolParts = ordered.filter((p) => p.type === 'tool' && p.tool);
+  const runningTools = toolParts.filter((p) => p.tool!.status === 'running');
+  const doneTools = toolParts.filter((p) => p.tool!.status !== 'running');
+  // Show tools inline only when streaming and there are running tools; otherwise collapse all.
+  const showToolsInline = streaming && runningTools.length > 0;
 
   const renderMainPart = (part: PartEntry) => {
     switch (part.type) {
+      case 'thinking':
+        if (!part.content?.trim()) return null;
+        // A thinking is "live" only if it is the very last part in the list.
+        // When any other element follows it (tool, text, etc.), it collapses.
+        const isLastPart = part.id === lastPartId;
+        return (
+          <ThoughtCollapse
+            key={part.id}
+            text={part.content}
+            live={streaming && isLastPart}
+          />
+        );
       case 'text':
         if (!part.content) return null;
         const textContent = stripVoiceChannelBlock(part.content);
         if (!textContent) return null;
         return streaming
-          ? <StreamingMarkdown key={part.id} content={textContent} webSources={webSources} />
+          ? (
+            <StreamingMarkdown
+              key={part.id}
+              content={textContent}
+              webSources={webSources}
+              live={part.id === lastTextId}
+            />
+          )
           : <CrewAwareMarkdown key={part.id} content={textContent} webSources={webSources} />;
       case 'deep_search':
         if (!part.deepSearch) return null;
@@ -243,6 +346,15 @@ function renderParts(
             <SubAgentChip agent={part.agent} />
           </Box>
         );
+      case 'tool':
+        // Tools are hidden from the inline message flow. Running tools are
+        // shown inline during streaming so the user sees live progress. Done
+        // tools are collapsed into a single "N tools used" summary line.
+        if (!part.tool) return null;
+        if (showToolsInline && part.tool.status === 'running') {
+          return <InlineToolCall key={part.id} tool={part.tool} />;
+        }
+        return null;
       default:
         return null;
     }
@@ -254,11 +366,22 @@ function renderParts(
       return node ? <React.Fragment key={part.id}>{node}</React.Fragment> : null;
     });
 
+  // Collapsed tools summary — shows a single line like "12 tools used" that
+  // expands to reveal all completed tool calls. Similar visual theme to
+  // ThoughtCollapse. Skipped when there are no done tools or when all tools
+  // are running (running tools are shown inline above).
+  const toolSummary = doneTools.length > 0 ? (
+    <CollapsedToolsSummary key="__tools_summary__" tools={doneTools.map((p) => p.tool!)} />
+  ) : null;
+
   const firstTextIdx = ordered.findIndex((p) => p.type === 'text');
+  // Tighter stack so conversational beats read as one living stream, not a card deck.
+  const stackSx = { display: 'flex', flexDirection: 'column', gap: 0.75 } as const;
   if (firstTextIdx >= 0) {
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      <Box sx={stackSx}>
         {firstTextIdx > 0 ? renderSlice(ordered.slice(0, firstTextIdx)) : null}
+        {toolSummary}
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
         {renderSlice(ordered.slice(firstTextIdx))}
       </Box>
@@ -266,8 +389,9 @@ function renderParts(
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+    <Box sx={stackSx}>
       {renderSlice(ordered)}
+      {toolSummary}
       {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
     </Box>
   );
@@ -287,6 +411,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
   feedbackSubmitting?: boolean;
 }) {
   const crewInfo = message.crew;
+  const personaName = usePersonaName();
   const displayColor = crewInfo ? (crewInfo.color || getWebCrewColor(crewInfo.callsign)) : colors.accent.blue;
   const [whyOpen, setWhyOpen] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
@@ -296,13 +421,23 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       content: message.content,
       parts: message.parts,
       toolCalls: message.toolCalls,
+      thinking: message.thinking,
+      subAgents: message.subAgents,
+      metadata: {
+        ...(message.thinking ? { thinking: message.thinking } : {}),
+        ...(message.thinkingStartedAt != null ? { thinkingStartedAt: message.thinkingStartedAt } : {}),
+        ...(message.thinkingDoneAt != null ? { thinkingDoneAt: message.thinkingDoneAt } : {}),
+        ...(message.subAgents ? { subAgents: message.subAgents } : {}),
+      },
     }, []),
-    [message.content, message.parts, message.toolCalls],
+    [message.content, message.parts, message.toolCalls, message.thinking, message.thinkingStartedAt, message.thinkingDoneAt, message.subAgents],
   );
   const displayMessage = useMemo(
     () => ({
       ...message,
       content: normalized.content || message.content,
+      thinking: normalized.thinking || message.thinking,
+      subAgents: normalized.subAgents ?? message.subAgents,
       parts: normalized.parts?.map((p) => (
         p.type === 'tool' && p.tool
           ? { ...p, tool: { ...p.tool, status: p.tool.status || 'done' as const } }
@@ -340,11 +475,11 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       voiceSummary,
       message.streaming,
     ) : (
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
         {voiceSummary ? <VoiceSummaryCard text={voiceSummary} /> : null}
         {cleanContent && (
           message.streaming
-            ? <StreamingMarkdown content={cleanContent} webSources={webSources} />
+            ? <StreamingMarkdown content={cleanContent} webSources={webSources} live />
             : <CrewAwareMarkdown content={cleanContent} webSources={webSources} />
         )}
       </Box>
@@ -352,13 +487,14 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     [hasParts, displayMessage.parts, onOpenChildSession, onQuestionnaireRespond, message.id, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, voiceSummary, message.streaming, cleanContent, webSources],
   );
 
+  const thinkingText = displayMessage.thinking || message.thinking;
   const hasWorkflow = useMemo(
     () => !message.streaming && message.role === 'assistant' && !!(
       displayMessage.toolCalls?.length
-      || message.thinking
+      || thinkingText
       || displayMessage.parts?.some((p) => p.type === 'tool' || p.type === 'deep_search')
     ),
-    [message.streaming, message.role, displayMessage.toolCalls, message.thinking, displayMessage.parts],
+    [message.streaming, message.role, displayMessage.toolCalls, thinkingText, displayMessage.parts],
   );
   const workflowStepCount = useMemo(() => {
     const parts = displayMessage.parts ?? [];
@@ -368,19 +504,25 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
     return toolParts + deepParts + fallbackTools;
   }, [displayMessage.parts, displayMessage.toolCalls]);
 
-  const subAgentCards = useMemo(
-    () => (message.subAgents ?? []).filter(
-      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker',
-    ),
-    [message.subAgents],
-  );
+  // Prefer chronological part-attached sub-agent cards (inline in the turn body).
+  // Only fall back to message.subAgents for agents missing from parts (legacy restore).
+  const orphanSubAgentCards = useMemo(() => {
+    const inParts = new Set(
+      (displayMessage.parts ?? [])
+        .filter((p) => p.type === 'subagent' && p.agent?.id)
+        .map((p) => p.agent!.id),
+    );
+    return (message.subAgents ?? []).filter(
+      (a) => a.id && a.id !== 'subagent' && a.kind !== 'crew_worker' && !inParts.has(a.id),
+    );
+  }, [displayMessage.parts, message.subAgents]);
 
   return (
     <Box sx={{ mb: 3, animation: 'agentx-fadeIn 0.25s ease-out' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
         <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: displayColor, boxShadow: crewInfo ? `0 0 6px ${alphaColor(displayColor, '80')}` : 'none', flexShrink: 0 }} />
         <Typography sx={{ fontSize: '0.6rem', fontWeight: 600, color: displayColor, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.5px' }}>
-          {crewInfo ? crewInfo.name : 'Agent-X'}
+          {crewInfo ? crewInfo.name : personaName}
         </Typography>
         {crewInfo?.callsign && (
           <Typography sx={{ fontSize: '0.5rem', color: colors.text.dim, fontFamily: "'JetBrains Mono', monospace", opacity: 0.7 }}>
@@ -399,28 +541,6 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
           <Typography component="span" onClick={() => setWhyOpen(!whyOpen)} sx={{ fontSize: '0.5rem', cursor: 'pointer', color: colors.text.dim, opacity: 0.5 }}>Why?</Typography>
         )}
       </Box>
-
-      {subAgentCards.length > 0 && onOpenChildSession && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: hasParts || cleanContent ? 1.25 : 0 }}>
-          {subAgentCards.map((agent) => (
-            <ChildSessionInlineCard
-              key={agent.id}
-              childSessionId={agent.id}
-              label={agent.name}
-              kind={agent.kind ?? 'sub_agent'}
-              status={agent.status}
-              task={agent.task}
-              onExpand={() => onOpenChildSession({
-                childSessionId: agent.id,
-                label: agent.name,
-                kind: agent.kind ?? 'sub_agent',
-                status: agent.status,
-                task: agent.task,
-              })}
-            />
-          ))}
-        </Box>
-      )}
 
       {message.attachments && message.attachments.length > 0 && (
         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.75 }}>
@@ -448,6 +568,32 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       )}
 
       {hasParts || cleanContent || hasQuestionnaire ? contentBlock : null}
+      {/* Legacy fallback: thinking blob with no chronological thinking parts. */}
+      {!hasParts && thinkingText ? (
+        <ThoughtCollapse text={thinkingText} live={!!message.streaming} />
+      ) : null}
+
+      {orphanSubAgentCards.length > 0 && onOpenChildSession && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: hasParts || cleanContent ? 1.25 : 0 }}>
+          {orphanSubAgentCards.map((agent) => (
+            <ChildSessionInlineCard
+              key={agent.id}
+              childSessionId={agent.id}
+              label={agent.name}
+              kind={agent.kind ?? 'sub_agent'}
+              status={agent.status}
+              task={agent.task}
+              onExpand={() => onOpenChildSession({
+                childSessionId: agent.id,
+                label: agent.name,
+                kind: agent.kind ?? 'sub_agent',
+                status: agent.status,
+                task: agent.task,
+              })}
+            />
+          ))}
+        </Box>
+      )}
 
       {message.streaming && !cleanContent && !hasParts && !hasQuestionnaire && (
         <Box sx={{ display: 'flex', gap: 0.4, py: 0.5 }}>
@@ -501,7 +647,7 @@ function ChatMessageTurnComponent({ message, loadingSteps, onOpenChildSession, o
       {hasWorkflow && (
         <WorkflowEntryCard
           stepCount={workflowStepCount}
-          hasReasoning={!!message.thinking}
+          hasReasoning={!!thinkingText}
           onOpen={() => setWorkflowOpen(true)}
         />
       )}
@@ -567,8 +713,8 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   const pm = prev.message;
   const nm = next.message;
   if (pm.id !== nm.id || pm.content !== nm.content || pm.streaming !== nm.streaming) return false;
-  // Thinking renders only in the Workflow modal — presence toggles the button.
-  if (!!pm.thinking !== !!nm.thinking) return false;
+  // Thinking field still drives Workflow modal; parts drive inline ThoughtCollapse.
+  if ((pm.thinking ?? '') !== (nm.thinking ?? '')) return false;
   // Tool cards render only in the Workflow modal — only count/completion matter
   // (webSources chips derive from completed tool results).
   if ((pm.toolCalls?.length ?? 0) !== (nm.toolCalls?.length ?? 0)) return false;
@@ -580,7 +726,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
   if (pm.turnFeedback?.rating !== nm.turnFeedback?.rating) return false;
   if (pm.voiceTimings?.totalMs !== nm.voiceTimings?.totalMs) return false;
   const isRenderedPart = (p: NonNullable<UIMessage['parts']>[number]) =>
-    p.type === 'text' || p.type === 'chart' || p.type === 'questionnaire'
+    p.type === 'text' || p.type === 'thinking' || p.type === 'chart' || p.type === 'questionnaire'
     || p.type === 'crew_roster_picker' || p.type === 'subagent';
   const prevParts = (pm.parts ?? []).filter(isRenderedPart);
   const nextParts = (nm.parts ?? []).filter(isRenderedPart);
@@ -591,6 +737,7 @@ function propsEqual(prev: { message: UIMessage; loadingSteps?: Array<{ id: strin
       const np = nextParts[i]!;
       if (pp.type !== np.type || pp.id !== np.id) return false;
       if (pp.type === 'text' && pp.content !== np.content) return false;
+      if (pp.type === 'thinking' && pp.content !== np.content) return false;
       if (pp.type === 'chart' && pp.chartJson !== np.chartJson) return false;
       if (pp.type === 'questionnaire' && pp.questionnaire?.status !== np.questionnaire?.status) return false;
       if (pp.type === 'subagent' && (pp.agent?.status !== np.agent?.status || pp.agent?.result !== np.agent?.result)) return false;

@@ -1,6 +1,7 @@
 /**
  * Limits concurrent CPU-bound background work (embeddings, ingestion, neural jobs).
- * Thread count is controlled via RuntimeSettings; this pool limits parallel task slots.
+ * Slot count comes from Settings → Performance (PerformanceGovernor).
+ * Excess work always queues in run() — never dropped.
  */
 export class BackgroundTaskPool {
   private active = 0;

@@ -41,6 +41,23 @@ export function enrichSessionMessagesForUi(
     if (normalized.toolCalls) {
       msg['toolCalls'] = normalized.toolCalls;
     }
+    if (normalized.thinking) {
+      (msg as Record<string, unknown>)['thinking'] = normalized.thinking;
+    }
+    if (normalized.subAgents?.length) {
+      (msg as Record<string, unknown>)['subAgents'] = normalized.subAgents;
+    }
+    const meta = typeof msg['metadata'] === 'string'
+      ? (() => { try { return JSON.parse(msg['metadata'] as string) as Record<string, unknown>; } catch { return {}; } })()
+      : (msg['metadata'] as Record<string, unknown> | undefined);
+    if (meta) {
+      if (typeof meta['thinkingStartedAt'] === 'number') {
+        (msg as Record<string, unknown>)['thinkingStartedAt'] = meta['thinkingStartedAt'];
+      }
+      if (typeof meta['thinkingDoneAt'] === 'number') {
+        (msg as Record<string, unknown>)['thinkingDoneAt'] = meta['thinkingDoneAt'];
+      }
+    }
   }
 
   for (const msg of messages) {
@@ -64,6 +81,19 @@ export function enrichSessionMessagesForUi(
           icon: crewMember?.icon,
         };
       }
+      // Surface persisted turn richness even when normalize had no parts rows.
+      if (!msg['thinking'] && typeof meta['thinking'] === 'string') {
+        msg['thinking'] = meta['thinking'];
+      }
+      if (!msg['subAgents'] && Array.isArray(meta['subAgents'])) {
+        msg['subAgents'] = meta['subAgents'];
+      }
+      if (msg['thinkingStartedAt'] == null && typeof meta['thinkingStartedAt'] === 'number') {
+        msg['thinkingStartedAt'] = meta['thinkingStartedAt'];
+      }
+      if (msg['thinkingDoneAt'] == null && typeof meta['thinkingDoneAt'] === 'number') {
+        msg['thinkingDoneAt'] = meta['thinkingDoneAt'];
+      }
     }
   }
 
@@ -78,5 +108,7 @@ export function mergeNormalizedMessageForApi(msg: Record<string, unknown> | Stor
     content: normalized.content,
     parts: normalized.parts,
     toolCalls: normalized.toolCalls ?? msg['toolCalls'],
+    ...(normalized.thinking ? { thinking: normalized.thinking } : {}),
+    ...(normalized.subAgents?.length ? { subAgents: normalized.subAgents } : {}),
   };
 }

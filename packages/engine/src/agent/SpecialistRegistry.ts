@@ -113,7 +113,7 @@ export class SpecialistRegistry {
       name: 'Documentation Writer',
       specialty: 'docs_writer',
       description: 'Writes and maintains documentation',
-      preferredTools: ['file_read', 'file_write', 'code_definitions', 'doc_markdown', 'doc_html'],
+      preferredTools: ['file_read', 'file_write', 'code_definitions', 'gen_markdown', 'gen_html'],
       systemPrompt: 'Write clear, concise docs. Include examples and API references where relevant.',
     });
 
@@ -122,7 +122,7 @@ export class SpecialistRegistry {
       name: 'Software Architect',
       specialty: 'architect',
       description: 'Designs system architecture and technical decisions',
-      preferredTools: ['file_write', 'code_search', 'doc_diagram', 'file_read', 'shell_exec'],
+      preferredTools: ['file_write', 'code_search', 'gen_diagram', 'file_read', 'shell_exec'],
       systemPrompt: 'Design clean architectures, evaluate tradeoffs, and document decisions. Think at the system level.',
     });
 

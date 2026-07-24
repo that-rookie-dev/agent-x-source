@@ -719,7 +719,7 @@ const COMPLIANCE_AUDIT_TOOLS = [
   'file_read', 'folder_list', 'glob', 'grep', 'code_search', 'code_grep', 'code_definitions',
   'security_audit', 'security_secrets', 'pkg_audit', 'git_status', 'git_diff', 'git_log',
   'env_read', 'container_list', 'container_logs', 'shell_exec', 'json_parse', 'pdf_read',
-  'doc_markdown', 'test_run', 'http_get',
+  'gen_markdown', 'test_run', 'http_get',
 ];
 
 function complianceRole(title, framework, specialty, controlDomains, name, tone) {

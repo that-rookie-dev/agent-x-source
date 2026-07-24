@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState, memo } from 'react';
+import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
+import CloseIcon from '@mui/icons-material/Close';
 import { colors, alphaColor } from '../../theme';
 
 function formatWarningsForCopy(messages: string[]): string {
@@ -17,11 +18,19 @@ interface Props {
   sendBlocked: boolean;
   sendBlockedReason: string;
   configLoaded: boolean;
+  onDismiss?: () => void;
 }
 
 /** Thin full-width band at the top of the chat window for warnings and errors. */
-export const ChatWarningBand = memo(function ChatWarningBand({ warnings, sendBlocked, sendBlockedReason, configLoaded }: Props) {
+export const ChatWarningBand = memo(function ChatWarningBand({
+  warnings,
+  sendBlocked,
+  sendBlockedReason,
+  configLoaded,
+  onDismiss,
+}: Props) {
   const [copied, setCopied] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   const messages = useMemo(() => {
     const items = [...warnings];
@@ -30,6 +39,11 @@ export const ChatWarningBand = memo(function ChatWarningBand({ warnings, sendBlo
     }
     return items;
   }, [warnings, sendBlocked, configLoaded, sendBlockedReason]);
+
+  // Re-show the band when a new warning / block reason appears.
+  useEffect(() => {
+    setDismissed(false);
+  }, [warnings, sendBlockedReason, sendBlocked]);
 
   const handleCopy = useCallback(async () => {
     if (messages.length === 0) return;
@@ -42,14 +56,27 @@ export const ChatWarningBand = memo(function ChatWarningBand({ warnings, sendBlo
     }
   }, [messages]);
 
-  if (messages.length === 0) return null;
+  const handleClose = useCallback(() => {
+    setDismissed(true);
+    onDismiss?.();
+  }, [onDismiss]);
+
+  if (dismissed || messages.length === 0) return null;
+
+  const iconBtnSx = {
+    color: alphaColor(colors.accent.orange, 'cc'),
+    p: 0.35,
+    mt: -0.1,
+    flexShrink: 0,
+    '&:hover': { bgcolor: alphaColor(colors.accent.orange, '18') },
+  } as const;
 
   return (
     <Box
       sx={{
         display: 'flex',
         alignItems: 'flex-start',
-        gap: 0.75,
+        gap: 0.35,
         px: 1.5,
         py: 0.55,
         bgcolor: alphaColor(colors.accent.orange, '16'),
@@ -104,17 +131,22 @@ export const ChatWarningBand = memo(function ChatWarningBand({ warnings, sendBlo
         <IconButton
           size="small"
           onClick={() => { void handleCopy(); }}
-          sx={{
-            color: alphaColor(colors.accent.orange, 'cc'),
-            p: 0.35,
-            mt: -0.1,
-            flexShrink: 0,
-            '&:hover': { bgcolor: alphaColor(colors.accent.orange, '18') },
-          }}
+          sx={iconBtnSx}
         >
           {copied
             ? <CheckIcon sx={{ fontSize: 13 }} />
             : <ContentCopyIcon sx={{ fontSize: 13 }} />}
+        </IconButton>
+      </Tooltip>
+
+      <Tooltip title="Close">
+        <IconButton
+          size="small"
+          onClick={handleClose}
+          aria-label="Close warning"
+          sx={iconBtnSx}
+        >
+          <CloseIcon sx={{ fontSize: 14 }} />
         </IconButton>
       </Tooltip>
     </Box>

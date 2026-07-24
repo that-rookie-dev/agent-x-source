@@ -13,29 +13,20 @@ import Stepper from '@mui/material/Stepper';
 import Step from '@mui/material/Step';
 import StepLabel from '@mui/material/StepLabel';
 import CircularProgress from '@mui/material/CircularProgress';
-import Alert from '@mui/material/Alert';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
-import Checkbox from '@mui/material/Checkbox';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
+import Collapse from '@mui/material/Collapse';
 import { CheckCircle } from '../components/CheckCircle';
 import BadgeIcon from '@mui/icons-material/Badge';
 import StorageIcon from '@mui/icons-material/Storage';
 import CloudIcon from '@mui/icons-material/Cloud';
-import SyncAltIcon from '@mui/icons-material/SyncAlt';
-import ShieldIcon from '@mui/icons-material/Shield';
-import HubIcon from '@mui/icons-material/Hub';
-import PublicIcon from '@mui/icons-material/Public';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import BoltIcon from '@mui/icons-material/Bolt';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import HomeIcon from '@mui/icons-material/Home';
 import { providers as provApi, models as modelsApi, config, settings, voice, personaApi, type DbConnectionTestResult, type DbExtensionCheck } from '../api';
 import { useApp } from '../store/AppContext';
 import { useGlobalError } from '../components/ErrorBand';
@@ -43,11 +34,13 @@ import { LocalModelStep } from '../components/LocalModelStep';
 import type { ActiveDownload } from '../components/DownloadIndicator';
 import type { ProviderInfo, ModelInfo, AgentXConfig, BenchmarkRunResult } from '../api';
 import { useLocalModelSupported, useSystemCapabilities } from '../hooks/useSystemCapabilities';
-import { ModelBenchmarkRunner, gradeAllowsAgentX } from '../components/settings/ModelBenchmarkRunner';
+import { ModelBenchmarkRunner, BenchmarkGradeAck, canProceedWithBenchmarkGrade } from '../components/settings/ModelBenchmarkRunner';
 import { WizardVoiceStep } from '../components/setup/WizardVoiceStep';
 import { WizardNeuralStep } from '../components/setup/WizardNeuralStep';
 import { WizardTelegramStep } from '../components/setup/WizardTelegramStep';
-import { WizardCheckMark, WizardHintTag, WizardStepHeader } from '../components/setup/wizard-ui';
+import { WorkspaceCard } from '../components/settings/WorkspaceCard';
+import { WizardPerformancePreset } from '../components/setup/WizardPerformancePreset';
+import { WizardCheckMark, WizardStepHeader, WizardStepIcon } from '../components/setup/wizard-ui';
 import {
   wizardBackBtnSx,
   wizardPanelSx,
@@ -145,6 +138,8 @@ export function SetupWizard() {
     return true;
   }), [localModelSupported]);
   const [step, setStep] = useState(0);
+  /** Furthest step index reached — enables clicking completed steps in the stepper. */
+  const [maxReachedStep, setMaxReachedStep] = useState(0);
 
   const isStepSupported = useCallback((stepIndex: number) => {
     const label = ALL_STEPS[stepIndex];
@@ -168,6 +163,10 @@ export function SetupWizard() {
   }, [step, isStepSupported, moveStep]);
 
   useEffect(() => {
+    setMaxReachedStep((m) => Math.max(m, step));
+  }, [step]);
+
+  useEffect(() => {
     void config.getSetupStatus().then((status) => {
       if (status.setupComplete) {
         clearWizardProgress();
@@ -178,11 +177,20 @@ export function SetupWizard() {
   }, [navigate, setAuthState]);
   const { showError, clearError } = useGlobalError();
   const [loading, setLoading] = useState(false);
-  const [showBackWarning, setShowBackWarning] = useState(false);
+  const [neuralReady, setNeuralReady] = useState(false);
+
+  const goToStep = useCallback((stepIndex: number) => {
+    if (!isStepSupported(stepIndex)) return;
+    if (stepIndex > maxReachedStep) return;
+    clearError();
+    setShowRelayConfig(false);
+    setStep(stepIndex);
+  }, [isStepSupported, maxReachedStep, clearError]);
 
   const [availableProviders, setAvailableProviders] = useState<ProviderInfo[]>([]);
   const [selectedProvider, setSelectedProvider] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
   const [localHost, setLocalHost] = useState('localhost');
   const [localPort, setLocalPort] = useState('11434');
@@ -202,6 +210,7 @@ export function SetupWizard() {
   const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkRunResult | null>(null);
   const [benchmarkRunning, setBenchmarkRunning] = useState(false);
   const [limitedOverride, setLimitedOverride] = useState(false);
+  const [standbyOverride, setStandbyOverride] = useState(false);
 
   // DB
   const [selectedBackend, setSelectedBackend] = useState<'embedded-postgres' | 'postgres'>('embedded-postgres');
@@ -243,6 +252,13 @@ export function SetupWizard() {
   const [voiceCalibrated, setVoiceCalibrated] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [telegramLinked, setTelegramLinked] = useState(false);
+  const [telegramBotLabel, setTelegramBotLabel] = useState<string | null>(null);
+  const [telegramChatLabel, setTelegramChatLabel] = useState<string | null>(null);
+  /** Gate persist until restore finishes — avoids wiping localStorage with empty defaults (Strict Mode). */
+  const [progressHydrated, setProgressHydrated] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  /** Balanced is preselected — ready until proven otherwise. */
+  const [performanceReady, setPerformanceReady] = useState(true);
 
   const resetPgTest = () => {
     setPgTestResult(null);
@@ -261,21 +277,51 @@ export function SetupWizard() {
     return { host: sshHost, port: parseInt(sshPort) || 22, username: sshUser, password: sshAuthMode === 'password' ? sshPassword : undefined, privateKey: sshAuthMode === 'key' ? sshKey : undefined };
   };
 
-  // Progress restore — shift threshold since no relay step
+  // Progress restore — must finish before any persist (Strict Mode would otherwise wipe fields).
   useEffect(() => {
     const saved = loadWizardProgress();
     if (saved && saved.step >= 1) {
       setStep(saved.step);
+      setMaxReachedStep(Math.max(saved.step, saved.maxReachedStep ?? 0));
       setSelectedProvider(saved.selectedProvider);
       setSelectedModel(saved.selectedModel);
+      if (saved.selectedReasoningEffort) setSelectedReasoningEffort(saved.selectedReasoningEffort);
       setCallsign(saved.callsign || '');
+      if (saved.profileName) setProfileName(saved.profileName);
+      if (saved.apiKey) setApiKey(saved.apiKey);
+      if (saved.apiKeyConfigured) setApiKeyConfigured(true);
+      if (saved.baseUrl) setBaseUrl(saved.baseUrl);
+      if (saved.localHost) setLocalHost(saved.localHost);
+      if (saved.localPort) setLocalPort(saved.localPort);
       if (saved.personaName) setPersonaName(saved.personaName);
       if (saved.personaDescription) setPersonaDescription(saved.personaDescription);
       if (saved.personaCommStyle) setPersonaCommStyle(saved.personaCommStyle as CommunicationStyle);
       if (saved.personaDecisionStyle) setPersonaDecisionStyle(saved.personaDecisionStyle as DecisionMakingStyle);
       if (saved.personaDomain) setPersonaDomain(saved.personaDomain);
       if (saved.personaTraits) setPersonaTraits(saved.personaTraits);
-      setSelectedBackend('embedded-postgres');
+      if (saved.limitedOverride) setLimitedOverride(true);
+      if (saved.standbyOverride) setStandbyOverride(true);
+      if (saved.benchmarkGrade === 'LIMITED' || saved.benchmarkGrade === 'STANDBY'
+        || saved.benchmarkGrade === 'ELITE' || saved.benchmarkGrade === 'CLEARED') {
+        setBenchmarkResult({
+          runId: 'restored',
+          providerId: saved.selectedProvider,
+          modelId: saved.selectedModel,
+          grade: saved.benchmarkGrade,
+          overallScore: 0,
+          maxScore: 0,
+          percent: 0,
+          tests: [],
+          modalities: [],
+          startedAt: '',
+          finishedAt: '',
+          durationMs: 0,
+          fromCache: true,
+        });
+      }
+      if (saved.selectedBackend === 'postgres' || saved.selectedBackend === 'embedded-postgres') {
+        setSelectedBackend(saved.selectedBackend);
+      }
       if (saved.step >= 1) {
         setStorageProvisioned(true);
         setProvisionedBackend(saved.selectedBackend === 'postgres' ? 'postgres' : 'embedded-postgres');
@@ -284,6 +330,8 @@ export function SetupWizard() {
       if (saved.skipLocalModel) setSkipLocalModel(saved.skipLocalModel);
       if (saved.voiceCalibrated) setVoiceCalibrated(saved.voiceCalibrated);
       if (saved.telegramLinked) setTelegramLinked(saved.telegramLinked);
+      if (saved.telegramBotLabel) setTelegramBotLabel(saved.telegramBotLabel);
+      if (saved.telegramChatLabel) setTelegramChatLabel(saved.telegramChatLabel);
       if (saved.selectedProvider) {
         setModelsLoading(true);
         provApi.models(saved.selectedProvider).then(m => {
@@ -291,12 +339,18 @@ export function SetupWizard() {
           if (saved.selectedModel) {
             const model = m.find((entry) => entry.id === saved.selectedModel);
             const levels = model?.reasoning?.effortLevels ?? [];
-            setSelectedReasoningEffort(model?.reasoning?.defaultEffort ?? levels[0] ?? '');
+            setSelectedReasoningEffort(
+              saved.selectedReasoningEffort
+                || model?.reasoning?.defaultEffort
+                || levels[0]
+                || '',
+            );
           }
           setModelsLoading(false);
         }).catch(() => setModelsLoading(false));
       }
     }
+    setProgressHydrated(true);
     provApi.available().then(p => setAvailableProviders(p.filter(Boolean))).catch(() => showError('Failed to load providers.'));
   }, []);
 
@@ -307,27 +361,61 @@ export function SetupWizard() {
     }
   }, []);
 
+  // Hydrate profile from server when revisiting with empty local fields.
+  useEffect(() => {
+    if (!progressHydrated || step !== 2 || !selectedProvider) return;
+    void (async () => {
+      try {
+        const list = await provApi.configured();
+        const p = list.find((entry) => entry.id === selectedProvider);
+        if (!p?.configured) return;
+        setApiKeyConfigured(true);
+        if (p.activeProfile) {
+          setProfileName((prev) => (prev.trim() ? prev : p.activeProfile!));
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [progressHydrated, step, selectedProvider]);
+
   const persistProgress = useCallback(() => {
-    if (step >= 1) {
-      saveWizardProgress({
-        step,
-        selectedProvider,
-        selectedModel,
-        callsign,
-        selectedBackend,
-        selectedLocalModel,
-        skipLocalModel,
-        voiceCalibrated,
-        telegramLinked,
-        personaName,
-        personaDescription,
-        personaCommStyle,
-        personaDecisionStyle,
-        personaDomain,
-        personaTraits,
-      });
-    }
-  }, [step, selectedProvider, selectedModel, callsign, selectedBackend, selectedLocalModel, skipLocalModel, voiceCalibrated, telegramLinked]);
+    if (!progressHydrated || step < 1) return;
+    saveWizardProgress({
+      step,
+      maxReachedStep,
+      selectedProvider,
+      selectedModel,
+      selectedReasoningEffort,
+      callsign,
+      selectedBackend,
+      profileName,
+      apiKey,
+      apiKeyConfigured: apiKeyConfigured || Boolean(apiKey.trim()),
+      baseUrl,
+      localHost,
+      localPort,
+      selectedLocalModel,
+      skipLocalModel,
+      voiceCalibrated,
+      telegramLinked,
+      telegramBotLabel: telegramBotLabel ?? undefined,
+      telegramChatLabel: telegramChatLabel ?? undefined,
+      personaName,
+      personaDescription,
+      personaCommStyle,
+      personaDecisionStyle,
+      personaDomain,
+      personaTraits,
+      limitedOverride,
+      standbyOverride,
+      benchmarkGrade: benchmarkResult?.grade,
+    });
+  }, [
+    progressHydrated, step, maxReachedStep, selectedProvider, selectedModel, selectedReasoningEffort, callsign,
+    selectedBackend, profileName, apiKey, apiKeyConfigured, baseUrl, localHost, localPort,
+    selectedLocalModel, skipLocalModel, voiceCalibrated, telegramLinked, telegramBotLabel, telegramChatLabel,
+    personaName, personaDescription, personaCommStyle, personaDecisionStyle, personaDomain, personaTraits,
+    limitedOverride, standbyOverride, benchmarkResult?.grade,
+  ]);
   useEffect(() => { persistProgress(); }, [persistProgress]);
 
   const next = () => {
@@ -485,28 +573,51 @@ export function SetupWizard() {
     back();
   };
 
-  const handleBackToCredentials = () => { setShowBackWarning(true); };
-  const confirmBackToCredentials = () => {
-    setShowBackWarning(false); setApiKey(''); setBaseUrl(''); setAvailableModels([]); setSelectedModel(''); clearWizardProgress(); setStep(2);
-  };
-
   const selectedProviderInfo = availableProviders.find(p => p.id === selectedProvider);
   const isLocal = selectedProviderInfo?.type === 'local';
   const isAzure = selectedProvider === 'azure';
 
+  const selectProvider = (providerId: string) => {
+    if (providerId === selectedProvider) return;
+    setSelectedProvider(providerId);
+    // Fresh provider → clear profile fields; same provider revisit keeps them.
+    setProfileName('');
+    setApiKey('');
+    setApiKeyConfigured(false);
+    setBaseUrl('');
+    setSelectedModel('');
+    setSelectedReasoningEffort('');
+    setAvailableModels([]);
+    setBenchmarkResult(null);
+    const info = availableProviders.find((p) => p.id === providerId);
+    if (info?.type === 'local') {
+      const ep = parseLocalEndpoint(info.defaultBaseUrl, providerId);
+      setLocalHost(ep.host);
+      setLocalPort(ep.port);
+      setBaseUrl(buildLocalBaseUrl(providerId, ep.host, ep.port));
+    } else {
+      setLocalHost('localhost');
+      setLocalPort(defaultLocalPort(providerId));
+    }
+  };
+
   const handleProviderNext = () => {
     if (!selectedProvider) { showError('Select a provider'); return; }
     if (selectedProviderInfo?.type === 'local') {
-      const ep = parseLocalEndpoint(selectedProviderInfo.defaultBaseUrl, selectedProvider);
-      setLocalHost(ep.host);
-      setLocalPort(ep.port);
-      setBaseUrl(buildLocalBaseUrl(selectedProvider, ep.host, ep.port));
+      // Only seed defaults when the user hasn't set an endpoint yet.
+      const stillDefault = !localHost.trim() || !localPort.trim();
+      if (stillDefault) {
+        const ep = parseLocalEndpoint(selectedProviderInfo.defaultBaseUrl, selectedProvider);
+        setLocalHost(ep.host);
+        setLocalPort(ep.port);
+        setBaseUrl(buildLocalBaseUrl(selectedProvider, ep.host, ep.port));
+      }
     }
     next();
   };
   const handleProfileNext = async () => {
     if (!profileName.trim()) { showError('Enter a profile name'); return; }
-    if (!isLocal && !apiKey.trim()) { showError('Enter your API key'); return; }
+    if (!isLocal && !apiKey.trim() && !apiKeyConfigured) { showError('Enter your API key'); return; }
     if (isAzure && !baseUrl.trim()) { showError('Azure requires a resource endpoint URL'); return; }
     if (isLocal && !localPort.trim()) { showError('Enter the local server port'); return; }
     setLoading(true);
@@ -515,9 +626,25 @@ export function SetupWizard() {
         ? buildLocalBaseUrl(selectedProvider, localHost, localPort)
         : (baseUrl || undefined);
       if (isLocal) setBaseUrl(resolvedBaseUrl!);
-      const r = await provApi.validate(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, resolvedBaseUrl);
+
+      // Revisit with key already on file — re-validate via stored creds, skip configure
+      // so we never wipe the server-side key with an empty body.
+      if (!isLocal && apiKeyConfigured && !apiKey.trim()) {
+        const r = await provApi.validate(selectedProvider, undefined, resolvedBaseUrl);
+        if (!r.valid) { showError(r.error ?? 'Invalid credentials'); setLoading(false); return; }
+        if (availableModels.length === 0) {
+          const ml = await provApi.models(selectedProvider);
+          setAvailableModels(ml);
+        }
+        next();
+        return;
+      }
+
+      const keyForRequest = isLocal ? 'no-key-needed' : apiKey.trim();
+      const r = await provApi.validate(selectedProvider, keyForRequest, resolvedBaseUrl);
       if (!r.valid) { showError(r.error ?? 'Invalid credentials'); setLoading(false); return; }
-      await provApi.configure(selectedProvider, isLocal ? 'no-key-needed' : apiKey || undefined, resolvedBaseUrl, profileName.trim());
+      await provApi.configure(selectedProvider, keyForRequest, resolvedBaseUrl, profileName.trim());
+      if (!isLocal) setApiKeyConfigured(true);
       const ml = await provApi.models(selectedProvider);
       setAvailableModels(ml); next();
     } catch (err) { showError(err instanceof Error ? err.message : 'Validation failed'); }
@@ -527,6 +654,7 @@ export function SetupWizard() {
     if (!selectedModel) { showError('Select a model'); return; }
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     try {
       await modelsApi.switch(selectedModel, {
         reasoningEffort: selectedReasoningEffort || undefined,
@@ -539,6 +667,7 @@ export function SetupWizard() {
     setSelectedModel(model.id);
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     const levels = model.reasoning?.effortLevels ?? [];
     setSelectedReasoningEffort(model.reasoning?.defaultEffort ?? levels[0] ?? '');
   };
@@ -546,15 +675,14 @@ export function SetupWizard() {
   const handleBenchmarkBack = () => {
     setBenchmarkResult(null);
     setLimitedOverride(false);
+    setStandbyOverride(false);
     back();
   };
 
   const selectedModelInfo = availableModels.find((m) => m.id === selectedModel);
   const canProceedBenchmark = Boolean(
-    benchmarkResult &&
-    !benchmarkRunning &&
-    (gradeAllowsAgentX(benchmarkResult.grade) ||
-      (benchmarkResult.grade === 'LIMITED' && limitedOverride)),
+    !benchmarkRunning
+    && canProceedWithBenchmarkGrade(benchmarkResult?.grade, { limitedOverride, standbyOverride }),
   );
   const handleCallsignNext = () => { next(); };
 
@@ -621,12 +749,57 @@ export function SetupWizard() {
       <Box sx={{ flexShrink: 0, textAlign: 'center', pt: 4, px: 2, pb: 2 }}>
         <Typography variant="h2" sx={{ mb: 0.5, fontFamily: WIZARD_MONO, letterSpacing: '0.12em', fontSize: '1.1rem' }}>SETUP WIZARD</Typography>
         <Typography variant="body2" sx={{ color: wizardTheme.textDim, mb: 3, fontFamily: WIZARD_MONO, fontSize: '0.62rem' }}>Configure your Agent-X instance</Typography>
-        <Stepper activeStep={steps.indexOf(ALL_STEPS[step] ?? '')} alternativeLabel sx={wizardStepperSx}>
-          {steps.map((label) => (
-            <Step key={label}>
-              <StepLabel>{label}</StepLabel>
-            </Step>
-          ))}
+        <Stepper
+          nonLinear
+          activeStep={steps.indexOf(ALL_STEPS[step] ?? '')}
+          alternativeLabel
+          sx={wizardStepperSx}
+        >
+          {steps.map((label) => {
+            const stepIndex = ALL_STEPS.indexOf(label);
+            const reached = stepIndex >= 0 && stepIndex <= maxReachedStep && isStepSupported(stepIndex);
+            const isCurrent = stepIndex === step;
+            const canJump = reached && !isCurrent;
+            // Optional steps left unfinished (Skip) — distinct from completed (green tick).
+            const isSkipped = Boolean(
+              reached && !isCurrent && (
+                (label === 'Local Model' && skipLocalModel)
+                || (label === 'Neural Core' && !neuralReady)
+                || (label === 'Voice Comms' && !voiceCalibrated)
+                || (label === 'Telegram Relay' && !telegramLinked)
+              ),
+            );
+            const isCompleted = reached && !isCurrent && !isSkipped;
+            return (
+              <Step key={label} completed={isCompleted}>
+                <StepLabel
+                  className={isSkipped ? 'wizard-step-skipped' : undefined}
+                  slots={{
+                    stepIcon: (iconProps) => (
+                      <WizardStepIcon {...iconProps} skipped={isSkipped} />
+                    ),
+                  }}
+                  onClick={() => { if (canJump) goToStep(stepIndex); }}
+                  sx={{
+                    cursor: canJump ? 'pointer' : 'default',
+                    '& .MuiStepIcon-root': {
+                      borderRadius: '50%',
+                      boxSizing: 'content-box',
+                      transition: 'box-shadow 0.15s ease',
+                    },
+                    ...(canJump ? {
+                      '&:hover .MuiStepIcon-root': {
+                        boxShadow: '0 0 0 3.5px rgba(128, 128, 128, 0.35)',
+                      },
+                      '& .MuiStepLabel-label:hover': { color: wizardTheme.text },
+                    } : {}),
+                  }}
+                >
+                  {label}
+                </StepLabel>
+              </Step>
+            );
+          })}
         </Stepper>
       </Box>
 
@@ -639,66 +812,84 @@ export function SetupWizard() {
             <Box>
               <WizardStepHeader
                 codename="MODULE · STORAGE"
-                title="Power Your Agent"
-                subtitle="Every memory, message, and crew identity lives here. Credentials stay encrypted on this machine — always."
+                title="Choose Storage"
+                subtitle="Where Agent-X keeps your data."
               />
 
-              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                <Box onClick={() => { setSelectedBackend('embedded-postgres'); resetPgTest(); }}
-                  sx={{ ...wizardSelectCardSx(selectedBackend === 'embedded-postgres'), gap: 0 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
-                      <StorageIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
+              <Box sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                gap: 1.5,
+                maxWidth: 640,
+                mx: 'auto',
+              }}>
+                {([
+                  {
+                    id: 'embedded-postgres' as const,
+                    title: 'Local Storage',
+                    icon: <StorageIcon sx={{ fontSize: 18 }} />,
+                    points: [
+                      'Runs entirely on this device',
+                      'Works offline — no account needed',
+                      'Best for personal use and a fast start',
+                    ],
+                  },
+                  {
+                    id: 'postgres' as const,
+                    title: 'Cloud Storage',
+                    icon: <CloudIcon sx={{ fontSize: 18 }} />,
+                    points: [
+                      'Connect your own remote database',
+                      'Access the same data from multiple devices',
+                      'Best for teams and synced setups',
+                    ],
+                  },
+                ]).map((opt) => {
+                  const selected = selectedBackend === opt.id;
+                  return (
+                    <Box
+                      key={opt.id}
+                      onClick={() => { setSelectedBackend(opt.id); resetPgTest(); }}
+                      sx={{
+                        ...wizardSelectCardSx(selected),
+                        p: 2,
+                        gap: 1.25,
+                        minHeight: 0,
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                        <Box sx={{
+                          width: 32, height: 32, borderRadius: 1, flexShrink: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          color: selected ? wizardTheme.text : wizardTheme.textDim,
+                          bgcolor: alphaColor(colors.ink, selected ? 0.08 : 0.03),
+                          border: `1px solid ${selected ? alphaColor(colors.ink, 0.2) : wizardTheme.panelBorder}`,
+                        }}>
+                          {opt.icon}
+                        </Box>
+                        <Typography sx={{
+                          flex: 1, fontSize: '0.8rem', fontWeight: 700,
+                          color: wizardTheme.text, letterSpacing: '-0.01em',
+                        }}>
+                          {opt.title}
+                        </Typography>
+                        {selected && <WizardCheckMark />}
+                      </Box>
+                      <Box component="ul" sx={{
+                        m: 0, pl: 2.25,
+                        display: 'flex', flexDirection: 'column', gap: 0.55,
+                        '& li': {
+                          fontSize: '0.68rem',
+                          lineHeight: 1.4,
+                          color: wizardTheme.textSecondary,
+                          fontWeight: 500,
+                        },
+                      }}>
+                        {opt.points.map((p) => <li key={p}>{p}</li>)}
+                      </Box>
                     </Box>
-                    <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: wizardTheme.text }}>Onboard Core</Typography>
-                      <WizardHintTag tone="ok">Embedded PostgreSQL</WizardHintTag>
-                    </Box>
-                    {selectedBackend === 'embedded-postgres' && <Box sx={{ ml: 'auto' }}><WizardCheckMark /></Box>}
-                  </Box>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Everything runs on your Mac — no cloud account or database setup needed." icon={<HomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Your messages, memories, and crew data stay on this machine." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Works offline. Agent-X is ready even without internet." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Automatic brain setup. The database is created and maintained for you." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Simple to back up or move to another Mac." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Best for personal use, solo work, and getting started fast." icon={<BoltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                  </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.accentOk, textAlign: 'center', fontWeight: 600 }}>
-                      Recommended. No external database needed.
-                    </Typography>
-                  </Box>
-                </Box>
-
-                <Box onClick={() => { setSelectedBackend('postgres'); resetPgTest(); }}
-                  sx={{ ...wizardSelectCardSx(selectedBackend === 'postgres'), gap: 0 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
-                    <Box sx={{ width: 36, height: 36, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.04), display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${wizardTheme.panelBorder}`, flexShrink: 0 }}>
-                      <CloudIcon sx={{ fontSize: 18, color: wizardTheme.textSecondary }} />
-                    </Box>
-                    <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: wizardTheme.text }}>Starfleet Relay</Typography>
-                      <WizardHintTag>Your PostgreSQL</WizardHintTag>
-                    </Box>
-                    {selectedBackend === 'postgres' && <Box sx={{ ml: 'auto' }}><WizardCheckMark /></Box>}
-                  </Box>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                    <Punch text="Connect your own PostgreSQL database — cloud or self-hosted." icon={<CloudIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Access the same brain from multiple Macs or devices." icon={<SyncAltIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Share a team brain with shared crews and sessions." icon={<HubIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Your data lives in infrastructure you already control." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Use your existing backups and disaster recovery." icon={<PublicIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Schema and tables are created automatically on first connect." icon={<AutoAwesomeIcon sx={{ fontSize: 13 }} />} />
-                    <Punch text="Your encryption key keeps your data unreadable by the database." icon={<ShieldIcon sx={{ fontSize: 13 }} />} />
-                  </Box>
-                  <Box sx={{ p: 1.2, borderRadius: 1, bgcolor: alphaColor(colors.ink, 0.02), border: `1px solid ${wizardTheme.panelBorder}`, mt: 'auto' }}>
-                    <Typography sx={{ fontSize: '0.55rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, textAlign: 'center', fontWeight: 600 }}>
-                      For multi-machine setups, teams, and cloud DBs.
-                    </Typography>
-                  </Box>
-                </Box>
+                  );
+                })}
               </Box>
             </Box>
           )}
@@ -858,7 +1049,7 @@ export function SetupWizard() {
                                 fontSize: 16,
                                 color: wizardTheme.textDim,
                                 transform: pgTestDetailsOpen ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                transition: 'transform 0.15s ease',
+                                transition: 'transform 0.28s ease',
                                 flexShrink: 0,
                               }}
                             />
@@ -876,26 +1067,28 @@ export function SetupWizard() {
                             </Typography>
                           </Box>
 
-                          {pgTestDetailsOpen && detailRows.map((row) => (
-                            <Box key={row.key} sx={{ mt: 1.1, pl: 0.25 }}>
-                              <Typography sx={{
-                                fontSize: '0.55rem',
-                                fontFamily: WIZARD_MONO,
-                                fontWeight: 700,
-                                color: row.status === 'ok' ? wizardTheme.accentOk : row.status === 'warn' ? wizardTheme.accentWarn : wizardTheme.accentErr,
-                              }}>
-                                {row.status === 'ok' ? '✓' : row.status === 'warn' ? '⚠' : '✕'} {row.label}
-                              </Typography>
-                              <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
-                                {row.message}
-                              </Typography>
-                              {row.remediation && (
-                                <Typography sx={{ fontSize: '0.5rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mt: 0.5, lineHeight: 1.55 }}>
-                                  {row.remediation}
+                          <Collapse in={pgTestDetailsOpen} unmountOnExit>
+                            {detailRows.map((row) => (
+                              <Box key={row.key} sx={{ mt: 1.1, pl: 0.25 }}>
+                                <Typography sx={{
+                                  fontSize: '0.55rem',
+                                  fontFamily: WIZARD_MONO,
+                                  fontWeight: 700,
+                                  color: row.status === 'ok' ? wizardTheme.accentOk : row.status === 'warn' ? wizardTheme.accentWarn : wizardTheme.accentErr,
+                                }}>
+                                  {row.status === 'ok' ? '✓' : row.status === 'warn' ? '⚠' : '✕'} {row.label}
                                 </Typography>
-                              )}
-                            </Box>
-                          ))}
+                                <Typography sx={{ fontSize: '0.52rem', fontFamily: WIZARD_MONO, color: wizardTheme.textSecondary, mt: 0.35, lineHeight: 1.5 }}>
+                                  {row.message}
+                                </Typography>
+                                {row.remediation && (
+                                  <Typography sx={{ fontSize: '0.5rem', fontFamily: WIZARD_MONO, color: wizardTheme.textDim, mt: 0.5, lineHeight: 1.55 }}>
+                                    {row.remediation}
+                                  </Typography>
+                                )}
+                              </Box>
+                            ))}
+                          </Collapse>
                         </Box>
                       )}
                     </Box>
@@ -932,7 +1125,7 @@ export function SetupWizard() {
                   <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: wizardTheme.textDim, mb: 2, fontFamily: WIZARD_MONO, letterSpacing: '1px' }}>CLOUD</Typography>
                   <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5, mb: 2 }}>
                     {availableProviders.filter(Boolean).filter(p => p.type === 'cloud').map(p => (
-                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
+                      <Box key={p.id} onClick={() => selectProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
                         <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: wizardTheme.text }}>{p.name}</Typography>
                       </Box>
                     ))}
@@ -940,7 +1133,7 @@ export function SetupWizard() {
                   <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: wizardTheme.textDim, mb: 1.5, fontFamily: WIZARD_MONO, letterSpacing: '1px' }}>LOCAL</Typography>
                   <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1.5 }}>
                     {availableProviders.filter(Boolean).filter(p => p.type === 'local').map(p => (
-                      <Box key={p.id} onClick={() => setSelectedProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
+                      <Box key={p.id} onClick={() => selectProvider(p.id)} sx={wizardTileSx(selectedProvider === p.id)}>
                         <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.8rem', color: wizardTheme.text }}>{p.name}</Typography>
                       </Box>
                     ))}
@@ -962,10 +1155,33 @@ export function SetupWizard() {
                     sx={{ mb: !isLocal ? 2 : 1.5 }}
                     slotProps={wizardTextFieldSlotProps} />
 
-                  {!isLocal && (
-                    <TextField label="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} fullWidth type="password"
+                  {isAzure && (
+                    <TextField
+                      label="Azure Endpoint"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      fullWidth
+                      placeholder="https://YOUR_RESOURCE.openai.azure.com"
                       sx={{ mb: 2 }}
-                      slotProps={wizardTextFieldSlotProps} />
+                      slotProps={wizardTextFieldSlotProps}
+                    />
+                  )}
+
+                  {!isLocal && (
+                    <TextField
+                      label="API Key"
+                      value={apiKey}
+                      onChange={(e) => {
+                        setApiKey(e.target.value);
+                        if (e.target.value.trim()) setApiKeyConfigured(false);
+                      }}
+                      fullWidth
+                      type="password"
+                      placeholder={apiKeyConfigured && !apiKey ? 'Saved — leave blank to keep' : undefined}
+                      helperText={apiKeyConfigured && !apiKey ? 'Key on file. Enter a new key only if you want to replace it.' : undefined}
+                      sx={{ mb: 2 }}
+                      slotProps={wizardTextFieldSlotProps}
+                    />
                   )}
 
                   {isLocal && (
@@ -1088,7 +1304,8 @@ export function SetupWizard() {
                   <ModelBenchmarkRunner
                     key={`${selectedProvider}-${selectedModel}`}
                     embedded
-                    autoStart
+                    autoStart={!benchmarkResult}
+                    initialResult={benchmarkResult}
                     providerId={selectedProvider}
                     modelId={selectedModel}
                     modelName={selectedModelInfo?.name}
@@ -1097,36 +1314,24 @@ export function SetupWizard() {
                     onComplete={setBenchmarkResult}
                     onRunningChange={setBenchmarkRunning}
                   />
-                  {benchmarkResult?.grade === 'LIMITED' && !benchmarkRunning && (
-                    <FormControlLabel
-                      sx={{ mt: 1.5, ml: 0 }}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={limitedOverride}
-                          onChange={(e) => setLimitedOverride(e.target.checked)}
-                          sx={{ color: wizardTheme.accentWarn, '&.Mui-checked': { color: wizardTheme.accentWarn } }}
-                        />
-                      }
-                      label={
-                        <Typography sx={{ fontSize: '0.72rem', color: wizardTheme.textSecondary }}>
-                          Acknowledge LIMITED clearance — proceed with constraints
-                        </Typography>
-                      }
-                    />
-                  )}
-                  {benchmarkResult?.grade === 'STANDBY' && !benchmarkRunning && (
-                    <Alert severity="error" sx={{ mt: 1.5, fontSize: '0.75rem' }}>
-                      Model not cleared for agentic workloads. Go back and select a different model.
-                    </Alert>
-                  )}
+                  <BenchmarkGradeAck
+                    grade={benchmarkResult?.grade}
+                    running={benchmarkRunning}
+                    limitedOverride={limitedOverride}
+                    standbyOverride={standbyOverride}
+                    onLimitedChange={setLimitedOverride}
+                    onStandbyChange={setStandbyOverride}
+                    accentLimited={wizardTheme.accentWarn}
+                    accentStandby={wizardTheme.accentErr}
+                    labelSx={{ fontSize: '0.72rem', color: wizardTheme.textSecondary }}
+                  />
                 </Box>
               )}
 
               {step === 6 && (
                 <WizardNeuralStep
                   totalMemoryGB={systemCaps?.totalMemoryGB}
-                  onComplete={next}
+                  onReadyChange={setNeuralReady}
                 />
               )}
 
@@ -1341,6 +1546,7 @@ export function SetupWizard() {
 
               {step === 9 && (
                 <WizardVoiceStep
+                  alreadyCalibrated={voiceCalibrated}
                   onReadyChange={setVoiceCalibrated}
                   onBusyChange={setVoiceBusy}
                   callsign={callsign}
@@ -1349,27 +1555,78 @@ export function SetupWizard() {
               )}
 
               {step === 10 && (
-                <WizardTelegramStep onLinkedChange={setTelegramLinked} />
+                <WizardTelegramStep
+                  alreadyLinked={telegramLinked}
+                  initialBotLabel={telegramBotLabel}
+                  initialChatLabel={telegramChatLabel}
+                  onLinkedChange={(linked, meta) => {
+                    setTelegramLinked(linked);
+                    if (meta?.botLabel !== undefined) setTelegramBotLabel(meta.botLabel);
+                    if (meta?.chatLabel !== undefined) setTelegramChatLabel(meta.chatLabel);
+                  }}
+                />
               )}
 
               {step === 11 && (
-                <Box sx={{ textAlign: 'center', maxWidth: 520, mx: 'auto' }}>
-                  <CheckCircle size={64} color={wizardTheme.accentOk} sx={{ mb: 2 }} />
-                  <WizardStepHeader codename="MODULE · COMPLETE" title="Setup Complete" subtitle="Your Agent-X instance is ready." />
-                  <Box sx={{ textAlign: 'left', ...wizardPanelSx, mb: 3, fontFamily: WIZARD_MONO, fontSize: '0.75rem' }}>
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Storage: {selectedBackend === 'embedded-postgres' ? 'Embedded PostgreSQL (port 3335)' : 'Starfleet Relay (PostgreSQL)'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Provider: {selectedProvider}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Model: {selectedModel}</Typography>
-                    {localModelSupported && (
-                      <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Local Model: {selectedLocalModel || '(not installed)'}</Typography>
-                    )}
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>
-                      Neural Core: Online
+                <Box sx={{ maxWidth: 560, mx: 'auto' }}>
+                  <Box sx={{ textAlign: 'center', mb: 1.5 }}>
+                    <CheckCircle size={40} color={wizardTheme.accentOk} sx={{ mb: 1 }} />
+                    <WizardStepHeader
+                      codename="MODULE · COMPLETE"
+                      title="Setup Complete"
+                      subtitle="Choose a workspace folder and a performance preset to finish."
+                    />
+                  </Box>
+
+                  <Box sx={{ ...wizardPanelSx, p: 2, textAlign: 'left' }}>
+                    <Box sx={{
+                      display: 'flex', flexWrap: 'wrap', gap: 0.6, mb: 2,
+                      pb: 1.5, borderBottom: `1px solid ${wizardTheme.panelBorder}`,
+                    }}>
+                      {[
+                        selectedBackend === 'embedded-postgres' ? 'Local' : 'Cloud',
+                        selectedProvider || null,
+                        selectedModel || null,
+                        callsign ? `@${callsign}` : null,
+                        personaName || null,
+                        voiceCalibrated ? 'Voice' : null,
+                        telegramLinked ? 'Telegram' : null,
+                      ].filter(Boolean).map((label) => (
+                        <Box
+                          key={String(label)}
+                          sx={{
+                            px: 0.85, py: 0.3, borderRadius: 0.75,
+                            border: `1px solid ${wizardTheme.panelBorder}`,
+                            bgcolor: alphaColor(colors.ink, 0.02),
+                            fontFamily: WIZARD_MONO,
+                            fontSize: '0.55rem',
+                            color: wizardTheme.textSecondary,
+                            letterSpacing: '0.02em',
+                          }}
+                        >
+                          {label}
+                        </Box>
+                      ))}
+                    </Box>
+
+                    <Typography sx={{
+                      fontFamily: WIZARD_MONO, fontSize: '0.52rem', letterSpacing: '0.08em',
+                      color: wizardTheme.textDim, mb: 0.75,
+                    }}>
+                      WORKSPACE
                     </Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: voiceCalibrated ? wizardTheme.accentOk : wizardTheme.textDim }}>Voice Comms: {voiceCalibrated ? 'Calibrated' : 'Skipped'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: telegramLinked ? wizardTheme.accentOk : wizardTheme.textDim }}>Telegram Relay: {telegramLinked ? 'Linked' : 'Skipped'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Callsign: {callsign || '(not set)'}</Typography>
-                    <Typography variant="caption" sx={{ display: 'block', color: wizardTheme.textDim }}>Agent: {personaName || '(not set)'}</Typography>
+                    <WorkspaceCard compact chooseOnly onReadyChange={setWorkspaceReady} />
+
+                    <Typography sx={{
+                      fontFamily: WIZARD_MONO, fontSize: '0.52rem', letterSpacing: '0.08em',
+                      color: wizardTheme.textDim, mt: 1.75, mb: 0.75,
+                    }}>
+                      PERFORMANCE
+                    </Typography>
+                    <WizardPerformancePreset
+                      compact
+                      onReadyChange={setPerformanceReady}
+                    />
                   </Box>
                 </Box>
               )}
@@ -1385,7 +1642,7 @@ export function SetupWizard() {
           {step === 1 && <Button onClick={handleBackFromProvider} sx={wizardBackBtnSx}>Back</Button>}
           {step === 2 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 3 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
-          {step === 4 && <Button onClick={localModelSupported ? handleBackToCredentials : back} sx={wizardBackBtnSx}>Back</Button>}
+          {step === 4 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 5 && <Button onClick={handleBenchmarkBack} sx={wizardBackBtnSx}>Back</Button>}
           {step === 6 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
           {step === 7 && <Button onClick={back} sx={wizardBackBtnSx}>Back</Button>}
@@ -1439,6 +1696,18 @@ export function SetupWizard() {
               {benchmarkRunning ? 'Scanning…' : 'Next'}
             </Button>
           )}
+          {step === 6 && (
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', ml: 'auto' }}>
+              {!neuralReady && (
+                <Button onClick={next} sx={wizardSkipBtnSx}>
+                  Skip for now
+                </Button>
+              )}
+              <Button variant="contained" onClick={next} sx={wizardPrimaryBtnSx}>
+                {neuralReady ? 'Next' : 'Skip →'}
+              </Button>
+            </Box>
+          )}
           {step === 7 && <Button variant="contained" onClick={handleCallsignNext} disabled={!callsign.trim()} sx={wizardPrimaryBtnSx}>Next</Button>}
           {step === 8 && <Button variant="contained" onClick={next} disabled={!personaName.trim()} sx={wizardPrimaryBtnSx}>Next</Button>}
           {step === 9 && (
@@ -1477,7 +1746,16 @@ export function SetupWizard() {
               </Button>
             </Box>
           )}
-          {step === 11 && <Button variant="contained" onClick={handleComplete} disabled={loading} sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}>{loading ? 'Finalizing...' : 'Launch Console'}</Button>}
+          {step === 11 && (
+            <Button
+              variant="contained"
+              onClick={handleComplete}
+              disabled={loading || !workspaceReady || !performanceReady}
+              sx={{ ...wizardPrimaryBtnSx, px: 5, py: 1.2 }}
+            >
+              {loading ? 'Finalizing...' : 'Complete'}
+            </Button>
+          )}
         </Box>
       </Box>
 
@@ -1558,37 +1836,11 @@ export function SetupWizard() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={showBackWarning} onClose={() => setShowBackWarning(false)}
-        PaperProps={{ sx: { bgcolor: wizardTheme.panel, border: `1px solid ${wizardTheme.panelBorder}`, borderRadius: 1, maxWidth: 400 } }}>
-        <DialogTitle sx={{ fontFamily: WIZARD_MONO, fontSize: '0.85rem', fontWeight: 700, pb: 1 }}>RE-ENTER CREDENTIALS?</DialogTitle>
-        <DialogContent><Typography variant="body2" sx={{ color: wizardTheme.textSecondary, fontSize: '0.8rem', lineHeight: 1.6 }}>Going back will clear your API key for security. You will need to re-enter and validate them.</Typography></DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setShowBackWarning(false)} sx={wizardSkipBtnSx}>Cancel</Button>
-          <Button onClick={confirmBackToCredentials} variant="contained" sx={{ bgcolor: wizardTheme.accentErr, color: colors.bg.primary, fontFamily: WIZARD_MONO, fontSize: '0.65rem', textTransform: 'none' }}>Clear & Go Back</Button>
-        </DialogActions>
-      </Dialog>
-
       {loading && (
         <Box sx={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: colors.shadow.heavy, backdropFilter: 'blur(2px)' }}>
           <CircularProgress size={40} sx={{ color: colors.text.primary }} />
         </Box>
       )}
-    </Box>
-  );
-}
-
-function Punch({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <Box sx={{
-      display: 'flex', alignItems: 'center', gap: 1.25,
-      px: 1.5, py: 1,
-      borderRadius: 1,
-      bgcolor: alphaColor(colors.ink, 0.015),
-      border: `1px solid ${wizardTheme.panelBorder}`,
-      transition: 'all 0.15s',
-    }}>
-      <Box sx={{ color: wizardTheme.textDim, flexShrink: 0, display: 'flex', opacity: 0.6 }}>{icon}</Box>
-      <Typography sx={{ fontSize: '0.64rem', color: wizardTheme.textSecondary, lineHeight: 1.45, fontWeight: 500 }}>{text}</Typography>
     </Box>
   );
 }

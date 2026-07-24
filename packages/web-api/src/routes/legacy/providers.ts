@@ -81,18 +81,24 @@ export function createProvidersRouter(): Router {
   r.post('/api/provider/validate', async (req, res) => {
     try {
       const { provider, baseUrl } = req.body as { provider: string; apiKey?: string; baseUrl?: string };
-      let apiKey = req.body?.apiKey as string | undefined;
-      if (!apiKey || apiKey === REDACTED_SECRET) {
+      let apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+      const placeholder = !apiKey
+        || apiKey === REDACTED_SECRET
+        || apiKey.includes('•')
+        || apiKey === '***'
+        || apiKey === '********';
+      if (placeholder) {
         try {
           const eng = getEngine();
           const cfg = eng.configManager.load();
           const creds = cfg.provider.providers[provider as ProviderId];
           if (creds?.activeProfile && creds.profiles?.[creds.activeProfile]) {
-            apiKey = creds.profiles[creds.activeProfile]?.apiKey;
+            apiKey = creds.profiles[creds.activeProfile]?.apiKey?.trim() ?? '';
           }
-          if (!apiKey) apiKey = creds?.apiKey;
+          if (!apiKey) apiKey = creds?.apiKey?.trim() ?? '';
+          if (apiKey.includes('•')) apiKey = '';
         } catch {
-          apiKey = undefined;
+          apiKey = '';
         }
       }
       const prov = ProviderFactory.create(provider as ProviderId, apiKey, baseUrl);

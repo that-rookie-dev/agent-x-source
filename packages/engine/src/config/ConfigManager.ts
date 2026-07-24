@@ -6,6 +6,7 @@ import { getLogger, encrypt, decrypt } from '@agentx/shared';
 import { agentXConfigSchema } from './ConfigSchema.js';
 import { getConfigPath, getConfigDir, getDataDir, getCacheDir, getLogDir } from './paths.js';
 import { SystemCapabilityDetector } from '../neural/SystemCapabilityDetector.js';
+import { setRetrievalOverrides } from '../neural/retrieval/settings.js';
 
 export class ConfigManager {
   private configPath: string;
@@ -69,6 +70,11 @@ export class ConfigManager {
     }
     if (this.applySystemCapabilityDefaults(config)) {
       this.save(config);
+    }
+    // Wire grounded-retrieval knobs into the live retrieval settings module.
+    const r = (config as { retrieval?: Record<string, unknown> }).retrieval;
+    if (r && typeof r === 'object') {
+      setRetrievalOverrides(r as Parameters<typeof setRetrievalOverrides>[0]);
     }
     return config;
   }

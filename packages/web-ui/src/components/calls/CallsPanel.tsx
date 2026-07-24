@@ -26,17 +26,18 @@ import AddIcCallIcon from '@mui/icons-material/AddIcCall';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
-import { useNavigate } from 'react-router-dom';
 import { crewChat, sessions, type CrewVoiceSessionInfo } from '../../api';
 import { getCrewAccent } from '../../styles/crew-theme';
-import { colors, alphaColor } from '../../theme';
+import { colors, alphaColor, PANEL_SIDE_LIST_WIDTH } from '../../theme';
 import {
   useCrewCall,
   crewCallTargetFromVoiceSession,
   mapCallHistoryMessages,
   type CrewCallTranscriptLine,
 } from '../crew-call';
+import { CallTranscriptDivider } from '../crew-call/CallTranscriptDivider';
 import { groupCallSessionsByDay, sortCallsLatestFirst } from './call-list-groups';
+import { CrewCallPhonebookModal } from './CrewCallPhonebookModal';
 
 const MONO = "'JetBrains Mono', monospace";
 
@@ -202,12 +203,13 @@ const CallRow = memo(function CallRow({
 
 function TranscriptBody({
   lines,
-  callsign,
+  speakerName,
   accent,
   loading,
 }: {
   lines: CrewCallTranscriptLine[];
-  callsign: string;
+  /** Display name of the crew member (not callsign). */
+  speakerName: string;
   accent: string;
   loading: boolean;
 }) {
@@ -252,14 +254,26 @@ function TranscriptBody({
       }}
     >
       {lines.map((line) => {
+        if (line.divider) {
+          return (
+            <CallTranscriptDivider
+              key={line.id}
+              label={line.text}
+              variant={line.divider}
+              mutedColor={colors.text.dim}
+              lineColor={alphaColor(colors.text.dim, 0.25)}
+              monoFont={MONO}
+            />
+          );
+        }
         const color =
           line.role === 'operator' ? colors.accent.cyan
             : line.role === 'crew' ? accent
               : colors.text.dim;
-        const label = line.role === 'operator' ? 'YOU' : line.role === 'crew' ? callsign.toUpperCase() : 'SYS';
+        const label = line.role === 'operator' ? 'You' : line.role === 'crew' ? speakerName : 'System';
         return (
           <Box key={line.id} sx={{ contain: 'layout style' }}>
-            <Typography sx={{ fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.1em', color, mb: 0.2 }}>
+            <Typography sx={{ fontFamily: MONO, fontSize: '0.48rem', letterSpacing: '0.06em', color, mb: 0.2 }}>
               {label}
             </Typography>
             <Typography sx={{ fontFamily: MONO, fontSize: '0.7rem', color: colors.text.secondary, lineHeight: 1.45 }}>
@@ -274,7 +288,6 @@ function TranscriptBody({
 }
 
 export function CallsPanel() {
-  const navigate = useNavigate();
   const { startCall, isActive } = useCrewCall();
   const [rows, setRows] = useState<CrewVoiceSessionInfo[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -289,6 +302,7 @@ export function CallsPanel() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [phonebookOpen, setPhonebookOpen] = useState(false);
   const oldestIdRef = useRef<string | null>(null);
   const loadGenRef = useRef(0);
 
@@ -494,7 +508,7 @@ export function CallsPanel() {
         <Button
           size="small"
           startIcon={<AddIcCallIcon sx={{ fontSize: 12 }} />}
-          onClick={() => navigate('/console/crews')}
+          onClick={() => setPhonebookOpen(true)}
           sx={{
             color: colors.accent.blue,
             fontSize: '0.6rem',
@@ -516,7 +530,7 @@ export function CallsPanel() {
           flex: 1,
           minHeight: 0,
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: 'minmax(240px, 300px) 1fr' },
+          gridTemplateColumns: { xs: '1fr', md: `${PANEL_SIDE_LIST_WIDTH}px 1fr` },
           overflow: 'hidden',
         }}
       >
@@ -575,7 +589,7 @@ export function CallsPanel() {
                   <Button
                     size="small"
                     startIcon={<AddIcCallIcon sx={{ fontSize: 14 }} />}
-                    onClick={() => navigate('/console/crews')}
+                    onClick={() => setPhonebookOpen(true)}
                     sx={{
                       fontFamily: MONO,
                       fontSize: '0.55rem',
@@ -584,14 +598,16 @@ export function CallsPanel() {
                       border: `1px solid ${alphaColor(colors.accent.blue, 0.4)}`,
                     }}
                   >
-                    START FROM CREWS
+                    New Call
                   </Button>
                 )}
               </Box>
             ) : (
               grouped.map((group, groupIdx) => (
-                <Box key={group.dayKey}>
-                  <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                <Box key={group.dayKey || `ungrouped-${groupIdx}`}>
+                  {group.label ? (
+                    <DateGroupDivider label={group.label} first={groupIdx === 0} />
+                  ) : null}
                   {group.items.map((row) => (
                     <CallRow
                       key={row.id}
@@ -708,7 +724,7 @@ export function CallsPanel() {
 
               <TranscriptBody
                 lines={transcript}
-                callsign={selected.hostCrewCallsign ?? 'crew'}
+                speakerName={selected.hostCrewName?.trim() || selected.hostCrewCallsign || 'Crew'}
                 accent={selectedAccent}
                 loading={transcriptLoading}
               />
@@ -798,6 +814,8 @@ export function CallsPanel() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CrewCallPhonebookModal open={phonebookOpen} onClose={() => setPhonebookOpen(false)} />
     </Box>
   );
 }

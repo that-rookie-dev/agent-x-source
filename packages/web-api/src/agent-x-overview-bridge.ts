@@ -12,6 +12,7 @@ import {
 import { getEngine, syncChannelSuperSessionContext } from './engine.js';
 import { getTelegramRuntimeHints } from './channels-sync.js';
 import { getAutomationService } from './automation/index.js';
+import { getActiveWorkspacePath } from './workspace.js';
 
 function formatSessionLine(s: Record<string, unknown>): string {
   const id = String(s['id'] ?? '');
@@ -51,7 +52,9 @@ async function buildSummary(eng: ReturnType<typeof getEngine>): Promise<string> 
   const active = activeId ? eng.sessionManager.getSessionById(activeId) : null;
   lines.push('');
   lines.push(`Active UI session: ${active?.title ?? activeId ?? '(none)'}`);
-  if (active?.scopePath) lines.push(`Active workspace: ${active.scopePath}`);
+  try {
+    lines.push(`Workspace: ${getActiveWorkspacePath()}`);
+  } catch { /* best-effort */ }
   lines.push(`Channel session: __channel__ (this messaging channel)`);
 
   const sessions = listUserSessions(eng);
@@ -175,11 +178,15 @@ async function buildSessionDetail(eng: ReturnType<typeof getEngine>, sessionId: 
   const session = eng.sessionManager.getSessionById(sessionId);
   if (!session) return `Session not found: ${sessionId}`;
 
+  let workspaceLine = 'Workspace: —';
+  try {
+    workspaceLine = `Workspace: ${getActiveWorkspacePath()}`;
+  } catch { /* best-effort */ }
   const lines = [
     `Session: ${session.title ?? session.id}`,
     `ID: ${session.id}`,
     `Kind: ${session.contextKind ?? 'agent_x'}`,
-    `Workspace: ${session.scopePath ?? '—'}`,
+    workspaceLine,
     `Updated: ${session.updatedAt ?? '—'}`,
   ];
 

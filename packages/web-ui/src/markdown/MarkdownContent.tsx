@@ -2,26 +2,11 @@ import { memo, type MouseEvent } from 'react';
 import Box from '@mui/material/Box';
 import { CrewAwareMarkdown } from '../chat/ChatMarkdown';
 import { colors, alphaColor } from '../theme';
-
-function openMarkdownHref(href: string): void {
-  try {
-    const url = new URL(href, window.location.href);
-    if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol)) return;
-    if (window.agentx?.openExternal) {
-      void window.agentx.openExternal(url.href);
-    } else {
-      window.open(url.href, '_blank', 'noopener,noreferrer');
-    }
-  } catch { /* ignore malformed links */ }
-}
+import { handleExternalAnchorClick } from '../utils/open-external-url';
 
 export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
   const handleClick = (event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target instanceof Element ? event.target.closest('a[href]') : null;
-    if (!(target instanceof HTMLAnchorElement)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    openMarkdownHref(target.href);
+    handleExternalAnchorClick(event);
   };
 
   return (

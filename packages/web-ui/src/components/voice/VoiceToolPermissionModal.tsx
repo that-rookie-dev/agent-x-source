@@ -7,9 +7,10 @@ export interface VoiceToolPermissionModalProps {
   open: boolean;
   prompt: VoicePermissionPrompt | null;
   onRespond: (choice: VoicePermissionChoice, opts?: VoicePermissionRespondOptions) => void;
+  onSwitchToBypass?: () => void;
 }
 
-export function VoiceToolPermissionModal({ open, prompt, onRespond }: VoiceToolPermissionModalProps) {
+export function VoiceToolPermissionModal({ open, prompt, onRespond, onSwitchToBypass }: VoiceToolPermissionModalProps) {
   return (
     <Dialog
       open={open}
@@ -27,7 +28,13 @@ export function VoiceToolPermissionModal({ open, prompt, onRespond }: VoiceToolP
       }}
     >
       <Box sx={{ p: 2 }}>
-        {prompt && <VoicePermissionCard prompt={prompt} onRespond={onRespond} />}
+        {prompt && (
+          <VoicePermissionCard
+            prompt={prompt}
+            onRespond={onRespond}
+            onSwitchToBypass={onSwitchToBypass}
+          />
+        )}
       </Box>
     </Dialog>
   );

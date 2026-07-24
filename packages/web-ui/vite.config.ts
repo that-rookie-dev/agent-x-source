@@ -9,7 +9,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      // Prefer browser entry — bare `@agentx/shared` pulls node:os (platform()) and black-screens the UI.
       '@agentx/shared/browser': path.resolve(__dirname, '../shared/src/browser.ts'),
+      '@agentx/shared': path.resolve(__dirname, '../shared/src/browser.ts'),
     },
   },
   server: {

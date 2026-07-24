@@ -17,8 +17,9 @@ import { SUBAGENT_TYPES } from './subagent-types.js';
 import { getSubAgentServiceInstance, type SubAgentService } from './SubAgentService.js';
 import { getChannelServiceInstance } from '../services/ServiceContext.js';
 import type { ChannelId, OutboundMessage } from '../services/channel/IChannelService.js';
+import { getPerformanceLanes } from '../performance/PerformanceGovernor.js';
 
-/** Default concurrent sub-agent slots (virtual fibers; queue when full). */
+/** Fallback only if Performance lanes are unavailable at construction. */
 const DEFAULT_MAX_CONCURRENT = 8;
 
 export interface SubAgentTask {
@@ -70,7 +71,7 @@ export class SubAgentManager {
   private service: SubAgentService = getSubAgentServiceInstance();
   private parentSessionId: string | null = null;
   /** Virtual concurrency pool — queues when at capacity instead of failing. */
-  private concurrencyPool = new Semaphore(DEFAULT_MAX_CONCURRENT);
+  private concurrencyPool = new Semaphore(getPerformanceLanes().subAgents || DEFAULT_MAX_CONCURRENT);
 
   constructor(eventBus: AgentEventBus) {
     this.eventBus = eventBus;
@@ -157,9 +158,24 @@ export class SubAgentManager {
     return this.subAgentTypes.find(t => t.id === id);
   }
 
+  /** Register child session row before persisting background_tasks (FK-safe). */
+  private ensureChildSessionRegistered(task: SubAgentTask): void {
+    if (!this.parentAgent) return;
+    const label = (task.instruction || 'Sub-Agent').replace(/\s+/g, ' ').trim().slice(0, 48) || 'Sub-Agent';
+    try {
+      this.parentAgent.createChildSession(task.id, { kind: 'sub_agent', label });
+    } catch (err) {
+      getLogger('SubAgentManager').warn(
+        'child-session',
+        `Failed to register child session ${task.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   /**
    * Spawn a sub-agent that will actually execute an LLM completion in the background.
-   * When at maxConcurrent, the task is queued (virtual concurrency) — never rejected.
+   * When at capacity, the task is queued (virtual concurrency) — never rejected.
+   * @param maxConcurrent Deprecated no-op. Pool size is owned by Settings → Performance via setMaxConcurrent.
    */
   spawn(instruction: string, tools: string[] = [], timeout = 60_000, maxConcurrent = DEFAULT_MAX_CONCURRENT, typeId?: string, background = false, channelContext?: { channel?: string; threadId?: string; messageId?: string }): SubAgentTask {
     let effectiveTools = tools;
@@ -177,8 +193,9 @@ export class SubAgentManager {
     const cacheKey = this.cache.deriveKey(instruction, tools, this.systemPromptHash);
     const cached = this.cache.get(cacheKey);
     if (cached) {
+      const taskId = generateId();
       const task: SubAgentTask = {
-        id: generateId(),
+        id: taskId,
         instruction,
         tools,
         timeout,
@@ -188,7 +205,8 @@ export class SubAgentManager {
         endTime: Date.now(),
         resourceUsage: { ...cached.resourceUsage },
         parentSessionId: this.parentSessionId ?? undefined,
-        childSessionId: generateId(),
+        // Must match the child Agent session id (and sessions row) — never a second orphan id.
+        childSessionId: taskId,
         background,
         consumed: !background,
         inboundChannel: channelContext?.channel,
@@ -196,16 +214,20 @@ export class SubAgentManager {
         inboundMessageId: channelContext?.messageId,
       };
       this.completedAgents.set(task.id, task);
+      this.ensureChildSessionRegistered(task);
       this.service.registerTask(task);
       return task;
     }
 
-    // Align pool size with caller limit (Agent.maxSubAgents)
-    this.concurrencyPool.setPermits(Math.max(1, Math.min(32, maxConcurrent)));
+    // Pool size is owned by Settings → Performance (setMaxConcurrent). Do not
+    // resize from spawn()'s maxConcurrent arg — that used to reset Quiet/Balanced
+    // profiles back to 8 on every spawn and defeat the governor.
+    void maxConcurrent;
 
     const workDir = this.createWorkDir();
+    const taskId = generateId();
     const task: SubAgentTask = {
-      id: generateId(),
+      id: taskId,
       instruction,
       tools: effectiveTools,
       timeout,
@@ -214,7 +236,8 @@ export class SubAgentManager {
       workDir,
       deniedTools,
       parentSessionId: this.parentSessionId ?? undefined,
-      childSessionId: generateId(),
+      // Unify with SmartSubAgent sessionId (= task.id) so drawer/API/FK all agree.
+      childSessionId: taskId,
       background,
       consumed: !background,
       inboundChannel: channelContext?.channel,
@@ -225,6 +248,8 @@ export class SubAgentManager {
     this.agents.set(task.id, task);
     this.runningCount++;
     this.taskCompletions.set(task.id, new Deferred<void>());
+    // Create sessions + child_sessions rows BEFORE background_tasks insert (FK).
+    this.ensureChildSessionRegistered(task);
     this.service.registerTask(task);
 
     this.eventBus.emit({
@@ -581,6 +606,7 @@ export class SubAgentManager {
       // so the WS subscriber can stream the result to the UI in real-time.
       this.eventBus.emit({
         type: 'background_task_complete',
+        sessionId: this.parentSessionId,
         taskId: task.id,
         childSessionId: task.childSessionId ?? task.id,
         tokensUsed,
@@ -613,6 +639,29 @@ export class SubAgentManager {
       this.idleDeferred = new Deferred<void>();
     }
     await this.idleDeferred.promise;
+    return this.getAllIncludingCompleted();
+  }
+
+  /** True when any queued/running sub-agent is still outstanding for this manager. */
+  hasOutstandingWork(): boolean {
+    return [...this.agents.values()].some(
+      (t) => t.status === 'pending' || t.status === 'queued' || t.status === 'running',
+    );
+  }
+
+  /**
+   * Wait for every outstanding sub-agent (including those started with
+   * background:true) before the parent turn finalizes.
+   */
+  async awaitOutstanding(timeoutMs = 30 * 60_000): Promise<SubAgentTask[]> {
+    if (!this.hasOutstandingWork()) return this.getAllIncludingCompleted();
+    const ids = [...this.agents.values()]
+      .filter((t) => t.status === 'pending' || t.status === 'queued' || t.status === 'running')
+      .map((t) => t.id);
+    await Promise.race([
+      Promise.all(ids.map((id) => this.waitFor(id))),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
     return this.getAllIncludingCompleted();
   }
 

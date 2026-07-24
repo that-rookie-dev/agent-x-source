@@ -1,14 +1,22 @@
 /**
  * Memory extraction and web search ingestion helpers extracted from Agent.ts (REFACTOR-2).
  */
-import { getLogger, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, type SessionContextKind, type EmbeddingProvider } from '@agentx/shared';
+import { getLogger, isMemoryFabricSuperSession, resolveMemoryFabricWriteSessionId, type SessionContextKind, type EmbeddingProvider, type CompletionRequest } from '@agentx/shared';
 import { ChatTurnMemoryIngester } from '../neural/ChatTurnMemoryIngester.js';
 import { UserChatMemoryIngester } from '../neural/UserChatMemoryIngester.js';
 import type { MemoryFabric, MemoryNode } from '../neural/MemoryFabric.js';
+import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { vectorMemoryPrefetch } from '../neural/VectorMemoryPrefetch.js';
-
-const COMPACT_MEMORY_MAX_CHARS = 1500;
-const FULL_MEMORY_MAX_CHARS = 4000;
+import {
+  getRetrievalSettings,
+  applyScoreGate,
+  heuristicRerank,
+  toEvidenceUnit,
+  packEvidenceBlocks,
+  EMPTY_EVIDENCE_MARKER,
+  expandEvidenceNeighborhood,
+  type EvidenceUnit,
+} from '../neural/retrieval/index.js';
 
 export interface MemoryContextContext {
   messages: Array<{ role: string; content: string | unknown }>;
@@ -21,8 +29,30 @@ export interface MemoryContextContext {
   setMemoryContextNodeIds(ids: string[]): void;
 }
 
+function packNodes(
+  nodes: MemoryNode[],
+  maxChars: number,
+  startIndex: number,
+): { text: string; ids: string[]; nextIndex: number } {
+  const units: EvidenceUnit[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const u = toEvidenceUnit(nodes[i]!, i);
+    if (u) units.push(u);
+  }
+  const packed = packEvidenceBlocks(units, {
+    maxChars,
+    maxLineChars: getRetrievalSettings().maxEvidenceLineChars,
+    startIndex,
+  });
+  return {
+    text: packed.text,
+    ids: packed.evidenceIds,
+    nextIndex: startIndex + packed.count,
+  };
+}
+
 /**
- * Build the memory context block for the system prompt (vector-only prefetch).
+ * Build the memory context block for the system prompt (vector prefetch + grounded packer).
  */
 export async function buildMemoryContext(ctx: MemoryContextContext): Promise<{ episodic: string; semantic: string; graph: string; community?: string }> {
   const fabric = ctx.memoryFabric;
@@ -37,61 +67,104 @@ export async function buildMemoryContext(ctx: MemoryContextContext): Promise<{ e
     const memorySessionId = ctx.sessionId;
     const isSuper = isMemoryFabricSuperSession(memorySessionId, ctx.options.contextKind);
 
+    const settings = getRetrievalSettings();
     const result = await vectorMemoryPrefetch(fabric, embedder, query, {
       sessionId: memorySessionId,
       isSuperSession: isSuper,
-      vectorLimit: 8,
-      userProfileLimit: isSuper ? 8 : 0,
-      episodicLimit: 5,
-      minRelevance: 0.35,
+      vectorLimit: settings.vectorLimit,
+      userProfileLimit: isSuper ? settings.userProfileLimit : 0,
+      episodicLimit: settings.episodicLimit,
+      minRelevance: settings.minScoreMemory,
     });
 
+    // Reuse the same query embedding for KB chunk search (one embed per turn).
     let chunkNodes: MemoryNode[] = [];
     try {
-      const chunkEmbedding = await embedder.embed(query);
-      chunkNodes = await fabric.vectorSearch(chunkEmbedding, {
-        limit: 5,
-        category: 'source_doc',
+      const overFetch = Math.max(settings.kbChunkLimit, settings.vectorOverFetch);
+      const chunkRaw = settings.hybridEnabled
+        ? await fabric.hybridSearch(result.queryEmbedding, query, {
+            limit: overFetch,
+            category: 'source_doc',
+            vectorLimit: overFetch,
+            lexicalLimit: overFetch,
+          })
+        : await fabric.vectorSearch(result.queryEmbedding, {
+            limit: overFetch,
+            category: 'source_doc',
+          });
+      chunkNodes = applyScoreGate(chunkRaw, {
+        minScore: settings.minScoreKb,
+        maxPerSource: settings.maxChunksPerSource,
       });
-      chunkNodes = chunkNodes.filter((n) => {
-        const distance = n.distance;
-        return distance == null || (1 - distance) >= 0.25;
-      });
+      if (settings.rerankEnabled) {
+        chunkNodes = heuristicRerank(query, chunkNodes);
+      }
+      chunkNodes = chunkNodes.slice(0, settings.rerankKeep);
+      chunkNodes = await expandEvidenceNeighborhood(
+        fabric,
+        chunkNodes.slice(0, Math.min(settings.kbChunkLimit, settings.graphExpandOnlyOnTopHits)),
+        {
+          mode: 'order',
+          minScore: settings.minScoreKb,
+        },
+      );
+      chunkNodes = applyScoreGate(chunkNodes, {
+        minScore: settings.minScoreKb,
+        maxPerSource: settings.maxChunksPerSource,
+      }).slice(0, Math.min(settings.kbChunkLimit, settings.injectKeep));
     } catch { /* best-effort */ }
 
-    const allNodeIds = new Set(result.all.map((n) => n.id));
+    const allNodeIds = new Set(result.all.map((m) => m.id));
     for (const cn of chunkNodes) {
-      if (!allNodeIds.has(cn.id)) {
+      if (cn.id && !allNodeIds.has(cn.id)) {
         result.vector.push(cn);
         result.all.push(cn);
         allNodeIds.add(cn.id);
       }
     }
-    ctx.setMemoryContextNodeIds(result.all.map((n) => n.id).filter((id): id is string => !!id));
 
-    const MAX_CHARS = ctx.usesCompactContext() ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
-    const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
-      const lines: string[] = [];
-      let used = 0;
-      for (const n of nodes) {
-        const line = `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`;
-        if (used + line.length > maxChars) break;
-        lines.push(line);
-        used += line.length + 1;
-      }
-      return lines.join('\n');
-    };
+    const MAX_CHARS = ctx.usesCompactContext()
+      ? settings.maxEvidenceCharsCompact
+      : settings.maxEvidenceCharsFull;
 
-    const userProfileText = fmt(result.userProfile, Math.floor(MAX_CHARS * 0.35));
-    const episodicText = fmt(result.episodic, Math.floor(MAX_CHARS * 0.25));
-    const semanticText = fmt(result.vector, Math.floor(MAX_CHARS * 0.4));
+    let evidenceIndex = 1;
+    const profilePack = packNodes(result.userProfile, Math.floor(MAX_CHARS * 0.30), evidenceIndex);
+    evidenceIndex = profilePack.nextIndex;
+    const episodicPack = packNodes(result.episodic, Math.floor(MAX_CHARS * 0.25), evidenceIndex);
+    evidenceIndex = episodicPack.nextIndex;
+    const semanticPack = packNodes(result.vector, Math.floor(MAX_CHARS * 0.45), evidenceIndex);
 
-    if (semanticText || episodicText || userProfileText) {
-      getLogger().info('AGENT', `buildMemoryContext: ${result.all.length} nodes (userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length}, chunks=${chunkNodes.length})`);
+    const evidenceIds = [...profilePack.ids, ...episodicPack.ids, ...semanticPack.ids];
+    ctx.setMemoryContextNodeIds(evidenceIds);
+
+    const episodicCombined = [profilePack.text, episodicPack.text].filter(Boolean).join('\n');
+    const semanticText = semanticPack.text;
+
+    if (!episodicCombined && !semanticText) {
+      getLogger().info('AGENT', 'buildMemoryContext: no evidence above confidence threshold');
+      return {
+        episodic: '',
+        semantic: EMPTY_EVIDENCE_MARKER,
+        graph: '',
+      };
     }
 
+    getLogger().info(
+      'RETRIEVAL_PACK',
+      'buildMemoryContext',
+      {
+        kept: evidenceIds.length,
+        userProfile: result.userProfile.length,
+        episodic: result.episodic.length,
+        semantic: result.vector.length,
+        chunks: chunkNodes.length,
+        hybrid: settings.hybridEnabled,
+        maxChars: MAX_CHARS,
+      },
+    );
+
     return {
-      episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
+      episodic: episodicCombined,
       semantic: semanticText,
       graph: '',
     };
@@ -105,7 +178,7 @@ export async function buildMemoryContext(ctx: MemoryContextContext): Promise<{ e
 
 export interface MemoryExtractionContext {
   config: { autoMemory?: boolean; provider: { activeModel: string } };
-  provider: unknown;
+  provider: ProviderInterface;
   memoryFabric: MemoryFabric | null;
   memoryEmbedder: EmbeddingProvider | null;
   chatTurnMemoryIngester: ChatTurnMemoryIngester | null;
@@ -117,15 +190,15 @@ export interface MemoryExtractionContext {
 }
 
 /**
- * Extract memories from a user/assistant exchange and persist to Memory Fabric.
+ * Extract memorable facts from the exchange and persist them.
+ * Runs asynchronously and silently — never blocks the main flow.
  */
 export function extractMemories(
   ctx: MemoryExtractionContext,
   userMessage: string,
   assistantResponse: string,
 ): void {
-  if (ctx.config['autoMemory'] === false) return;
-
+  if (ctx.config.autoMemory === false) return;
   const fabric = ctx.memoryFabric;
   const embedder = ctx.memoryEmbedder;
   if (fabric && embedder) {
@@ -140,35 +213,28 @@ export function extractMemories(
       assistantResponse,
       ctx.sessionId,
       storageSessionId,
-    ).catch(() => {
-      // Silent failure — chat turn embedding is best-effort
-    });
+    ).catch(() => {});
   }
-
   if (!isMemoryFabricSuperSession(ctx.sessionId, ctx.options.contextKind)) return;
   if (!fabric || !embedder) return;
-
   let userIngester = ctx.userChatMemoryIngester;
   if (!userIngester) {
     userIngester = new UserChatMemoryIngester(
       fabric,
       embedder,
-      ctx.provider as never,
+      ctx.provider,
       ctx.config.provider.activeModel,
     );
     ctx.setUserChatMemoryIngester(userIngester);
   }
-
-  void userIngester.ingestTurn(userMessage, assistantResponse, ctx.sessionId).catch(() => {
-    // Silent failure — vector memory ingestion is best-effort
-  });
+  void userIngester.ingestTurn(userMessage, assistantResponse, ctx.sessionId).catch(() => {});
 }
 
 export interface ReformulateQueryContext {
   usesCompactContext(): boolean;
   messages: Array<{ role: string; content: string | unknown }>;
   config: { provider: { activeModel: string } };
-  provider: { complete(request: unknown): AsyncIterable<{ type: string; content?: string }> };
+  provider: ProviderInterface;
 }
 
 /**
@@ -176,23 +242,21 @@ export interface ReformulateQueryContext {
  */
 export async function reformulateQuery(ctx: ReformulateQueryContext, rawQuery: string): Promise<string> {
   const trimmed = rawQuery.trim();
-
   if (ctx.usesCompactContext()) {
     if (trimmed.length > 80) return trimmed;
     const recentUserMsgs = ctx.messages
-      .filter((m) => m.role === 'user' && typeof m.content === 'string' && (m.content as string).trim().length > 20)
+      .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
       .slice(-3)
-      .map((m) => (m as { content: string }).content);
+      .map((m) => m.content as string);
     if (recentUserMsgs.length > 0 && trimmed.split(/\s+/).length <= 8) {
       return `${recentUserMsgs[recentUserMsgs.length - 1]} ${trimmed}`.trim().slice(0, 300);
     }
     return trimmed;
   }
-
   if (trimmed.length > 120 && /[.!?]$/.test(trimmed)) return trimmed;
   if (trimmed.split(/\s+/).length <= 3) {
     const recentUserMsgs = ctx.messages
-      .filter((m) => m.role === 'user' && typeof m.content === 'string' && (m.content as string).trim().length > 20)
+      .filter((m) => m.role === 'user' && typeof m.content === 'string' && m.content.trim().length > 20)
       .slice(-3)
       .map((m) => m.content as string);
     if (recentUserMsgs.length > 0 && trimmed.split(/\s+/).length <= 8) {
@@ -200,14 +264,12 @@ export async function reformulateQuery(ctx: ReformulateQueryContext, rawQuery: s
     }
     if (recentUserMsgs.length === 0) return trimmed;
   }
-
   try {
     const recentContext = ctx.messages
       .slice(-6)
       .filter((m) => typeof m.content === 'string')
-      .map((m) => `${m.role}: ${m.content as string}`.slice(0, 200))
+      .map((m) => `${m.role}: ${m.content}`.slice(0, 200))
       .join('\n');
-
     const prompt = `Rewrite the user's latest message into a standalone search query for a knowledge retrieval system.
 
 Conversation context (most recent first):
@@ -221,11 +283,10 @@ Rules:
 - If the message is already a clear standalone question, return it as-is.
 - Keep it concise (1-2 sentences max).
 - Do not add quotes or prefixes.`;
-
     let reformulated = '';
-    const request = {
+    const request: CompletionRequest = {
       model: ctx.config.provider.activeModel,
-      messages: [{ role: 'user' as const, content: prompt }],
+      messages: [{ role: 'user', content: prompt }],
       temperature: 0,
       maxTokens: 150,
       stream: false,

@@ -36,6 +36,13 @@ export const wizardStepperSx: SxProps<Theme> = {
     '&.Mui-active': { color: wizardTheme.text },
     '&.Mui-completed': { color: wizardTheme.textSecondary },
   },
+  '& .MuiStepLabel-root.wizard-step-skipped .MuiStepLabel-label': {
+    color: wizardTheme.textDim,
+    fontStyle: 'italic',
+  },
+  '& .MuiStepLabel-root': {
+    padding: '0 4px',
+  },
 };
 
 export const wizardPrimaryBtnSx: SxProps<Theme> = {

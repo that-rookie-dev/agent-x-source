@@ -32,6 +32,7 @@ function buildTerminalLines(
   h: HealthStatus | null,
   catalogSeed: CatalogSeedStatusResponse | null,
   roster: Crew[],
+  readyToLaunch: boolean,
 ): Array<{ type: 'banner' | 'blank' | 'info' | 'success' | 'dim' | 'heading'; text: string }> {
   const v = h?.version || '';
   const provider = h?.config?.provider || '—';
@@ -68,7 +69,10 @@ function buildTerminalLines(
     { type: 'dim', text: '  4 channels \u00B7 Multi-agent mesh \u00B7 Persistent memory' },
     { type: 'dim', text: '  AES-256-GCM encrypted storage \u00B7 Self-destruct tamper protection' },
     { type: 'blank', text: '' },
-    { type: 'info', text: '  Ready to launch. All systems nominal.' },
+    // Only when LAUNCH is clickable — never while still preparing.
+    ...(readyToLaunch
+      ? [{ type: 'info' as const, text: '  Ready to launch. All systems nominal.' }]
+      : []),
   ];
 }
 
@@ -157,8 +161,22 @@ export function DockingStation() {
     clientSituationApi.set(location.clientSituation).catch(() => {});
   }, [serverOnline, location.clientSituation]);
 
+  const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
+
+  const voiceModuleEnabled = Boolean(voice?.voiceReady);
+  const engineWarmAtLaunch = Boolean(voice?.engineWarmAtLaunch);
+  const voiceNeedsReady = voiceModuleEnabled && engineWarmAtLaunch;
+  const voiceLaunchReady = !voiceNeedsReady
+    || voice?.warmupPhase === 'ready'
+    || voice?.warmupPhase === 'failed';
+  const voiceResolved = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
+  const voiceOk = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
+  const systemsResolved = !checking && location.resolved && voiceResolved;
+  const canLaunch = serverOnline && systemsResolved && voiceOk;
+  const preparing = serverOnline && !canLaunch;
+
   useEffect(() => {
-    const built = buildTerminalLines(healthData, catalogSeed, rosterCrews);
+    const built = buildTerminalLines(healthData, catalogSeed, rosterCrews, canLaunch);
     setLines(built);
     if (introPlayedRef.current) {
       setVisibleLines(built.length);
@@ -166,7 +184,7 @@ export function DockingStation() {
       introStartedRef.current = true;
       setVisibleLines(0);
     }
-  }, [healthData, catalogSeed, rosterCrews]);
+  }, [healthData, catalogSeed, rosterCrews, canLaunch]);
 
   const handleLaunch = useCallback(() => {
     navigate('/console/dashboard');
@@ -184,20 +202,6 @@ export function DockingStation() {
     const timeout = setTimeout(() => setVisibleLines((v) => v + 1), delay);
     return () => clearTimeout(timeout);
   }, [visibleLines, lines]);
-  const version = healthData?.version || '';
-  const crewCatalogCount = computeTotalCrewCatalogCount(catalogSeed, rosterCrews);
-
-  const voiceModuleEnabled = Boolean(voice?.voiceReady);
-  const engineWarmAtLaunch = Boolean(voice?.engineWarmAtLaunch);
-  const voiceNeedsReady = voiceModuleEnabled && engineWarmAtLaunch;
-  const voiceLaunchReady = !voiceNeedsReady
-    || voice?.warmupPhase === 'ready'
-    || voice?.warmupPhase === 'failed';
-  const voiceResolved = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
-  const voiceOk = !voiceModuleEnabled || !engineWarmAtLaunch || voiceLaunchReady;
-  const systemsResolved = !checking && location.resolved && voiceResolved;
-  const canLaunch = serverOnline && systemsResolved && voiceOk;
-  const preparing = serverOnline && !canLaunch;
 
   const locationColor =
     location.state === 'granted' ? colors.accent.green
@@ -231,41 +235,8 @@ export function DockingStation() {
     }}>
       <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', p: 2, overflow: 'hidden' }}>
-          <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <img src="/logo.png" alt="Agent-X" style={{ width: 28, height: 28, objectFit: 'contain' }} />
-            <Typography sx={{ fontSize: '1.3rem', fontWeight: 700, fontFamily: "'Inter', sans-serif", color: colors.text.primary }}>
-              AGENT-X
-            </Typography>
-            {version && (
-            <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem', color: colors.text.primary, fontWeight: 600 }}>
-              v{version}
-            </Typography>
-            )}
-            <Typography sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim, letterSpacing: '3px', ml: 1 }}>
-              MISSION CONTROL
-            </Typography>
-          </Box>
-
-        <Box sx={{
-          flex: 1, display: 'flex', flexDirection: 'column',
-          border: `1px solid ${colors.border.default}`,
-          borderRadius: '6px', overflow: 'hidden', minHeight: 0,
-          bgcolor: colors.bg.secondary,
-        }}>
           <Box sx={{
-            display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1,
-            borderBottom: `1px solid ${colors.border.default}`,
-          }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.border.strong }} />
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.border.accent }} />
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: colors.text.dim }} />
-            <Typography sx={{ ml: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.55rem', color: colors.text.dim }}>
-              agentx — mission-control
-            </Typography>
-          </Box>
-
-          <Box sx={{
-            flex: 1, px: 3, py: 2.5, overflow: 'auto',
+            flex: 1, px: 3, py: 2.5, overflow: 'auto', minHeight: 0,
             fontFamily: "'JetBrains Mono', monospace", fontSize: '0.72rem', lineHeight: 1.8,
           }}>
             {lines.slice(0, visibleLines).map((line, i) => {
@@ -294,7 +265,6 @@ export function DockingStation() {
             )}
           </Box>
         </Box>
-      </Box>
 
       <Box sx={{
         width: 248, flexShrink: 0, display: 'flex', flexDirection: 'column',

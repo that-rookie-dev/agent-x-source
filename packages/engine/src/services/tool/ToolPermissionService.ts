@@ -77,6 +77,11 @@ export class ToolPermissionService {
     if (existingGrant === 'allow_always') {
       return { decision: 'allow' };
     }
+    if (existingGrant === 'allow_once') {
+      // One-time grants are honored for the remainder of the turn/session so the
+      // user is not re-prompted for the same tool repeatedly.
+      return { decision: 'allow' };
+    }
     if (existingGrant === 'deny') {
       return { decision: 'deny', error: 'PERMISSION_DENIED' };
     }

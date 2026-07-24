@@ -15,7 +15,7 @@ import { automation, type AutomationTaskRecord, type TelemetryEvent } from '../a
 import { usePageVisible } from '../hooks/usePageVisible';
 import { automationRunSessionId } from '@agentx/shared/browser';
 import { subscribeOptimizedTelemetry } from '../perf/optimized-telemetry';
-import { colors } from '../theme';
+import { colors, PANEL_SIDE_LIST_WIDTH } from '../theme';
 
 /** Minimal black & white palette for this panel only */
 const bw = {
@@ -459,8 +459,8 @@ export function AutomationPanel() {
 
       <Box sx={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <Box sx={{
-          width: 320,
-          minWidth: 280,
+          width: PANEL_SIDE_LIST_WIDTH,
+          flexShrink: 0,
           borderRight: `1px solid ${bw.border}`,
           overflow: 'auto',
           p: 1.25,

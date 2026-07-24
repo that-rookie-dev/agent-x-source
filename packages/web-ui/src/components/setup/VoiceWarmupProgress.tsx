@@ -85,13 +85,16 @@ export function VoiceWarmupProgress({ callsign, agentName, onComplete, onError }
       // Phase 2: Generate a personalised greeting via the default LLM.
       setPhase('greeting');
       setMessage('Composing greeting via default LLM…');
-      let greetingText: string;
+      const agent = agentName?.trim() || 'Agent-X';
+      const fallbackGreeting = `Hey ${callsign}, ${agent} here. Voice is live and I'm ready to go.`;
+      let greetingText = fallbackGreeting;
       try {
         const result = await voice.generateGreeting(callsign);
-        greetingText = result.text;
+        const fromLlm = (result.text ?? '').trim();
+        // Empty LLM text used to race into preview → "Preview text is required".
+        if (fromLlm) greetingText = fromLlm;
       } catch {
-        const agent = agentName?.trim() || 'Agent-X';
-        greetingText = `Hey ${callsign}, ${agent} here. Voice is live and I'm ready to go.`;
+        greetingText = fallbackGreeting;
       }
       if (cancelled) return;
 
@@ -99,41 +102,37 @@ export function VoiceWarmupProgress({ callsign, agentName, onComplete, onError }
       setPhase('playing');
       setMessage('Transmitting greeting…');
       markVoiceOutputUnlocked();
-      try {
-        const result = await voice.preview(greetingText, 'kokoro', 'kokoro-af');
+
+      const playPreview = async (text: string) => {
+        const result = await voice.preview(text, 'kokoro', 'kokoro-af');
         if (cancelled) return;
         const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
         await audio.play();
-        // Wait for playback to finish.
         await new Promise<void>((resolve) => {
           audio.addEventListener('ended', () => resolve(), { once: true });
           audio.addEventListener('error', () => resolve(), { once: true });
-          // Safety timeout — don't block forever if 'ended' never fires.
           setTimeout(resolve, 15_000);
         });
+      };
+
+      try {
+        await playPreview(greetingText);
       } catch (err) {
-        if (!isTransientError(err)) {
+        const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+        const emptyText = msg.includes('text is required') || msg.includes('preview text');
+        if (!isTransientError(err) && !emptyText) {
           if (!cancelled) { setPhase('error'); onError(err instanceof Error ? err.message : 'TTS playback failed'); }
           return;
         }
-        // Retry once after a brief pause for cold-start sidecars.
+        // Retry once: cold-start sidecar, or empty greeting → use fallback text.
         try {
           await new Promise((r) => setTimeout(r, 800));
-          const result = await voice.preview(greetingText, 'kokoro', 'kokoro-af');
-          if (cancelled) return;
-          const audio = new Audio(`data:${result.mimeType};base64,${result.audioBase64}`);
-          await audio.play();
-          await new Promise<void>((resolve) => {
-            audio.addEventListener('ended', () => resolve(), { once: true });
-            audio.addEventListener('error', () => resolve(), { once: true });
-            setTimeout(resolve, 15_000);
-          });
+          await playPreview(emptyText ? fallbackGreeting : greetingText || fallbackGreeting);
         } catch (retryErr) {
           if (!cancelled) { setPhase('error'); onError(retryErr instanceof Error ? retryErr.message : 'TTS playback failed'); }
           return;
         }
-      }
-      if (cancelled) return;
+      }      if (cancelled) return;
 
       // Phase 4: Done.
       setPhase('done');

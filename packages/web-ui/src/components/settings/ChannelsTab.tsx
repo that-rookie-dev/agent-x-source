@@ -14,6 +14,7 @@ import Alert from '@mui/material/Alert';
 import TelegramIcon from '@mui/icons-material/Telegram';
 import ForumIcon from '@mui/icons-material/Forum';
 import EmailIcon from '@mui/icons-material/Email';
+import NotificationsIcon from '@mui/icons-material/Notifications';
 import HeadphonesIcon from '@mui/icons-material/Headphones';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -464,7 +465,7 @@ function ChannelCard({
                 <ExpandMoreIcon sx={{
                   fontSize: 14, color: settingsTheme.text.dim,
                   transform: instructionsOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.2s',
+                  transition: 'transform 0.28s ease',
                 }} />
               </Box>
               <Collapse in={instructionsOpen}>
@@ -678,7 +679,7 @@ export function ChannelsTab({ value, onChange }: ChannelsTabProps) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <SettingsSectionHeader
-        icon={<EmailIcon sx={{ fontSize: 16 }} />}
+        icon={<NotificationsIcon sx={{ fontSize: 16 }} />}
         title="Channels"
         subtitle="Secure channels for Agent-X inbound and outbound traffic"
       />
@@ -689,7 +690,7 @@ export function ChannelsTab({ value, onChange }: ChannelsTabProps) {
 
       <Typography sx={{ ...settingsHelperSx, mt: 0.5 }}>
         Enable a channel to configure credentials. Telegram verifies and saves automatically on success.
-        Commit other changes when ready.
+        Other changes save automatically.
       </Typography>
     </Box>
   );

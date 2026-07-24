@@ -17,6 +17,8 @@ export interface VoicePermissionRespondOptions {
 export interface VoicePermissionCardProps {
   prompt: VoicePermissionPrompt;
   onRespond: (choice: VoicePermissionChoice, opts?: VoicePermissionRespondOptions) => void;
+  /** Enable bypass for the rest of the session/turn and approve pending tools. */
+  onSwitchToBypass?: () => void;
   /** Defaults to shared VOICE_PERMISSION_TIMEOUT_MS (10s). */
   timeoutMs?: number;
 }
@@ -34,6 +36,7 @@ function riskColor(risk: string): string {
 export function VoicePermissionCard({
   prompt,
   onRespond,
+  onSwitchToBypass,
   timeoutMs = VOICE_PERMISSION_TIMEOUT_MS,
 }: VoicePermissionCardProps) {
   const respondedRef = useRef(false);
@@ -43,6 +46,13 @@ export function VoicePermissionCard({
     if (respondedRef.current) return;
     respondedRef.current = true;
     onRespond(choice, opts ?? { reason: 'user' });
+  };
+
+  const switchToBypass = () => {
+    if (respondedRef.current) return;
+    respondedRef.current = true;
+    if (onSwitchToBypass) onSwitchToBypass();
+    else onRespond('approve_all', { reason: 'user' });
   };
 
   useEffect(() => {
@@ -197,10 +207,11 @@ export function VoicePermissionCard({
         Say “allow”, “always”, or “deny” — or use the buttons below.
       </Typography>
 
-      <Box sx={{ display: 'flex', gap: 1.5 }}>
+      <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
         <PermButton label="ALLOW (Y)" color={commsTheme.relayReady} onClick={() => respond('allow_once')} />
         <PermButton label="ALWAYS (A)" color={commsTheme.text} onClick={() => respond('allow_always')} />
         <PermButton label="DENY (N)" color={commsTheme.error} onClick={() => respond('deny')} />
+        <PermButton label="BYPASS MODE" color={colors.accent.orange} onClick={switchToBypass} />
       </Box>
     </Box>
   );

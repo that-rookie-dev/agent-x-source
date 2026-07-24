@@ -17,6 +17,7 @@ import type { RunStateManager } from './RunStateManager.js';
 import type { CommandQueue } from '../communication/CommandQueue.js';
 import type { TodoManager } from './TodoManager.js';
 import type { TurnInjectionResult } from '../context/SessionContextHandler.js';
+import { extractActionableTaskTitles } from './extract-actionable-tasks.js';
 
 /** Slice of AgentFacade required by the crew mission helpers. */
 export interface CrewMissionContext {
@@ -207,54 +208,71 @@ export async function executeCrewMission(
 }
 
 /**
- * Auto-delegation: before Agent-X responds, check if any enabled crew
- * member's expertise matches the user message.
- * Uses LLM-powered semantic matching (scalable to any domain).
+ * Seed TodoManager only with planned actionable items from the assistant turn.
+ * Summary bullets / findings / “key points” are never treated as tasks.
  */
 export function extractTasksFromResponse(ctx: CrewMissionContext, content: string): void {
   const conversational = /\b(game|option|choice|suggestion|recommendation|example|sample|or you could|why not try|how about|feel free|pick one|choose from)\b/i;
   if (conversational.test(content)) return;
 
-  const lines = content.split('\n');
-  const taskLines: string[] = [];
+  // Never clobber an agent-managed checklist — only seed when empty.
+  if (ctx.todoManager.getItems().length > 0) return;
 
-  for (const line of lines) {
-    const stripped = line.trim();
-    if (/^\s*[-*•]\s+/.test(stripped) || /^\s*\d+[.)]\s+/.test(stripped)) {
-      taskLines.push(stripped);
-    }
+  const tasks = extractActionableTaskTitles(content);
+  if (tasks.length < 1) return;
+
+  ctx.todoManager.addItems(tasks);
+  getLogger().info('TODO_EXTRACT', `Extracted ${tasks.length} actionable tasks from response`);
+}
+
+/** Composer `@crew[callsign:…]` / `@crew:callsign` tokens (callsign or id keys). */
+export function parseCrewMentionKeys(content: string): string[] {
+  const normalized = content.replace(/\u200b/g, '');
+  const keys: string[] = [];
+  const push = (raw: string) => {
+    const key = raw.trim();
+    if (!key) return;
+    const lower = key.toLowerCase();
+    if (lower === 'file' || lower === 'folder' || lower === 'crew' || lower === 'kb') return;
+    if (!keys.some((k) => k.toLowerCase() === lower)) keys.push(key);
+  };
+
+  for (const match of normalized.matchAll(/@crew\[([^:\]]+)/g)) {
+    push(match[1]!);
   }
-
-  if (taskLines.length < 2) return;
-
-  const tasks = taskLines
-    .map((l) => l.replace(/^[\s]*[-*•]\s+/, '').replace(/^[\s]*\d+[.)]\s+/, '').trim())
-    .map((t) => t.replace(/\*\*(.+?)\*\*/g, '$1').replace(/__(.+?)__/g, '$1').replace(/`(.+?)`/g, '$1'))
-    .filter((t) => t.length > 5 && t.length < 200);
-
-  if (tasks.length >= 2) {
-    ctx.todoManager.clear();
-    ctx.todoManager.addItems(tasks);
-    getLogger().info('TODO_EXTRACT', `Extracted ${tasks.length} tasks from response`);
+  for (const match of normalized.matchAll(/@crew:([^:\s[\]]+)(?::[^\s[\]?!,;:)'"]+)?/g)) {
+    push(match[1]!);
   }
+  return keys;
 }
 
 export function detectAtMentions(ctx: CrewMissionContext, content: string): string[] {
   const normalized = content.replace(/\u200b/g, '');
-  const matches = normalized.matchAll(/(?<!\w)@([\w][\w.-]*)/g);
   const mentioned: string[] = [];
   const members = ctx.getCrewMembers();
-  for (const match of matches) {
-    const name = match[1]!.toLowerCase();
+
+  const pushIfFound = (name: string) => {
+    const key = name.toLowerCase();
+    if (key === 'file' || key === 'folder' || key === 'crew' || key === 'kb') return;
     const found = members.find(
-      (m) => m.crew.callsign.toLowerCase() === name
-        || m.crew.name.toLowerCase() === name
-        || m.crew.name.toLowerCase().replace(/\s+/g, '_') === name
-        || m.crew.id.toLowerCase() === name,
+      (m) => m.crew.callsign.toLowerCase() === key
+        || m.crew.name.toLowerCase() === key
+        || m.crew.name.toLowerCase().replace(/\s+/g, '_') === key
+        || m.crew.id.toLowerCase() === key,
     );
     if (found && !mentioned.includes(found.crew.id)) {
       mentioned.push(found.crew.id);
     }
+  };
+
+  for (const key of parseCrewMentionKeys(normalized)) {
+    pushIfFound(key);
   }
+
+  // Legacy bare @callsign (and still useful when models emit @callsign)
+  for (const match of normalized.matchAll(/(?<!\w)@([\w][\w.-]*)/g)) {
+    pushIfFound(match[1]!);
+  }
+
   return mentioned;
 }

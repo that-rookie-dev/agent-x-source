@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
@@ -10,9 +10,10 @@ import Link from '@mui/material/Link';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PublicIcon from '@mui/icons-material/Public';
 import TravelExploreIcon from '@mui/icons-material/TravelExplore';
-import type { WebSearchToolsConfig } from '@agentx/shared';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import type { WebSearchProviderId, WebSearchToolsConfig } from '@agentx/shared';
 import { settings } from '../../api';
-import { hasConfiguredSecret, isRedactedSecret } from '../../utils/secret-field';
+import { hasConfiguredSecret } from '../../utils/secret-field';
 import {
   settingsTheme,
   settingsScanlineSx,
@@ -34,6 +35,22 @@ export interface WebSearchToolsTabProps {
 }
 
 type PaidProviderId = 'brave' | 'exa' | 'tavily';
+
+const DEFAULT_PROVIDER_ORDER: WebSearchProviderId[] = ['duckduckgo', 'brave', 'exa', 'tavily'];
+
+function normalizeProviderOrder(order?: WebSearchProviderId[] | null): WebSearchProviderId[] {
+  const out: WebSearchProviderId[] = [];
+  const seen = new Set<WebSearchProviderId>();
+  for (const id of order ?? []) {
+    if (!DEFAULT_PROVIDER_ORDER.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  for (const id of DEFAULT_PROVIDER_ORDER) {
+    if (!seen.has(id)) out.push(id);
+  }
+  return out;
+}
 
 interface ProviderMeta {
   id: PaidProviderId | 'duckduckgo';
@@ -102,16 +119,208 @@ const SEARCH_PROVIDERS: ProviderMeta[] = [
 function isProviderActive(id: ProviderMeta['id'], cfg: WebSearchToolsConfig): boolean {
   if (id === 'duckduckgo') return cfg.duckduckgo?.enabled !== false;
   const entry = cfg[id];
-  return Boolean(entry?.enabled && hasConfiguredSecret(entry.apiKey));
+  return Boolean(entry?.enabled && hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured));
 }
 
 function providerStatus(id: ProviderMeta['id'], cfg: WebSearchToolsConfig, enabled: boolean): string {
   if (!enabled) return 'OFF';
   if (id === 'duckduckgo') return 'READY';
   const entry = cfg[id as PaidProviderId];
-  if (hasConfiguredSecret(entry?.apiKey)) return 'READY';
-  if (entry?.apiKey && isRedactedSecret(entry.apiKey)) return 'READY';
+  if (hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured)) return 'READY';
   return 'SETUP';
+}
+
+function SearchPriorityCard({
+  value,
+  onChange,
+}: {
+  value: WebSearchToolsConfig;
+  onChange: (next: WebSearchToolsConfig) => void;
+}) {
+  const order = useMemo(() => normalizeProviderOrder(value.providerOrder), [value.providerOrder]);
+  const metaById = useMemo(
+    () => Object.fromEntries(SEARCH_PROVIDERS.map((p) => [p.id, p])) as Record<WebSearchProviderId, ProviderMeta>,
+    [],
+  );
+  const activeIds = order.filter((id) => isProviderActive(id, value));
+  const inactiveIds = order.filter((id) => !isProviderActive(id, value));
+  const [dragId, setDragId] = useState<WebSearchProviderId | null>(null);
+  const [overId, setOverId] = useState<WebSearchProviderId | null>(null);
+
+  const commitOrder = (nextActive: WebSearchProviderId[]) => {
+    onChange({
+      ...value,
+      providerOrder: normalizeProviderOrder([...nextActive, ...inactiveIds]),
+    });
+  };
+
+  const move = (fromId: WebSearchProviderId, toId: WebSearchProviderId) => {
+    if (fromId === toId) return;
+    const next = [...activeIds];
+    const from = next.indexOf(fromId);
+    const to = next.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    next.splice(from, 1);
+    next.splice(to, 0, fromId);
+    commitOrder(next);
+  };
+
+  return (
+    <SettingsCard
+      title="Search priority"
+      subtitle="Drag ready tools to set try-order. The agent falls through if a tool returns little or no data."
+      accent={settingsTheme.accent.hud}
+      active={activeIds.length > 0}
+      sx={{ mb: 1.5 }}
+    >
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        {activeIds.map((id, index) => {
+          const meta = metaById[id];
+          const isDragging = dragId === id;
+          const isOver = overId === id && dragId !== id;
+          return (
+            <Box
+              key={id}
+              draggable
+              onDragStart={(e) => {
+                setDragId(id);
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', id);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                if (overId !== id) setOverId(id);
+              }}
+              onDragLeave={() => {
+                if (overId === id) setOverId(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const from = (e.dataTransfer.getData('text/plain') || dragId) as WebSearchProviderId | null;
+                if (from) move(from, id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1,
+                py: 0.65,
+                borderRadius: '8px',
+                cursor: 'grab',
+                userSelect: 'none',
+                border: `1px solid ${isOver ? meta.accent : alphaColor(meta.accent, '35')}`,
+                bgcolor: isDragging
+                  ? alphaColor(meta.accent, '18')
+                  : isOver
+                    ? alphaColor(meta.accent, '12')
+                    : alphaColor(meta.accent, '06'),
+                opacity: isDragging ? 0.55 : 1,
+                transform: isOver ? 'translateY(1px) scale(1.01)' : 'none',
+                transition: 'border-color 120ms ease, background-color 120ms ease, transform 120ms ease, opacity 120ms ease',
+                '&:active': { cursor: 'grabbing' },
+              }}
+            >
+              <Box
+                sx={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: '50%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  bgcolor: alphaColor(meta.accent, '22'),
+                  border: `1px solid ${alphaColor(meta.accent, '55')}`,
+                  color: meta.accent,
+                  fontSize: '0.62rem',
+                  fontWeight: 700,
+                  ...settingsMonoSx,
+                }}
+              >
+                {index + 1}
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: settingsTheme.text.primary, lineHeight: 1.2 }}>
+                  {meta.name}
+                </Typography>
+                <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx, letterSpacing: '0.4px' }}>
+                  {meta.free ? 'FREE · READY' : 'BYOK · READY'}
+                  {index === 0 ? ' · FIRST PICK' : ''}
+                </Typography>
+              </Box>
+              <DragIndicatorIcon sx={{ fontSize: 16, color: alphaColor(meta.accent, '90'), opacity: 0.85 }} />
+            </Box>
+          );
+        })}
+
+        {activeIds.length === 0 && (
+          <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.accent.alert, py: 0.5, ...settingsMonoSx }}>
+            Enable a provider below to start ranking.
+          </Typography>
+        )}
+
+        {inactiveIds.length > 0 && (
+          <>
+            <Typography sx={{ ...settingsOverlineSx, mt: activeIds.length ? 0.75 : 0, mb: 0.25, letterSpacing: '1.5px' }}>
+              Waiting · not in rotation
+            </Typography>
+            {inactiveIds.map((id) => {
+              const meta = metaById[id];
+              return (
+                <Box
+                  key={id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    px: 1,
+                    py: 0.55,
+                    borderRadius: '8px',
+                    border: `1px dashed ${settingsTheme.border.subtle}`,
+                    bgcolor: alphaColor(settingsTheme.text.dim, '06'),
+                    opacity: 0.72,
+                  }}
+                >
+                  <Box
+                    sx={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: '50%',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                      border: `1px dashed ${settingsTheme.border.default}`,
+                      color: settingsTheme.text.dim,
+                      fontSize: '0.55rem',
+                      ...settingsMonoSx,
+                    }}
+                  >
+                    —
+                  </Box>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography sx={{ fontSize: '0.7rem', color: settingsTheme.text.secondary, lineHeight: 1.2 }}>
+                      {meta.name}
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.55rem', color: settingsTheme.text.dim, ...settingsMonoSx }}>
+                      {meta.free ? 'OFF' : 'NEEDS KEY / OFF'}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+          </>
+        )}
+      </Box>
+    </SettingsCard>
+  );
 }
 
 function SearchProviderCard({
@@ -136,8 +345,8 @@ function SearchProviderCard({
   const enabled = isDdg
     ? value.duckduckgo?.enabled !== false
     : Boolean(value[meta.id as PaidProviderId]?.enabled);
-  const storedKey = isDdg ? '' : (value[meta.id as PaidProviderId]?.apiKey ?? '');
-  const keyConfigured = isDdg || hasConfiguredSecret(storedKey) || isRedactedSecret(storedKey);
+  const paid = isDdg ? undefined : value[meta.id as PaidProviderId];
+  const keyConfigured = isDdg || hasConfiguredSecret(paid?.apiKey, paid?.apiKeyConfigured);
   const status = providerStatus(meta.id, value, enabled);
   const ready = isProviderActive(meta.id, value);
 
@@ -146,9 +355,14 @@ function SearchProviderCard({
       onChange({ ...value, duckduckgo: { enabled: checked } });
       return;
     }
+    // Do not send apiKey — backend preserves the stored secret.
+    const prev = value[meta.id as PaidProviderId];
     onChange({
       ...value,
-      [meta.id]: { ...value[meta.id as PaidProviderId], enabled: checked },
+      [meta.id]: {
+        enabled: checked,
+        apiKeyConfigured: prev?.apiKeyConfigured,
+      },
     });
   };
 
@@ -157,9 +371,9 @@ function SearchProviderCard({
     onChange({
       ...value,
       [meta.id]: {
-        ...value[meta.id as PaidProviderId],
         enabled: true,
         apiKey: draftKey.trim(),
+        apiKeyConfigured: true,
       },
     });
     setEditingKey(false);
@@ -172,7 +386,7 @@ function SearchProviderCard({
     setDraftKey('');
     onChange({
       ...value,
-      [meta.id]: { ...value[meta.id as PaidProviderId], enabled: false, apiKey: '' },
+      [meta.id]: { enabled: false, apiKey: '', apiKeyConfigured: false },
     });
   };
 
@@ -226,7 +440,7 @@ function SearchProviderCard({
           fontSize: 16,
           color: settingsTheme.text.dim,
           transform: instructionsOpen ? 'rotate(180deg)' : 'none',
-          transition: 'transform 0.2s',
+          transition: 'transform 0.28s ease',
         }} />
         <Typography sx={{ ...settingsOverlineSx, mb: 0 }}>Setup instructions</Typography>
       </Box>
@@ -317,15 +531,15 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
   const hasSearchProvider = SEARCH_PROVIDERS.some((p) => isProviderActive(p.id, value));
 
   const runProviderTest = async (id: PaidProviderId) => {
-    const rawKey = value[id]?.apiKey?.trim() ?? '';
-    const useStored = !rawKey || isRedactedSecret(rawKey);
-    if (!useStored && !rawKey) {
+    const entry = value[id];
+    if (!hasConfiguredSecret(entry?.apiKey, entry?.apiKeyConfigured) && !entry?.apiKey?.trim()) {
       setTestResults((prev) => ({ ...prev, [id]: { ok: false, message: 'Save an API key first' } }));
       return;
     }
     setTesting(id);
     try {
-      const result = await settings.webSearch.test(id, useStored ? undefined : rawKey);
+      // Always test against the server-stored key — never send placeholders from the client.
+      const result = await settings.webSearch.test(id, undefined);
       setTestResults((prev) => ({
         ...prev,
         [id]: {
@@ -362,6 +576,8 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
         </Box>
       )}
 
+      <SearchPriorityCard value={value} onChange={onChange} />
+
       <Box sx={{ position: 'relative' }}>
         <Box sx={settingsScanlineSx} />
         <Box sx={{ position: 'relative', zIndex: 1 }}>
@@ -385,11 +601,12 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
           <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_search</Box> — quick snippets.{' '}
           <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_fetch / web_scrape</Box> — read a URL.{' '}
           <Box component="span" sx={{ color: settingsTheme.text.primary, fontWeight: 600 }}>web_browse</Box> — JS-heavy pages.
+          {' '}Search tools follow the priority order above.
         </Typography>
       </SettingsCard>
 
       <Typography sx={{ ...settingsHelperSx, mt: 1 }}>
-        Enable a provider, follow the setup steps, then commit changes when ready.
+        Changes save automatically. Enable a provider and follow the setup steps below.
       </Typography>
     </Box>
   );
@@ -398,18 +615,33 @@ export function WebSearchToolsTab({ value, onChange }: WebSearchToolsTabProps) {
 export function defaultWebSearchConfig(): WebSearchToolsConfig {
   return {
     duckduckgo: { enabled: true },
-    brave: { enabled: false, apiKey: '' },
-    exa: { enabled: false, apiKey: '' },
-    tavily: { enabled: false, apiKey: '' },
+    brave: { enabled: false, apiKeyConfigured: false },
+    exa: { enabled: false, apiKeyConfigured: false },
+    tavily: { enabled: false, apiKeyConfigured: false },
+    providerOrder: [...DEFAULT_PROVIDER_ORDER],
   };
+}
+
+function mergePaidClientEntry(
+  defaults: { enabled: boolean; apiKeyConfigured?: boolean },
+  existing?: { enabled?: boolean; apiKey?: string; apiKeyConfigured?: boolean },
+): { enabled: boolean; apiKeyConfigured?: boolean; apiKey?: string } {
+  const enabled = existing?.enabled ?? defaults.enabled;
+  const configured = hasConfiguredSecret(existing?.apiKey, existing?.apiKeyConfigured);
+  // Never keep placeholder/empty apiKey strings in client state — only the flag + optional new draft key.
+  if (existing?.apiKey && existing.apiKey.trim() && !existing.apiKey.includes('•')) {
+    return { enabled, apiKey: existing.apiKey, apiKeyConfigured: true };
+  }
+  return { enabled, apiKeyConfigured: configured };
 }
 
 export function mergeWebSearchConfig(existing?: WebSearchToolsConfig | null): WebSearchToolsConfig {
   const defaults = defaultWebSearchConfig();
   return {
     duckduckgo: { enabled: existing?.duckduckgo?.enabled ?? defaults.duckduckgo!.enabled },
-    brave: { ...defaults.brave!, ...existing?.brave },
-    exa: { ...defaults.exa!, ...existing?.exa },
-    tavily: { ...defaults.tavily!, ...existing?.tavily },
+    brave: mergePaidClientEntry(defaults.brave!, existing?.brave),
+    exa: mergePaidClientEntry(defaults.exa!, existing?.exa),
+    tavily: mergePaidClientEntry(defaults.tavily!, existing?.tavily),
+    providerOrder: normalizeProviderOrder(existing?.providerOrder ?? defaults.providerOrder),
   };
 }

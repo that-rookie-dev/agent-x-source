@@ -20,7 +20,7 @@ import { Scope } from '../concurrency/Scope.js';
 import { getAttachmentService } from '../attachments/index.js';
 import { join, resolve, normalize } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+
 import type { ProviderInterface } from '../providers/ProviderInterface.js';
 import { ProviderFactory } from '../providers/index.js';
 import { AgentLifecycle } from './AgentLifecycle.js';
@@ -39,7 +39,11 @@ import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
 import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
 import { createCrewKeywordExpander } from '../crew/crew-keyword-expander.js';
 import { getCrewSuggestionService } from '../crew/get-crew-store.js';
-import { ensureCrewMembersOnRoster, type CrewCatalogRecruitStore } from '../crew/crew-mission-deploy.js';
+import {
+  ensureCrewMembersOnRoster,
+  resolveMentionedCrewMembers,
+  type CrewCatalogRecruitStore,
+} from '../crew/crew-mission-deploy.js';
 import {
   buildCrewDeploymentIntakeQuestionnaire,
   needsCrewDeploymentIntake,
@@ -63,6 +67,7 @@ import {
 import { ErrorShield } from './ErrorShield.js';
 import { ToolExecutor } from '../tools/ToolExecutor.js';
 import { EnhancedToolExecutor } from '../tools/EnhancedToolExecutor.js';
+import { registerPerformanceTuneTarget } from '../performance/PerformanceGovernor.js';
 import { ToolRegistry } from '../tools/ToolRegistry.js';
 import { createDefaultToolkit } from '../tools/toolkit.js';
 import { CommandRegistry } from '../commands/index.js';
@@ -82,7 +87,8 @@ import { PromptEngine } from '../prompt/PromptEngine.js';
 import type { IntentResult } from '../prompt/PromptEngine.js';
 import { DecisionEngine } from './DecisionEngine.js';
 import type { DecisionResult } from './DecisionEngine.js';
-import { runTurnJourney } from './TurnJourney.js';
+import { parseKbMentionSourceIds, runTurnJourney } from './TurnJourney.js';
+import type { KbDocumentTurnPolicy } from '../knowledge-base/kb-document-access-guard.js';
 import { AgentBus, getAgentBus } from './AgentBus.js';
 import { SpecialistRegistry } from './SpecialistRegistry.js';
 import type { SpecialistType } from './SpecialistRegistry.js';
@@ -105,6 +111,13 @@ import { TurnFeedbackService } from '../feedback/TurnFeedbackService.js';
 import { AutonomousDiagnosticsSystem } from './AutonomousDiagnosticsSystem.js';
 
 import { TodoManager } from './TodoManager.js';
+import {
+  MAX_COMPLETION_CONTINUATIONS,
+  buildCompletionContinuationPrompt,
+  buildIncompleteTurnFooter,
+  evaluateTurnCompletionGate,
+  getIncompleteTodos,
+} from './TurnCompletionGate.js';
 import type { SessionLogger } from '../session/SessionLogger.js';
 import { estimateTokens, getOutputReserve, resolveEffectiveMaxOutputTokens, estimatePromptTokens, ContextBudgetExceededError, type ModelInfo } from '@agentx/shared';
 
@@ -141,7 +154,7 @@ import {
   publishCrewMissionResponses as publishCrewMissionResponsesHelper,
   executeCrewMission as executeCrewMissionHelper,
   extractTasksFromResponse as extractTasksFromResponseHelper,
-  detectAtMentions as detectAtMentionsHelper,
+  parseCrewMentionKeys,
 } from './crew-mission-helpers.js';
 import {
   resolveContinuationInstructionBlock as resolveContinuationInstructionBlockHelper,
@@ -259,10 +272,11 @@ export class Agent {
   public scope: Scope | null = null;
   private _abortSignalController: AbortController | null = null;
   private pendingInstruction: string | null = null;
+  /** User choice when starting a turn with leftover incomplete TASKS. */
+  private todoDispositionThisTurn: 'continue' | 'skip' | 'defer' | null = null;
   private pendingVoiceMerge: { messageId: string; prefixContent: string } | null = null;
   private pendingDelegateCrewIds: string[] | null = null;
   private turnWebSearchPolicy: WebSearchTurnPolicy = 'off';
-  private forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null = null;
   private subAgents: SubAgentManager;
   private taskManager: TaskManager;
   public todoManager: TodoManager;
@@ -279,6 +293,9 @@ export class Agent {
   private toolExecutor?: EnhancedToolExecutor;
   private toolRegistry?: ToolRegistry;
   private pendingPermissions = new Map<string, { resolve: (choice: PermissionHandlerResult) => void; toolName: string; path: string; riskLevel: string }>();
+  private permissionQueue: Array<{ toolId: string; path: string; riskLevel: string; context?: { args?: unknown; integrationPreview?: string }; resolve: (value: PermissionHandlerResult) => void }> | undefined;
+  private activePermissionId: string | null = null;
+  private processPermissionQueueFn: ((choice?: PermissionHandlerResult) => void) | undefined;
   private turnApprovedAll = false;
   private _onPart?: PartPersistFn;
   private options: Readonly<AgentOptions>;
@@ -363,6 +380,8 @@ export class Agent {
   private _missionEventSeq = 0;
   private missionContextProvider?: () => { revision: number; block: string };
   private lastMissionContextRevision = -1;
+  /** Last TodoManager revision injected via prepareStep (mid-turn checklist refresh). */
+  private lastTodosRevisionInjected = -1;
   private pendingStepApproval: ((stepId: string, approved: boolean, description?: string) => void) | null = null;
   private pendingStepCap: ((continueRun: boolean) => void) | null = null;
   /** Set when the user hits Stop — stream/tools must halt immediately. */
@@ -372,8 +391,9 @@ export class Agent {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   public partialTurnContent = '';
   private currentTurnId: string | null = null;
-  private readonly maxCompletionSteps = 25;
-  private readonly crewPrivateCompletionSteps = 40;
+  /** Desktop/main agent step budget — long missions must not stop at ~25 tools. */
+  private readonly maxCompletionSteps = 80;
+  private readonly crewPrivateCompletionSteps = 80;
   private stepCapExtra = 0;
 
   // ─── Lazy-init getters ───
@@ -428,7 +448,13 @@ export class Agent {
   private _capabilityWarningEmitted = false;
   // ─── LAZY PIPELINE MODULES (created on first access) ───
   private _inputNormalizer: InputNormalizer | null = null;
-  private get inputNormalizer(): InputNormalizer { if (!this._inputNormalizer) this._inputNormalizer = new InputNormalizer(); return this._inputNormalizer; }
+  private get inputNormalizer(): InputNormalizer {
+    if (!this._inputNormalizer) {
+      this._inputNormalizer = new InputNormalizer();
+      this._inputNormalizer.setWorkspaceRoot(this.scopePath);
+    }
+    return this._inputNormalizer;
+  }
   private _errorClassifier: ErrorClassifier | null = null;
   private get errorClassifier(): ErrorClassifier { if (!this._errorClassifier) this._errorClassifier = new ErrorClassifier(); return this._errorClassifier; }
   private _telemetry: TelemetryEmitter | null = null;
@@ -488,6 +514,7 @@ export class Agent {
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 8;
+  private unregisterPerformanceTune: (() => void) | null = null;
   public sessionManager: SessionManager | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
 
@@ -580,6 +607,9 @@ export class Agent {
       pendingPermissions: this.pendingPermissions,
       emit: (event) => this.emit(event),
       persistPermissionGrant: (toolId, decision) => this.persistPermissionGrant(toolId, decision),
+      permissionQueue: this.permissionQueue,
+      activePermissionId: this.activePermissionId,
+      processPermissionQueue: this.processPermissionQueueFn,
     };
   }
 
@@ -989,7 +1019,7 @@ export class Agent {
 
     this.taskManager = new TaskManager(this.eventBus);
     setTaskManagerInstance(this.taskManager);
-    this.todoManager = new TodoManager(this.eventBus);
+    this.todoManager = new TodoManager(this.eventBus, this.sessionId);
     registerSessionTodoManager(this.sessionId, this.todoManager);
     setIndexerEventBus(this.eventBus);
     // crewManager is lazy — created on first access via getter
@@ -1154,12 +1184,8 @@ export class Agent {
       this.getBaseUrl(),
     );
 
-    // crewOrchestrator is lazy-init (created on first access)
-    this.maxSubAgents = options.config.maxSubAgents ?? 8;
-    this.subAgents.setMaxConcurrent(this.maxSubAgents);
-    if (this.toolExecutor instanceof EnhancedToolExecutor) {
-      this.toolExecutor.setMaxToolConcurrency(Math.max(this.maxSubAgents, 8));
-    }
+    // Soft concurrency from Settings → Performance (overrides hardcoded defaults).
+    this.unregisterPerformanceTune = registerPerformanceTuneTarget(this);
 
     // Initialize prompt engine for token-efficient prompting
     this.promptEngine = new PromptEngine(this.getContextWindow());
@@ -1374,6 +1400,7 @@ export class Agent {
   setScopePath(path: string): void {
     this.scopePath = normalize(resolve(path));
     this.toolExecutor?.setScopePath(this.scopePath);
+    this._inputNormalizer?.setWorkspaceRoot(this.scopePath);
   }
 
   /**
@@ -1383,6 +1410,7 @@ export class Agent {
     this.userCancelledTurn = true;
     this.toolExecutor?.setTurnAborted(true);
     this.toolExecutor?.setThirdPartyTurnPolicy(null);
+    this.toolExecutor?.setKbDocumentTurnPolicy(null);
     this.abortAllPendingTurnWaits();
     this.abortClarificationWait();
     this._abortSignalController?.abort();
@@ -1495,7 +1523,12 @@ export class Agent {
         }
       : undefined;
     const task = this.subAgents.spawn(instruction, toolsList ?? [], timeout, this.maxSubAgents, undefined, !!background, channelContext);
-    if (background) {
+    // On desktop chat the parent ALWAYS waits for the child to finish
+    // so it can merge results and continue the turn. Fire-and-forget only when the
+    // user is on a messaging channel (or inbound channel context) and asked not to wait.
+    const fireAndForget =
+      !!background && !!(this.options.channelSession || channelContext?.channel);
+    if (fireAndForget) {
       this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
       return {
         success: true,
@@ -1504,10 +1537,14 @@ export class Agent {
         agentId: task.id,
       };
     }
+    if (background) {
+      // Parallel desktop spawn: still mark as backgrounded for UI, but await below.
+      this.emit({ type: 'task_backgrounded', taskId: task.id } as EngineEvent);
+    }
     const completed = await this.subAgents.waitFor(task.id);
     return {
       success: completed?.status === 'completed',
-      output: completed?.result ?? '',
+      output: completed?.result ?? completed?.status ?? '',
       elapsed: (completed?.endTime ?? Date.now()) - (completed?.startTime ?? Date.now()),
       agentId: task.id,
     };
@@ -1610,7 +1647,8 @@ export class Agent {
   }
 
   private waitForStepCap(currentSteps: number): Promise<boolean> {
-    if (this.options.channelSession) {
+    // Auto-continue while sub-agents are still working, or on messaging channels.
+    if (this.options.channelSession || this.subAgents.hasOutstandingWork()) {
       this.stepCapExtra++;
       return Promise.resolve(true);
     }
@@ -1681,7 +1719,7 @@ export class Agent {
     return trimmed;
   }
 
-  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; sourceMessageId?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null; attachments?: import('@agentx/shared').TurnAttachment[] }): Promise<Message> {
+  async sendMessage(content: string, options?: { instruction?: string; userId?: string; channelId?: string; sourceChannel?: string; sourceMessageId?: string; retry?: boolean; delegateCrewIds?: string[]; crewSuggestionResolved?: boolean; crewIntakeFromPicker?: boolean; primaryCrewId?: string; forceWebSearch?: boolean; voiceTurn?: boolean; userMessagePersisted?: boolean; voiceContinuation?: boolean; voiceMergeIntoMessage?: { messageId: string; prefixContent: string }; resumeCrewIntake?: { originalUserText: string; intakeAnswer: string; delegateCrewIds: string[]; primaryCrewId?: string }; clientSituation?: ClientSituation | null; attachments?: import('@agentx/shared').TurnAttachment[]; /** How to treat leftover incomplete TASKS at turn start. */ todoDisposition?: 'continue' | 'skip' | 'defer' }): Promise<Message> {
     // ─── Self-healing: reset stuck processing flag after 60s timeout ───
     if (this.isProcessing) {
       const reset = this.lifecycle.resetIfStuck(60000);
@@ -1737,6 +1775,7 @@ export class Agent {
     // ─── UNIFIED: Start telemetry for this turn ───
     this.telemetry.startTurn(`turn-${startTime}`, this.sessionId, this.config.provider.activeProvider, this.config.provider.activeModel);
     this.lastMissionContextRevision = -1;
+    this.lastTodosRevisionInjected = -1;
 
     // Reset per-turn anti-duplicate sentinel
     this._turnMessageEmitted = false;
@@ -1775,6 +1814,43 @@ export class Agent {
       this.clientSituation = options.clientSituation;
     }
 
+    // Leftover TASKS from a prior turn — honor the user's pre-send disposition.
+    this.todoDispositionThisTurn = options?.todoDisposition ?? null;
+    if (this.todoDispositionThisTurn === 'skip') {
+      this.todoManager.clear();
+    } else if (this.todoDispositionThisTurn === 'defer' && this.todoManager.hasIncomplete()) {
+      const parked = this.todoManager.getIncomplete()
+        .map((t) => `- #${t.id} ${t.title} (${t.status})`)
+        .join('\n');
+      const deferBlock = [
+        '[TODO_DISPOSITION: DEFER]',
+        'The user parked an incomplete checklist to ask something else.',
+        'Answer the NEW user message only. Do NOT resume parked items this turn.',
+        'Completion gate is disabled for the parked checklist this turn.',
+        'Parked items (keep on disk for a later turn):',
+        parked,
+        '[/TODO_DISPOSITION]',
+      ].join('\n');
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${deferBlock}`
+        : deferBlock;
+    } else if (this.todoDispositionThisTurn === 'continue' && this.todoManager.hasIncomplete()) {
+      const open = this.todoManager.getIncomplete()
+        .map((t) => `- #${t.id} ${t.title} (${t.status})`)
+        .join('\n');
+      const contBlock = [
+        '[TODO_DISPOSITION: CONTINUE]',
+        'The user wants the incomplete checklist finished this turn.',
+        'Prioritize open TASKS items (completion gate applies). Also address their latest message if relevant.',
+        'Open items:',
+        open,
+        '[/TODO_DISPOSITION]',
+      ].join('\n');
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${contBlock}`
+        : contBlock;
+    }
+
     if (!options?.retry) {
       const continuationBlock = this.resolveContinuationInstructionBlock(cleanContent);
       if (continuationBlock) {
@@ -1793,22 +1869,6 @@ export class Agent {
     this.toolExecutor?.setInboundSourceChannel(messagingChannelInbound ? (options?.sourceChannel ?? null) : null);
     this.toolExecutor?.setInboundSourceThreadId(messagingChannelInbound ? (options?.channelId ?? null) : null);
     this.toolExecutor?.setInboundSourceMessageId(messagingChannelInbound ? (options?.sourceMessageId ?? null) : null);
-    // For voice sessions the interactive permission request is fully handled by
-    // bindPermissionHandler(); the prompt hook's extra event has no matching
-    // pendingPermissions entry and would leave the voice turn hanging.
-    if (this.options.promptProfile !== 'voice') {
-      this.toolExecutor?.setPermissionPromptHook((details) => {
-        this.emit({
-          type: 'permission_required',
-          requestId: randomUUID(),
-          tool: details.toolId,
-          path: details.path,
-          riskLevel: details.riskLevel,
-          forAutomation: details.forAutomation,
-          integrationPreview: details.integrationPreview,
-        });
-      });
-    }
     if (!options?.retry) {
       const clarificationBlock = buildClarificationPolicyInstruction(this.isMessagingChannelContext() || messagingChannelInbound);
       this.pendingInstruction = this.pendingInstruction
@@ -1835,7 +1895,6 @@ export class Agent {
         }),
       });
     }
-    this.forcedWebSearchToolName = searchStatus.forcedTool;
     if (options?.forceWebSearch && !searchStatus.available) {
       throw new Error('Web search is not available. Enable a provider in Settings → Tools.');
     }
@@ -1910,6 +1969,7 @@ export class Agent {
     }
 
     const messageMetadata: Record<string, unknown> = {};
+    if (options?.voiceTurn) messageMetadata['voiceTurn'] = true;
     if (messagingChannelInbound && options?.sourceMessageId) {
       if (options?.sourceChannel) messageMetadata['channel'] = options.sourceChannel;
       messageMetadata['platformMessageId'] = Number(options.sourceMessageId);
@@ -1957,6 +2017,7 @@ export class Agent {
 
     // Reset turn-level permission auto-approve from any prior batch approval
     this.turnApprovedAll = false;
+    this.toolExecutor?.getPermissionManager().revokeOneTimePermissions();
 
     const isCrewPrivate = this.options.promptProfile === 'crew_private';
 
@@ -2015,18 +2076,49 @@ export class Agent {
       }
     }
 
-    // ─── @MENTION ROUTING — user explicitly invoked crew ───
-    if (allowsCrewInvolvement('mention', crewCtx.contextKind, crewCtx.sessionId)) {
-    const mentionedCrewIds = this.detectAtMentions(cleanContent);
-    if (mentionedCrewIds.length > 0 && this.crewOrchestrator) {
-      const members = this.crewOrchestrator.getMembers();
-      const mentionedMembers = members.filter((m) =>
-        mentionedCrewIds.includes(m.crew.id) && m.crew.enabled !== false,
-      );
-      if (mentionedMembers.length > 0) {
-        return await this.executeCrewMission(mentionedMembers, cleanContent, startTime, classificationContext);
+    // ─── @MENTION ROUTING — user explicitly invoked crew (roster + Hub catalog) ───
+    if (allowsCrewInvolvement('mention', crewCtx.contextKind, crewCtx.sessionId) && this.crewOrchestrator) {
+      const mentionKeys = parseCrewMentionKeys(cleanContent);
+      if (mentionKeys.length > 0) {
+        const store = this.getPersistStore();
+        const catalogStore = (store?.getCrewCatalogStore?.() as CrewCatalogRecruitStore | null) ?? null;
+        const { members: mentionedMembers, unresolved } = await resolveMentionedCrewMembers(
+          this.crewManager,
+          this,
+          catalogStore,
+          cleanContent,
+        );
+        if (mentionedMembers.length > 0) {
+          const attachmentCtx = await this.buildAttachmentContextForMission();
+          const missionTask = attachmentCtx
+            ? `${cleanContent}\n\n${attachmentCtx}`
+            : cleanContent;
+          return await this.executeCrewMission(mentionedMembers, missionTask, startTime, classificationContext);
+        }
+        if (unresolved.length > 0) {
+          const labels = unresolved.map((k) => `@${k}`).join(', ');
+          const failText =
+            `I couldn't involve ${labels} — that specialist isn't on this session roster and couldn't be resolved from the Crew Hub. `
+            + `Add them to the crew roster (or open a private chat with them), then try the @mention again.`;
+          const failMsg: Message = {
+            id: generateMessageId(),
+            sessionId: this.sessionId,
+            role: 'assistant',
+            content: failText,
+            toolCalls: null,
+            createdAt: new Date().toISOString(),
+            tokenCount: Math.ceil(failText.length / 4),
+          };
+          this.messages.push({ role: 'assistant', content: failText });
+          this.persistAssistantMessage(failMsg);
+          this.emit({ type: 'message_received', message: failMsg, elapsed: Date.now() - startTime });
+          this.lifecycle.forceTransition('idle');
+          this.scope = null;
+          this.runStateMgr.release(this.sessionId);
+          this.commandQueue.release(this.sessionId);
+          return failMsg;
+        }
       }
-    }
     }
 
     // ─── USER-APPROVED CREW SUGGESTION — deploy selected specialists ───
@@ -2176,6 +2268,20 @@ export class Agent {
         });
         this.lastRagResults = journey.ragResults;
         this.lastJourneyBlock = journey.journeyBlock;
+        // Pin KB documents for this turn — hard-deny disk/shell fallbacks on originals.
+        const kbMentions = journey.mentionedKb.length > 0
+          ? journey.mentionedKb
+          : parseKbMentionSourceIds(content);
+        if (kbMentions.length > 0) {
+          const policy: KbDocumentTurnPolicy = {
+            active: true,
+            sourceIds: kbMentions.map((m) => m.sourceId),
+            names: kbMentions.map((m) => m.name || m.sourceId),
+          };
+          this.toolExecutor?.setKbDocumentTurnPolicy(policy);
+        } else {
+          this.toolExecutor?.setKbDocumentTurnPolicy(null);
+        }
         if (journey.ragResults.length > 0) {
           this.emit({
             type: 'rag_queried',
@@ -2194,6 +2300,15 @@ export class Agent {
         }
       } catch (e) {
         getLogger().warn('TURN_JOURNEY', e instanceof Error ? e.message : String(e));
+        // Still enforce @kb disk ban even if journey prefetch failed.
+        const kbMentions = parseKbMentionSourceIds(content);
+        if (kbMentions.length > 0) {
+          this.toolExecutor?.setKbDocumentTurnPolicy({
+            active: true,
+            sourceIds: kbMentions.map((m) => m.sourceId),
+            names: kbMentions.map((m) => m.name || m.sourceId),
+          });
+        }
       }
     }
 
@@ -2368,12 +2483,12 @@ export class Agent {
       this.toolExecutor?.setInboundSourceChannel(null);
       this.toolExecutor?.setInboundSourceThreadId(null);
       this.toolExecutor?.setInboundSourceMessageId(null);
-      this.toolExecutor?.setPermissionPromptHook(undefined);
       this.turnWebSearchPolicy = 'off';
-      this.forcedWebSearchToolName = null;
       this.pendingVoiceMerge = null;
+      this.todoDispositionThisTurn = null;
       this.toolExecutor?.setTurnAborted(false);
       this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.toolExecutor?.setKbDocumentTurnPolicy(null);
       this.userCancelledTurn = false;
       this.completeTurnTelemetry(startTime);
       this.lifecycle.forceTransition('idle');
@@ -2574,28 +2689,40 @@ export class Agent {
             if (!cont) throw new Error('STEP_CAP_STOP');
             stepCapContinuations++;
           }
-          if (
-            stepNumber === 0
-            && this.turnWebSearchPolicy === 'forced'
-            && this.forcedWebSearchToolName
-            && tools[this.forcedWebSearchToolName]
-          ) {
-            return { toolChoice: { type: 'tool' as const, toolName: this.forcedWebSearchToolName } };
+          // Keep toolChoice at stream-level "auto". Required tools are driven by
+          // turn instructions — forced/named tool selection is not portable across
+          // reasoning-capable endpoints.
+          // Mid-turn injections: the SDK only reconciles the system prompt once per
+          // turn, so checklist / crew updates must be pushed into prepareStep or the
+          // model never sees them after the first todo_write.
+          if (stepNumber === 0) return {};
+          const extras: Array<{ role: 'user'; content: string }> = [];
+
+          const todosRev = this.todoManager.getRevision();
+          if (todosRev > this.lastTodosRevisionInjected && this.todoManager.getItems().length > 0) {
+            this.lastTodosRevisionInjected = todosRev;
+            extras.push({
+              role: 'user',
+              content: this.todoManager.formatActiveBlock({
+                deferred: this.todoDispositionThisTurn === 'defer',
+              }),
+            });
           }
+
           const provider = this.missionContextProvider;
-          if (!provider || stepNumber === 0) return {};
-          const { revision, block } = provider();
-          if (!block.trim() || revision <= this.lastMissionContextRevision) return {};
-          this.lastMissionContextRevision = revision;
-          return {
-            messages: [
-              ...messages,
-              {
-                role: 'user' as const,
+          if (provider) {
+            const { revision, block } = provider();
+            if (block.trim() && revision > this.lastMissionContextRevision) {
+              this.lastMissionContextRevision = revision;
+              extras.push({
+                role: 'user',
                 content: `[TEAM UPDATE — new crew activity]\n${block}\n[/TEAM UPDATE]`,
-              },
-            ],
-          };
+              });
+            }
+          }
+
+          if (extras.length === 0) return {};
+          return { messages: [...messages, ...extras] };
         },
       });
 
@@ -2700,13 +2827,10 @@ export class Agent {
       }
 
       if (!content) {
-        content = 'I was unable to generate a response. This model may not support function calling — try switching to GPT-4o, Claude, or Gemini.';
+        content = 'I was unable to generate a response. This model may not support function calling — switch to a tool-capable model and try again.';
       }
 
       const usage = await result.usage;
-      const tokenCount = usage
-        ? (usage.inputTokens || 0) + (usage.outputTokens || 0)
-        : Math.ceil(content.length / 4);
 
       this.sessionLogger?.log({
         type: 'llm_response',
@@ -2717,11 +2841,152 @@ export class Agent {
         },
       });
 
+      // Do not finalize the parent turn while sub-agents still run.
+      // Even if the model set background:true, keep the turn alive until they finish
+      // (unless the user cancelled). Notify-me fire-and-forget still gets end-of-turn wait
+      // for in-chat missions so the main agent can merge results.
+      const mergeOutstandingSubAgents = async (): Promise<void> => {
+        if (this.userCancelledTurn || this.options.delegatedWorker || !this.subAgents.hasOutstandingWork()) {
+          return;
+        }
+        getLogger().info('AGENT', 'Waiting for outstanding sub-agents before finalizing turn');
+        this.emit({ type: 'loading_start', stage: 'execution' });
+        const finished = await this.subAgents.awaitOutstanding();
+        const summaries = finished
+          .filter((t) => t.status === 'completed' || t.status === 'failed')
+          .map((t) => {
+            const status = t.status === 'completed' ? 'OK' : 'FAILED';
+            const body = (t.result || t.status).slice(0, 1200);
+            return `### Sub-agent ${t.id.slice(0, 8)} [${status}]\n${body}`;
+          });
+        if (summaries.length > 0) {
+          content = `${content.trim()}\n\n---\n\n## Sub-agent results\n\n${summaries.join('\n\n')}`.trim();
+        }
+      };
+      await mergeOutstandingSubAgents();
+
+      // Diamond completion gate: never end while TASKS are open or a multi-task
+      // request never got a full checklist. Traditional coded loop — not prompt-only.
+      // Skip when the user deferred/skipped leftover todos for a new question.
+      const skipCompletionGate = this.todoDispositionThisTurn === 'defer'
+        || this.todoDispositionThisTurn === 'skip';
+      if (!this.userCancelledTurn && !this.options.delegatedWorker && !this.isDelegatedWorker && !skipCompletionGate) {
+        let completionRound = 0;
+        while (completionRound < MAX_COMPLETION_CONTINUATIONS) {
+          const gate = evaluateTurnCompletionGate({
+            todos: this.todoManager.getItems(),
+            userText: lastUserText,
+            completionRound,
+          });
+          if (!gate.block) break;
+
+          this.todoManager.ensureActiveWork(Math.max(1, Math.min(this.maxSubAgents, 4)));
+          await mergeOutstandingSubAgents();
+
+          // Re-check after sub-agents finished — model may have left todos stale;
+          // still force a continuation so statuses / remaining work are reconciled.
+          const gateAfterWait = evaluateTurnCompletionGate({
+            todos: this.todoManager.getItems(),
+            userText: lastUserText,
+            completionRound,
+          });
+          if (!gateAfterWait.block) break;
+
+          const reason = gateAfterWait.reason;
+          completionRound += 1;
+          getLogger().warn(
+            'AGENT',
+            `Completion gate round ${completionRound}/${MAX_COMPLETION_CONTINUATIONS}: ${reason.kind}`
+            + (reason.kind === 'incomplete_todos'
+              ? ` (${reason.incomplete.length} open / ${reason.total} total)`
+              : ` (estimated ${reason.estimatedTasks}, checklist ${reason.checklistSize})`),
+          );
+          this.emit({
+            type: 'task_progress',
+            status: 'completion_gate',
+            description: reason.kind === 'incomplete_todos'
+              ? `Finishing ${reason.incomplete.length} remaining checklist item(s)`
+              : `Building full checklist for ~${reason.estimatedTasks} user tasks`,
+            details: { round: completionRound, reason: reason.kind },
+          });
+          this.emit({ type: 'loading_start', stage: 'execution' });
+
+          const contPrompt = buildCompletionContinuationPrompt(reason);
+          try {
+            const contMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+              ...aiMessages,
+              { role: 'assistant', content: content || '(prior work in progress)' },
+              { role: 'user', content: contPrompt },
+            ];
+            const contResult = streamText({
+              model,
+              messages: contMessages as unknown as ModelMessage[],
+              tools,
+              abortSignal: this.abortSignal,
+              maxRetries: 1,
+              maxOutputTokens: turnMaxOutputTokens,
+              stopWhen: stepCountIs(Math.min(50, stepBudget)),
+              toolChoice: 'auto',
+              ...(googleProviderOptions ? { providerOptions: googleProviderOptions } : {}),
+              prepareStep: async ({ stepNumber, messages }) => {
+                if (stepNumber === 0) return {};
+                const todosRev = this.todoManager.getRevision();
+                if (todosRev > this.lastTodosRevisionInjected && this.todoManager.getItems().length > 0) {
+                  this.lastTodosRevisionInjected = todosRev;
+                  return {
+                    messages: [
+                      ...messages,
+                      { role: 'user' as const, content: this.todoManager.formatActiveBlock({
+                        deferred: this.todoDispositionThisTurn === 'defer',
+                      }) },
+                    ],
+                  };
+                }
+                return {};
+              },
+            });
+            const contentBefore = content;
+            for await (const chunk of contResult.fullStream) {
+              streamHandler.handleEvent(chunk);
+              if (chunk.type === 'text-delta') {
+                this.partialTurnContent = streamHandler.getState().accumulatedContent;
+              }
+            }
+            const contAccum = (streamHandler.getState().accumulatedContent || '').trim();
+            if (contAccum.length >= contentBefore.length) {
+              // Handler accumulates across the turn — take the full buffer.
+              content = contAccum;
+            } else if (contAccum && contAccum !== contentBefore) {
+              content = `${contentBefore}\n\n${contAccum}`.trim();
+            }
+          } catch (contErr) {
+            if (contErr instanceof Error && contErr.name === 'AbortError') throw contErr;
+            getLogger().warn(
+              'AGENT',
+              `Completion gate continuation failed: ${contErr instanceof Error ? contErr.message : String(contErr)}`,
+            );
+            break;
+          }
+
+          await mergeOutstandingSubAgents();
+        }
+
+        const stillOpen = getIncompleteTodos(this.todoManager.getItems());
+        if (stillOpen.length > 0 && !this.userCancelledTurn) {
+          getLogger().warn('AGENT', `Completion gate exhausted with ${stillOpen.length} items still open`);
+          content = `${content.trim()}${buildIncompleteTurnFooter(stillOpen)}`.trim();
+        }
+      }
+
       // Stream handler already emitted message_received in its finish case.
       // Only push assistant content — tool ledger is persisted via persistToolLedger (not in agent history).
       this.messages.push({ role: 'assistant', content });
       await this.compactContext();
       await this.reinforceMemoryContext();
+
+      const finalTokenCount = usage
+        ? (usage.inputTokens || 0) + (usage.outputTokens || 0)
+        : Math.ceil(content.length / 4);
 
       return this.tagCrewPrivateAssistant({
         id: this.pendingVoiceMerge?.messageId ?? generateMessageId(),
@@ -2730,7 +2995,7 @@ export class Agent {
         content,
         toolCalls: null,
         createdAt: new Date().toISOString(),
-        tokenCount,
+        tokenCount: finalTokenCount,
       });
     } catch (error) {
       if (error instanceof Error && error.message === 'STEP_CAP_STOP') {
@@ -2799,6 +3064,7 @@ export class Agent {
     } finally {
       this.activeStreamHandler = null;
       this.toolExecutor?.setThirdPartyTurnPolicy(null);
+      this.toolExecutor?.setKbDocumentTurnPolicy(null);
     }
   }
 
@@ -2888,6 +3154,8 @@ export class Agent {
       linkedContextBlock: () => this.buildLinkedContextPromptBlock(),
       contextKind: this.options.contextKind,
       sessionId: this.sessionId,
+      getTodos: () => this.todoManager.getItems(),
+      areTodosDeferredThisTurn: () => this.todoDispositionThisTurn === 'defer',
     };
   }
 
@@ -3038,7 +3306,11 @@ export class Agent {
 
   /** Re-attach interactive permission prompts after an ephemeral automation run. */
   bindPermissionHandler(): void {
-    bindPermissionHandlerHelper(this._permissionCtx());
+    const ctx = this._permissionCtx();
+    bindPermissionHandlerHelper(ctx);
+    // Capture values the helper set on the ctx so they persist across _permissionCtx() calls.
+    this.permissionQueue = ctx.permissionQueue;
+    this.processPermissionQueueFn = ctx.processPermissionQueue;
   }
 
   /**
@@ -3134,6 +3406,7 @@ export class Agent {
     this.scope = new Scope();
     this.messages.push({ role: 'user', content: `/research ${question}` });
     this.turnApprovedAll = false;
+    this.toolExecutor?.getPermissionManager().revokeOneTimePermissions();
     const result = await researchHelper(
       {
         sessionId: this.sessionId,
@@ -3255,6 +3528,16 @@ export class Agent {
       if (m.role !== 'user' || idx !== lastUserIdx) return m;
       const docParts: string[] = [];
       for (const a of (m as { attachments?: import('@agentx/shared').NormalizedAttachment[] }).attachments ?? []) {
+        if (a.type === 'folder') {
+          if (a.content && a.content.length > 0) {
+            docParts.push(a.content);
+          } else {
+            docParts.push(
+              `--- Attached workspace folder: ${a.name} ---\nExplore this directory with filesystem tools for the user's request.`,
+            );
+          }
+          continue;
+        }
         if (a.type !== 'file') continue;
         let text: string | null = null;
         if (a.content && a.content.length > 0) {
@@ -3264,6 +3547,20 @@ export class Agent {
         }
         if (text && text.length > 0) {
           docParts.push(`--- Attachment: ${a.name} ---\n${text}`);
+          continue;
+        }
+        const isPdf = (a.mimeType === 'application/pdf') || /\.pdf$/i.test(a.name);
+        if (isPdf) {
+          let pathHint = a.name;
+          if (a.storageId) {
+            const abs = await service.resolveAttachmentPath(a.storageId);
+            if (abs) pathHint = abs;
+          }
+          docParts.push(
+            `--- Attachment: ${a.name} ---\n`
+            + `[Could not extract PDF text into the prompt. Use the pdf_read tool with path "${pathHint}". `
+            + `Do NOT use file_read on PDF files — it returns binary garbage.]`,
+          );
         }
       }
       if (docParts.length === 0) return m;
@@ -3340,14 +3637,31 @@ export class Agent {
     return aiMessages;
   }
 
+  private modelSupportsVision(): boolean {
+    const modelId = this.config.provider.activeModel;
+    const caps = this.cachedModelInfo.get(modelId)?.capabilities ?? [];
+    if (caps.includes('vision')) return true;
+    const combined = `${this.config.provider.activeProvider} ${modelId}`.toLowerCase();
+    return /gpt-4o|gpt-4-turbo|claude-3|claude-4|gemini|llava|vision|pixtral|gpt-5|o4-mini/.test(combined);
+  }
+
   private async buildSdkMessages(
     aiMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; attachments?: import('@agentx/shared').NormalizedAttachment[] }>,
   ): Promise<Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>> {
     const service = getAttachmentService();
+    const visionOk = this.modelSupportsVision();
     const results = [] as Array<{ role: 'user' | 'assistant' | 'system'; content: unknown }>;
     for (const m of aiMessages) {
       const imageAttachments = m.attachments?.filter((a) => a.type === 'image');
       if (m.role === 'user' && imageAttachments && imageAttachments.length > 0) {
+        if (!visionOk) {
+          const names = imageAttachments.map((a) => a.name).filter(Boolean).join(', ') || 'image';
+          results.push({
+            role: m.role,
+            content: `${m.content}\n\n[Attached image(s) omitted: ${names}. Current model does not support vision — switch to a vision-capable model.]`,
+          });
+          continue;
+        }
         const parts: unknown[] = [{ type: 'text', text: m.content }];
         for (const img of imageAttachments) {
           let dataUrl = img.content;
@@ -3416,14 +3730,23 @@ export class Agent {
   }
 
   private estimateTurnInputTokens(
-    messages: Array<{ content: string }>,
+    messages: Array<{ content: string; attachments?: Array<{ type?: string }> }>,
     tools: Record<string, unknown>,
   ): number {
-    return estimatePromptTokens(
+    const textTokens = estimatePromptTokens(
       messages,
       Object.keys(tools).length,
       this.estimateToolSchemaChars(tools),
     );
+    // Vision tile packing varies by provider; reserve a conservative per-image budget
+    // so ensureOutputBudget does not ignore multimodal payload size.
+    let imageTokens = 0;
+    for (const m of messages) {
+      for (const a of m.attachments ?? []) {
+        if (a.type === 'image') imageTokens += 1_700;
+      }
+    }
+    return textTokens + imageTokens;
   }
 
   private tagCrewPrivateAssistant(msg: Message): Message {
@@ -3635,6 +3958,50 @@ export class Agent {
     );
   }
 
+  /**
+   * Extract text from the latest user attachments for crew missions.
+   * Ensures @file PDFs are available to specialists without brittle file_read/python loops.
+   */
+  async buildAttachmentContextForMission(): Promise<string> {
+    const lastUser = [...this.messages].reverse().find((m) => m.role === 'user') as
+      | { attachments?: import('@agentx/shared').NormalizedAttachment[] }
+      | undefined;
+    const attachments = lastUser?.attachments ?? [];
+    if (attachments.length === 0) return '';
+
+    const service = getAttachmentService();
+    const parts: string[] = [];
+    for (const a of attachments) {
+      if (a.type === 'folder') {
+        if (a.content) parts.push(a.content);
+        continue;
+      }
+      if (a.type !== 'file') continue;
+      let text: string | null = a.content && a.content.length > 0 ? a.content : null;
+      if (!text && a.storageId) {
+        text = await service.extractTextForAgent(a.storageId);
+      }
+      if (text && text.length > 0) {
+        parts.push(`--- Attachment: ${a.name} ---\n${text}`);
+        continue;
+      }
+      const isPdf = (a.mimeType === 'application/pdf') || /\.pdf$/i.test(a.name);
+      if (isPdf) {
+        let pathHint = a.name;
+        if (a.storageId) {
+          const abs = await service.resolveAttachmentPath(a.storageId);
+          if (abs) pathHint = abs;
+        }
+        parts.push(
+          `--- Attachment: ${a.name} ---\n`
+          + `[Text was not pre-extracted. Use the pdf_read tool with path "${pathHint}". `
+          + `Do NOT use file_read on PDF files.]`,
+        );
+      }
+    }
+    return parts.length > 0 ? `[ATTACHED DOCUMENTS]\n${parts.join('\n\n')}\n[/ATTACHED DOCUMENTS]` : '';
+  }
+
   /** Per-session memory budget for injected context (chars). Tunable via setContextMemoryLimits. */
   contextMemoryChars = 2200;
 
@@ -3803,6 +4170,19 @@ export class Agent {
     this.subAgents.setMaxConcurrent(this.maxSubAgents);
   }
 
+  /** Retune sub-agent + tool + turn-queue semaphores from the Performance profile. */
+  applyPerformanceLanes(lanes: { subAgents: number; toolParallel: number; llmGlobal: number }): void {
+    const sub = Math.max(1, Math.min(32, lanes.subAgents));
+    const tools = Math.max(1, Math.min(32, lanes.toolParallel));
+    this.maxSubAgents = sub;
+    this.subAgents.setMaxConcurrent(sub);
+    if (this.toolExecutor instanceof EnhancedToolExecutor) {
+      this.toolExecutor.setMaxToolConcurrency(tools);
+    }
+    // CommandQueue also queues (never drops); size it with the LLM lane.
+    this.commandQueue.setMaxConcurrent(Math.max(1, Math.min(16, lanes.llmGlobal)));
+  }
+
   setSessionManager(sm: SessionManager): void {
     this.sessionManager = sm;
     this.sessionPermissionStore = new SessionPermissionStore(this.sessionId);
@@ -3829,14 +4209,18 @@ export class Agent {
     meta?: { kind?: 'sub_agent' | 'crew_worker'; label?: string },
   ): void {
     if (!this.sessionManager?.createChildSessionRecord) return;
-    this.sessionManager.createChildSessionRecord(
-      childId,
-      this.sessionId,
-      this.config.provider.activeProvider,
-      this.config.provider.activeModel,
-      this.scopePath,
-      meta,
-    );
+    // Idempotent — SubAgentManager registers before spawn; SmartSubAgent may call again.
+    const existing = this.sessionManager.getSessionById(childId);
+    if (!existing) {
+      this.sessionManager.createChildSessionRecord(
+        childId,
+        this.sessionId,
+        this.config.provider.activeProvider,
+        this.config.provider.activeModel,
+        this.scopePath,
+        meta,
+      );
+    }
     this.eventBus.emit({
       type: 'child_session_started',
       childSessionId: childId,
@@ -3844,10 +4228,6 @@ export class Agent {
       label: meta?.label ?? 'Background work',
       kind: meta?.kind ?? 'sub_agent',
     });
-  }
-
-  private detectAtMentions(content: string): string[] {
-    return detectAtMentionsHelper(this, content);
   }
 
   /**
@@ -3858,6 +4238,9 @@ export class Agent {
   dispose(): void {
     // Cancel any in-progress processing
     this.cancel();
+
+    this.unregisterPerformanceTune?.();
+    this.unregisterPerformanceTune = null;
 
     // Mark lifecycle as disposed to prevent new operations
     this.lifecycle.forceTransition('disposed');

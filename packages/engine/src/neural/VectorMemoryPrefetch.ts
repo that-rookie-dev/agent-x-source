@@ -2,6 +2,12 @@ import type { EmbeddingProvider } from '@agentx/shared';
 import type { MemoryFabric, MemoryNode } from './MemoryFabric.js';
 import { CHAT_MEMORY_TAG } from './ChatTurnMemoryIngester.js';
 import { USER_PROFILE_TAG } from './UserChatMemoryIngester.js';
+import {
+  applyScoreGate,
+  heuristicRerank,
+  expandEvidenceNeighborhood,
+  getRetrievalSettings,
+} from './retrieval/index.js';
 
 export interface VectorMemoryPrefetchOptions {
   sessionId: string;
@@ -10,6 +16,10 @@ export interface VectorMemoryPrefetchOptions {
   userProfileLimit?: number;
   episodicLimit?: number;
   minRelevance?: number;
+  /** Precomputed query embedding — avoids a second embed() in the same turn. */
+  queryEmbedding?: number[];
+  /** Skip graph expand (tests / nested calls). */
+  skipExpand?: boolean;
 }
 
 export interface VectorMemoryPrefetchResult {
@@ -17,14 +27,34 @@ export interface VectorMemoryPrefetchResult {
   episodic: MemoryNode[];
   userProfile: MemoryNode[];
   all: MemoryNode[];
+  queryEmbedding: number[];
 }
 
-function filterByRelevance(nodes: MemoryNode[], minRelevance: number): MemoryNode[] {
-  if (minRelevance <= 0) return nodes;
-  return nodes.filter((n) => {
-    const distance = n.distance;
-    return distance == null || (1 - distance) >= minRelevance;
-  });
+async function retrieveCandidates(
+  fabric: MemoryFabric,
+  embedding: number[],
+  query: string,
+  options: {
+    limit: number;
+    overFetch: number;
+    category?: MemoryNode['category'];
+    tag?: string;
+    sessionId?: string | null;
+  },
+): Promise<MemoryNode[]> {
+  const settings = getRetrievalSettings();
+  const searchOpts = {
+    limit: options.overFetch,
+    category: options.category,
+    tag: options.tag,
+    sessionId: options.sessionId,
+    vectorLimit: options.overFetch,
+    lexicalLimit: options.overFetch,
+  };
+  if (settings.hybridEnabled) {
+    return fabric.hybridSearch(embedding, query, searchOpts);
+  }
+  return fabric.vectorSearch(embedding, searchOpts);
 }
 
 export async function vectorMemoryPrefetch(
@@ -33,28 +63,59 @@ export async function vectorMemoryPrefetch(
   query: string,
   options: VectorMemoryPrefetchOptions,
 ): Promise<VectorMemoryPrefetchResult> {
-  const vectorLimit = options.vectorLimit ?? 8;
-  const userProfileLimit = options.userProfileLimit ?? 8;
-  const episodicLimit = options.episodicLimit ?? 5;
-  const minRelevance = options.minRelevance ?? 0.35;
+  const settings = getRetrievalSettings();
+  const vectorLimit = options.vectorLimit ?? settings.vectorLimit;
+  const userProfileLimit = options.userProfileLimit ?? settings.userProfileLimit;
+  const episodicLimit = options.episodicLimit ?? settings.episodicLimit;
+  const minRelevance = options.minRelevance ?? settings.minScoreMemory;
+  const rerankKeep = settings.rerankKeep;
+  const injectKeep = settings.injectKeep;
+  const overFetch = Math.max(vectorLimit, settings.vectorOverFetch, rerankKeep);
   const isSuper = options.isSuperSession;
 
-  const embedding = await embedder.embed(query);
+  const embedding = options.queryEmbedding ?? await embedder.embed(query);
 
-  const vectorRaw = await fabric.vectorSearch(embedding, {
-    limit: vectorLimit,
-    ...(isSuper ? {} : { sessionId: options.sessionId }),
-  });
-  const vector = filterByRelevance(vectorRaw, minRelevance);
+  const gate = (nodes: MemoryNode[]) =>
+    applyScoreGate(nodes, {
+      minScore: minRelevance,
+      maxPerSource: settings.maxChunksPerSource,
+    });
+
+  /** Gate → optional rerank → keep ≤ rerankKeep (caller may tighten further). */
+  const rankKeep = (nodes: MemoryNode[], keep: number) => {
+    let next = gate(nodes);
+    if (settings.rerankEnabled) next = heuristicRerank(query, next);
+    return next.slice(0, Math.min(keep, rerankKeep));
+  };
+
+  let vector = rankKeep(
+    await retrieveCandidates(fabric, embedding, query, {
+      limit: vectorLimit,
+      overFetch,
+      ...(isSuper ? {} : { sessionId: options.sessionId }),
+    }),
+    vectorLimit,
+  );
+
+  if (!options.skipExpand && vector.length) {
+    vector = await expandEvidenceNeighborhood(fabric, vector, {
+      mode: 'both',
+      minScore: minRelevance,
+    });
+    vector = rankKeep(vector, vectorLimit).slice(0, injectKeep);
+  } else {
+    vector = vector.slice(0, injectKeep);
+  }
 
   const userProfileRaw = isSuper
-    ? await fabric.vectorSearch(embedding, {
+    ? await retrieveCandidates(fabric, embedding, query, {
         limit: userProfileLimit,
+        overFetch: Math.max(userProfileLimit, overFetch),
         tag: USER_PROFILE_TAG,
         sessionId: null,
       })
     : [];
-  const userProfile = filterByRelevance(userProfileRaw, minRelevance);
+  const userProfile = rankKeep(userProfileRaw, userProfileLimit).slice(0, Math.min(userProfileLimit, injectKeep));
 
   let episodic: MemoryNode[] = [];
   if (options.sessionId) {
@@ -63,28 +124,26 @@ export async function vectorMemoryPrefetch(
       semanticLimit: 0,
       graphDepth: 0,
     });
-    episodic = assembled.episodic;
+    episodic = assembled.episodic.slice(0, episodicLimit);
   }
 
-  const chatScoped = isSuper
+  const chatScopedRaw = isSuper
     ? []
-    : filterByRelevance(
-        await fabric.vectorSearch(embedding, {
-          limit: vectorLimit,
-          tag: CHAT_MEMORY_TAG,
-          sessionId: options.sessionId,
-        }),
-        minRelevance,
-      );
+    : await retrieveCandidates(fabric, embedding, query, {
+        limit: vectorLimit,
+        overFetch,
+        tag: CHAT_MEMORY_TAG,
+        sessionId: options.sessionId,
+      });
+  const chatScoped = rankKeep(chatScopedRaw, vectorLimit).slice(0, injectKeep);
 
   const seen = new Set<string>();
   const all: MemoryNode[] = [];
   for (const node of [...userProfile, ...episodic, ...chatScoped, ...vector]) {
-    if (!seen.has(node.id)) {
-      seen.add(node.id);
-      all.push(node);
-    }
+    if (!node.id || seen.has(node.id)) continue;
+    seen.add(node.id);
+    all.push(node);
   }
 
-  return { vector, episodic, userProfile, all };
+  return { vector, episodic, userProfile, all, queryEmbedding: embedding };
 }

@@ -9,9 +9,15 @@ export {
   buildPartsFromDbRows,
   assignPartsToAssistantMessage,
   buildPartsForPersist,
+  appendThinkingDeltaToParts,
+  sealTrailingThinkingPart,
+  isReasoningPartType,
+  extractThinkingFromMessage,
 } from './utils/message-parts.js';
 
 export type { MessagePart, PersistedToolCall } from './utils/message-parts.js';
+
+export { appendStreamText, repairStreamTextGlitches, extractStreamTextDelta } from './utils/stream-text.js';
 
 export {
   upsertDeepSearchPart,
@@ -235,6 +241,18 @@ export {
 } from './utils/voice-channel.js';
 
 export { formatProviderErrorMessage } from './utils/provider-error-message.js';
+
+export {
+  CALL_DIVIDER_GAP_MS,
+  CALL_DIVIDER_CONTENT_RE,
+  decideCallDivider,
+  parseCallDivider,
+  readCallDividerMeta,
+  formatCallDividerDuration,
+  formatCallDividerDayLabel,
+  formatCallDividerTimeLabel,
+} from './utils/call-transcript-divider.js';
+export type { CallDividerVariant, CallDividerMeta } from './utils/call-transcript-divider.js';
 
 export type {
   DeepSearchContentType,

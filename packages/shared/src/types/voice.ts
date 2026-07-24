@@ -23,6 +23,8 @@ export type VoiceEngineType = 'stt_llm_tts' | 'realtime_xai';
 
 export interface VoiceXaiConfig {
   apiKey?: string;
+  /** Server → client: whether a key is stored (secret never returned). */
+  apiKeyConfigured?: boolean;
   /** xAI realtime model, e.g. grok-voice-latest. */
   model?: string;
   /** xAI voice ID, e.g. eve. */

@@ -47,6 +47,19 @@ function resolveCohereNativeBaseUrl(configured?: string): string | undefined {
   return configured;
 }
 
+const VISION_MODEL_RE = /gpt-4o|gpt-4-turbo|claude-3|claude-4|gemini|llava|vision|pixtral|gpt-5|o4-mini/;
+
+/**
+ * Standalone vision-capability check (mirrors Agent.modelSupportsVision without
+ * the runtime cachedModelInfo map). Used by background paths like the Document
+ * Studio analyzer that don't have an Agent instance handy.
+ */
+export function modelSupportsVision(config: AgentXConfig): boolean {
+  const modelId = config.provider.activeModel ?? '';
+  const combined = `${config.provider.activeProvider} ${modelId}`.toLowerCase();
+  return VISION_MODEL_RE.test(combined);
+}
+
 export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string): LanguageModel {
   const activeProvider = config.provider.activeProvider;
   const providerCfg = config.provider.providers?.[activeProvider];
@@ -288,6 +301,71 @@ export function createAiSdkTools(
 
   // Wire real-time tool output streaming
   const activeOutputCalls = new Map<string, string>(); // callId -> tool name
+
+  // Lightweight deterministic guard to stop looped/dead-end tool calls
+  const recentCalls: Array<{ id: string; key: string; argsSummary: string; outputSummary: string; timestamp: number }> = [];
+  const MAX_RECENT_CALLS = 12;
+
+  function toolCallKey(toolId: string, args: Record<string, unknown>): string {
+    if (toolId === 'knowledge_base_search' && typeof args['query'] === 'string') return `kb:${String(args['query'])}`;
+    if (toolId === 'deep_web_search' && typeof args['query'] === 'string') return `web:${String(args['query'])}`;
+    if (toolId === 'web_fetch' && typeof args['url'] === 'string') return `fetch:${String(args['url'])}`;
+    if (toolId === 'python_rpc' && typeof args['script'] === 'string') return `py:${String(args['script']).slice(0, 200)}`;
+    if (toolId === 'shell_exec' && typeof args['command'] === 'string') return `sh:${String(args['command']).slice(0, 200)}`;
+    if (toolId === 'bash' && typeof args['command'] === 'string') return `sh:${String(args['command']).slice(0, 200)}`;
+    if (toolId === 'run_command' && (typeof args['command'] === 'string' || typeof args['cmd'] === 'string')) return `sh:${String(args['command'] ?? args['cmd']).slice(0, 200)}`;
+    if (toolId === 'execute' && typeof args['command'] === 'string') return `sh:${String(args['command']).slice(0, 200)}`;
+    return `${toolId}:${JSON.stringify(args).slice(0, 200)}`;
+  }
+
+  function looksLikeJsRenderedHtml(output: string): boolean {
+    const o = output.toLowerCase();
+    return o.includes('<!doctype html>') || o.includes('<html') || o.includes('</html>');
+  }
+
+  function guardTool(toolId: string, args: Record<string, unknown>): { error: string; message: string } | null {
+    const now = Date.now();
+    // prune old entries (older than 5 minutes)
+    while (recentCalls.length > 0 && now - recentCalls[0]!.timestamp > 300_000) {
+      recentCalls.shift();
+    }
+
+    const key = toolCallKey(toolId, args);
+    const previous = recentCalls.filter((c) => c.id === toolId && c.key === key);
+
+    if (toolId === 'web_fetch' && previous.length > 0) {
+      // Refetching the same URL is almost always a loop
+      return { error: 'REPEAT_FETCH', message: `You already fetched this URL in this turn. Re-fetching the same URL is not allowed. Use the result you have, try a different source, or ask the user.` };
+    }
+
+    if ((toolId === 'knowledge_base_search' || toolId === 'deep_web_search') && previous.length > 0) {
+      return { error: 'REPEAT_SEARCH', message: `You already ran this exact ${toolId} query in this turn. Repeating the same search is not allowed. Use the results already returned or ask the user.` };
+    }
+
+    return null;
+  }
+
+  function recordCall(toolId: string, args: Record<string, unknown>, output: string): void {
+    const key = toolCallKey(toolId, args);
+    recentCalls.push({ id: toolId, key, argsSummary: JSON.stringify(args).slice(0, 200), outputSummary: output.slice(0, 200), timestamp: Date.now() });
+    if (recentCalls.length > MAX_RECENT_CALLS) recentCalls.shift();
+  }
+
+  function reflectOutput(toolId: string, output: string): string {
+    // Add a concise reflection note when a result suggests the agent is drifting
+    const lower = output.toLowerCase();
+    if (toolId === 'web_fetch' && looksLikeJsRenderedHtml(output)) {
+      return `[REFLECTION: this page is JS-rendered or HTML-only with no extracted text. Do not fetch more pages from the same site. If the data you need is not in structured form, ask the user or use a different source.]\n${output}`;
+    }
+    if ((toolId === 'knowledge_base_search' || toolId === 'deep_web_search') && output.startsWith('Knowledge base search failed')) {
+      return `[REFLECTION: search failed. Do not run the same query again. Fix the arguments (e.g., sourceId must be a UUID, not a filename) or ask the user.]\n${output}`;
+    }
+    if (toolId === 'deep_web_search' && lower.includes('found 0 ') || output.toLowerCase().includes('no results')) {
+      return `[REFLECTION: web search returned no useful results. Do not repeat with the same query. Use what you know, try a different query, or ask the user.]\n${output}`;
+    }
+    return output;
+  }
+
   if (toolExecutor.setToolOutputHandler) {
     toolExecutor.setToolOutputHandler((output: string) => {
       // Find the currently executing tool call
@@ -322,7 +400,7 @@ export function createAiSdkTools(
     const mission = typeof args.mission === 'string' ? args.mission : '';
     const items = Array.isArray(args.items) ? args.items as string[] : undefined;
     const toolsList = Array.isArray(args.tools) ? args.tools as string[] : undefined;
-    const timeout = typeof args.timeout === 'number' ? args.timeout : 120_000;
+    const timeout = typeof args.timeout === 'number' ? args.timeout : 600_000;
     const background = args.background === true;
     const batchSize = Math.max(1, Math.min(typeof args.batchSize === 'number' ? args.batchSize : 10, 50));
 
@@ -429,10 +507,19 @@ export function createAiSdkTools(
               emit({ type: 'tool_complete', tool: toolDef.id, result: { success: true, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
               return output;
             }
+            const bridgeGuard = guardTool(targetId, resolved.resolvedArgs);
+            if (bridgeGuard) {
+              const output = `[TOOL GUARD: ${bridgeGuard.error}] ${bridgeGuard.message}`;
+              emit({ type: 'tool_complete', tool: toolDef.id, result: { success: false, output }, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
+              return output;
+            }
             const result = await toolExecutor.execute(targetId, resolved.resolvedArgs, sessionId, { signal: options?.abortSignal });
-            onToolExecuted?.(targetId, result.success, result.output, Date.now() - startTime, resolved.resolvedArgs);
+            const reflectedOutput = reflectOutput(targetId, result.output);
+            result.output = reflectedOutput;
+            recordCall(targetId, resolved.resolvedArgs, reflectedOutput);
+            onToolExecuted?.(targetId, result.success, reflectedOutput, Date.now() - startTime, resolved.resolvedArgs);
             emit({ type: 'tool_complete', tool: toolDef.id, result, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
-            return result.success ? result.output : `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
+            return result.success ? reflectedOutput : `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
           }
 
           if (resolved.error) {
@@ -472,6 +559,24 @@ export function createAiSdkTools(
            const callId = options?.toolCallId || `tc-${toolDef.id}-${startTime}`;
            activeOutputCalls.set(callId, toolDef.id);
            const argsStr = JSON.stringify(args).slice(0, 100);
+
+           const guard = guardTool(toolDef.id, args as Record<string, unknown>);
+           if (guard) {
+             activeOutputCalls.delete(callId);
+             const elapsed = Date.now() - startTime;
+             const output = `[TOOL GUARD: ${guard.error}] ${guard.message}`;
+             emit({
+               type: 'tool_complete',
+               tool: toolDef.id,
+               result: { success: false, output },
+               elapsed,
+               args: args as Record<string, unknown>,
+               callId,
+               message: `🚫 ${toolDef.name} blocked by guard`,
+             });
+             return output;
+           }
+
            emit({ 
              type: 'tool_executing', 
              tool: toolDef.id, 
@@ -486,7 +591,10 @@ export function createAiSdkTools(
              const result: ToolResult = await toolExecutor.execute(toolDef.id, args as Record<string, unknown>, sessionId, { signal: options?.abortSignal });
              const elapsed = Date.now() - startTime;
              activeOutputCalls.delete(callId);
-             onToolExecuted?.(toolDef.id, result.success, result.output, elapsed, args as Record<string, unknown>);
+             const reflectedOutput = reflectOutput(toolDef.id, result.output);
+             result.output = reflectedOutput;
+             recordCall(toolDef.id, args as Record<string, unknown>, reflectedOutput);
+             onToolExecuted?.(toolDef.id, result.success, reflectedOutput, elapsed, args as Record<string, unknown>);
               emit({ 
                 type: 'tool_complete', 
                 tool: toolDef.id, 
@@ -500,7 +608,7 @@ export function createAiSdkTools(
                if (!result.success) {
                  return `[TOOL ERROR: ${result.error || 'Unknown'}] ${result.output}`;
                }
-             return result.output;
+             return reflectedOutput;
            } catch (err) {
              activeOutputCalls.delete(callId);
              const elapsed = Date.now() - startTime;

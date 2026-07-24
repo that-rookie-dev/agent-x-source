@@ -5,20 +5,36 @@ export const WIZARD_PROGRESS_STORAGE_KEY = `${AGENTX_CLIENT_STORAGE_PREFIX}wizar
 
 export interface WizardProgress {
   step: number;
+  maxReachedStep?: number;
   selectedProvider: string;
   selectedModel: string;
+  selectedReasoningEffort?: string;
   callsign: string;
   selectedBackend: string;
+  /** Profile step */
+  profileName?: string;
+  /** Wizard-session only — cleared when setup completes. */
+  apiKey?: string;
+  baseUrl?: string;
+  localHost?: string;
+  localPort?: string;
+  apiKeyConfigured?: boolean;
   selectedLocalModel?: string | null;
   skipLocalModel?: boolean;
   voiceCalibrated?: boolean;
   telegramLinked?: boolean;
+  telegramBotLabel?: string;
+  telegramChatLabel?: string;
   personaName?: string;
   personaDescription?: string;
   personaCommStyle?: string;
   personaDecisionStyle?: string;
   personaDomain?: string;
   personaTraits?: string[];
+  limitedOverride?: boolean;
+  standbyOverride?: boolean;
+  /** Last benchmark grade so Action Required can restore without a re-scan. */
+  benchmarkGrade?: string;
 }
 
 export function saveWizardProgress(data: WizardProgress): void {

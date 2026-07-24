@@ -355,12 +355,24 @@ async function openExternalLink(url: string): Promise<boolean> {
   }
 }
 
-function attachExternalLinkHandlers(win: BrowserWindow): void {
+function attachExternalLinkHandlers(win: BrowserWindow, appOrigin: string): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalHttpUrl(url)) {
       void openExternalLink(url);
     }
     return { action: 'deny' };
+  });
+
+  // In-place <a href> navigations (no target=_blank) must leave the app shell.
+  win.webContents.on('will-navigate', (event, url) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.origin === appOrigin) return;
+      event.preventDefault();
+      if (isExternalHttpUrl(url)) void openExternalLink(url);
+    } catch {
+      event.preventDefault();
+    }
   });
 }
 
@@ -420,7 +432,7 @@ function createWindow(): void {
 
   mainWindow.loadURL(appOrigin);
 
-  attachExternalLinkHandlers(mainWindow);
+  attachExternalLinkHandlers(mainWindow, appOrigin);
 
   // Clear webview cache on each launch to prevent stale assets
   mainWindow.webContents.session.clearCache().catch(() => {});
@@ -572,7 +584,6 @@ ipcMain.handle('notifications:show', async (_event, payload: { title?: string; b
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
 });
-ipcMain.handle('path:defaultWorkspace', () => app.getPath('desktop'));
 ipcMain.handle('dialog:openFolder', async () => {
   if (!mainWindow) return null;
   const result = await dialog.showOpenDialog(mainWindow, {

@@ -11,13 +11,15 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import QueueIcon from '@mui/icons-material/PlaylistAdd';
 import RouteIcon from '@mui/icons-material/Route';
 import { MentionInput, type MentionInputHandle } from './MentionInput';
-import { CrewMentionMenu } from './ChatEnhancements';
+import { ComposerMentionMenu, type ComposerFileHit, type ComposerFolderHit, type ComposerKbHit } from './ComposerMentionMenu';
 import { colors, alphaColor } from '../theme';
 import type { Crew } from '../api';
 
 export interface ChatInputBarHandle {
   clear: () => void;
   setText: (text: string) => void;
+  /** Insert an upload chip at the caret (from + / drag-drop). */
+  insertAttachmentChip: (attachment: { id: string; name: string }) => void;
 }
 
 export interface ChatInputBarProps {
@@ -27,16 +29,24 @@ export interface ChatInputBarProps {
   sendBlockedReason: string;
   hasAttachments: boolean;
   crewList: Crew[];
-  disableMentions?: boolean;
+  /**
+   * Hide the Crew category in the @ picker.
+   * Directory (and future attach types) stay available in every session type.
+   * Crew mentions are group-session only.
+   */
+  disableCrew?: boolean;
   placeholder?: string;
   onSend: (text: string) => void;
   onCancel: () => void;
   onStopAndSend: (text: string) => void;
   onAddToQueue: (text: string) => void;
   onSteer: (text: string) => void;
-  /** Increment to clear input from parent (e.g. after clarification submit). */
+  /** Workspace file picked via @ — parent adds to attachments. */
+  onAttachWorkspaceFile?: (file: ComposerFileHit & { id: string }) => void;
+  /** Workspace folder picked via @ Select this folder — parent adds to attachments. */
+  onAttachWorkspaceFolder?: (folder: ComposerFolderHit & { id: string }) => void;
+  onRemoveAttachmentById?: (id: string) => void;
   clearSignal?: number;
-  /** Optional voice mic control rendered beside send button. */
   voiceSlot?: React.ReactNode;
   onComposerStateChange?: (state: { focused: boolean; empty: boolean }) => void;
 }
@@ -48,21 +58,27 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   sendBlockedReason,
   hasAttachments,
   crewList,
-  disableMentions = false,
-  placeholder = '@agentx — message your AI wingman...',
+  disableCrew = false,
+  placeholder = '@ to attach files, folders, or Knowledge Base docs…',
   onSend,
   onCancel,
   onStopAndSend,
   onAddToQueue,
   onSteer,
+  onAttachWorkspaceFile,
+  onAttachWorkspaceFolder,
+  onRemoveAttachmentById,
   clearSignal,
   voiceSlot,
   onComposerStateChange,
 }, ref) {
   const mentionInputRef = useRef<MentionInputHandle>(null);
   const mentionActiveRef = useRef(false);
+  const mentionMenuOpenRef = useRef(false);
+  const suppressSendRef = useRef(false);
+  const hasTextRef = useRef(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [showCrewMention, setShowCrewMention] = useState(false);
+  const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [sendMenuAnchor, setSendMenuAnchor] = useState<null | HTMLElement>(null);
   const [hasText, setHasText] = useState(false);
   const composerFocusedRef = useRef(false);
@@ -70,86 +86,149 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
   useImperativeHandle(ref, () => ({
     clear: () => {
       mentionInputRef.current?.clear();
+      hasTextRef.current = false;
       setHasText(false);
     },
     setText: (text: string) => {
       mentionInputRef.current?.setValue(text);
-      setHasText(text.trim().length > 0);
+      const next = text.trim().length > 0;
+      hasTextRef.current = next;
+      setHasText(next);
+    },
+    insertAttachmentChip: (attachment) => {
+      mentionInputRef.current?.insertAttachmentChip(attachment);
+      hasTextRef.current = true;
+      setHasText(true);
     },
   }), []);
 
   useEffect(() => {
     const active = mentionQuery !== null;
     mentionActiveRef.current = active;
-    setShowCrewMention(active);
+    mentionMenuOpenRef.current = active;
+    setShowMentionMenu(active);
   }, [mentionQuery]);
 
   useEffect(() => {
     if (clearSignal !== undefined && clearSignal > 0) {
       mentionInputRef.current?.clear();
+      hasTextRef.current = false;
       setHasText(false);
     }
   }, [clearSignal]);
 
   const handleMentionQuery = useCallback((q: string | null) => {
-    if (disableMentions) return;
     setMentionQuery(q);
-  }, [disableMentions]);
+  }, []);
 
   const handleTextChange = useCallback((text: string) => {
     const empty = text.trim().length === 0;
-    setHasText(!empty);
-    onComposerStateChange?.({ focused: composerFocusedRef.current, empty });
+    const nextHas = !empty;
+    if (nextHas !== hasTextRef.current) {
+      hasTextRef.current = nextHas;
+      setHasText(nextHas);
+      onComposerStateChange?.({ focused: composerFocusedRef.current, empty });
+    }
   }, [onComposerStateChange]);
 
   const handleFocusChange = useCallback((focused: boolean) => {
     composerFocusedRef.current = focused;
-    onComposerStateChange?.({ focused, empty: !hasText });
-  }, [hasText, onComposerStateChange]);
+    onComposerStateChange?.({ focused, empty: !hasTextRef.current });
+  }, [onComposerStateChange]);
 
-  const handleMentionSelect = useCallback((crew: Crew) => {
+  const closeMentionMenu = useCallback(() => {
     mentionActiveRef.current = false;
-    mentionInputRef.current?.insertMention(crew.callsign);
-    setShowCrewMention(false);
+    mentionMenuOpenRef.current = false;
+    setShowMentionMenu(false);
     setMentionQuery(null);
   }, []);
 
+  const handleMentionSelect = useCallback((crew: Crew) => {
+    // Block send-on-Enter across this event + next tick (menu closes before bubble handler runs).
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    mentionInputRef.current?.insertMention({ callsign: crew.callsign, name: crew.name });
+  }, [closeMentionMenu]);
+
+  const handleFileSelect = useCallback((file: ComposerFileHit) => {
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    const id = crypto.randomUUID();
+    onAttachWorkspaceFile?.({ ...file, id });
+    mentionInputRef.current?.insertFileChip({ id, name: file.name, path: file.path, relativePath: file.relativePath });
+  }, [onAttachWorkspaceFile, closeMentionMenu]);
+
+  const handleFolderSelect = useCallback((folder: ComposerFolderHit) => {
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    const id = crypto.randomUUID();
+    onAttachWorkspaceFolder?.({ ...folder, id });
+    mentionInputRef.current?.insertFolderChip({
+      id,
+      name: folder.name,
+      path: folder.path,
+      relativePath: folder.relativePath,
+    });
+  }, [onAttachWorkspaceFolder, closeMentionMenu]);
+
+  const handleKbSelect = useCallback((source: ComposerKbHit) => {
+    suppressSendRef.current = true;
+    window.setTimeout(() => { suppressSendRef.current = false; }, 50);
+    closeMentionMenu();
+    mentionInputRef.current?.insertKbChip({ sourceId: source.sourceId, name: source.name });
+  }, [closeMentionMenu]);
+
   const clearAndGetText = useCallback(() => {
-    const text = mentionInputRef.current?.getValue().trim() ?? '';
+    const text = mentionInputRef.current?.getValue() ?? '';
     mentionInputRef.current?.clear();
+    hasTextRef.current = false;
     setHasText(false);
     return text;
   }, []);
 
   const handleSendClick = useCallback(() => {
-    if (inputDisabled) return;
-    const text = mentionInputRef.current?.getValue().trim() ?? '';
-    if (!text && !hasAttachments) return;
+    if (inputDisabled || sendBlocked) return;
+    const text = mentionInputRef.current?.getValue() ?? '';
+    if (!text.trim() && !hasAttachments) return;
     onSend(text);
-  }, [hasAttachments, onSend, inputDisabled]);
+  }, [hasAttachments, onSend, inputDisabled, sendBlocked]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (inputDisabled) return;
+    if (inputDisabled || sendBlocked) return;
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (mentionActiveRef.current) {
+      // Menu is open OR we just accepted a mention — never send.
+      if (
+        mentionActiveRef.current
+        || mentionMenuOpenRef.current
+        || showMentionMenu
+        || suppressSendRef.current
+      ) {
         e.preventDefault();
+        e.stopPropagation();
         return;
       }
       e.preventDefault();
       handleSendClick();
     }
-  }, [handleSendClick, inputDisabled]);
+  }, [handleSendClick, inputDisabled, sendBlocked, showMentionMenu]);
 
   const canSend = !inputDisabled && !sendBlocked && (hasText || hasAttachments);
 
   return (
     <>
-      {showCrewMention && !disableMentions && (
-        <CrewMentionMenu
+      {showMentionMenu && (
+        <ComposerMentionMenu
           query={mentionQuery ?? ''}
           crewList={crewList}
-          onSelect={handleMentionSelect}
-          onClose={() => setShowCrewMention(false)}
+          disableCrew={disableCrew}
+          onSelectCrew={handleMentionSelect}
+          onSelectFile={handleFileSelect}
+          onSelectFolder={handleFolderSelect}
+          onSelectKb={handleKbSelect}
+          onClose={closeMentionMenu}
         />
       )}
 
@@ -160,8 +239,9 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           onMentionQuery={handleMentionQuery}
           onTextChange={handleTextChange}
           onFocusChange={handleFocusChange}
+          onFileChipRemove={onRemoveAttachmentById}
           placeholder={placeholder}
-          crewList={disableMentions ? [] : crewList}
+          crewList={disableCrew ? [] : crewList}
           disabled={inputDisabled}
         />
 
@@ -198,14 +278,24 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
           anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
           transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           PaperProps={{ sx: { bgcolor: colors.bg.secondary, border: `1px solid ${colors.border.default}`, minWidth: 200 } }}>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onStopAndSend(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onStopAndSend(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <StopIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.red }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Stop and Send</Typography>
-              <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>Cancel current task, send this message</Typography>
+              <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim }}>
+                {sendBlocked && sendBlockedReason ? sendBlockedReason : 'Cancel current task, send this message'}
+              </Typography>
             </Box>
           </MenuItem>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onAddToQueue(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onAddToQueue(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <QueueIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.blue }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Add to Queue</Typography>
@@ -213,7 +303,11 @@ const ChatInputBarComponent = React.forwardRef<ChatInputBarHandle, ChatInputBarP
             </Box>
             <Typography sx={{ fontSize: '0.45rem', color: colors.text.dim, ml: 'auto', pl: 1 }}>⌥Enter</Typography>
           </MenuItem>
-          <MenuItem onClick={() => { setSendMenuAnchor(null); onSteer(clearAndGetText()); }} sx={{ fontSize: '0.7rem', py: 0.75 }}>
+          <MenuItem
+            disabled={sendBlocked}
+            onClick={() => { if (sendBlocked) return; setSendMenuAnchor(null); onSteer(clearAndGetText()); }}
+            sx={{ fontSize: '0.7rem', py: 0.75 }}
+          >
             <RouteIcon sx={{ fontSize: 14, mr: 1, color: colors.accent.orange }} />
             <Box>
               <Typography sx={{ fontSize: '0.7rem', fontWeight: 500 }}>Steer with Message</Typography>

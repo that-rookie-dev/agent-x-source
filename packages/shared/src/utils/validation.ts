@@ -160,11 +160,14 @@ export const webSearchPaidProviderSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+export const webSearchProviderIdSchema = z.enum(['duckduckgo', 'brave', 'exa', 'tavily']);
+
 export const webSearchToolsConfigSchema = z.object({
   duckduckgo: z.object({ enabled: z.boolean().default(true) }).optional(),
   brave: webSearchPaidProviderSchema.optional(),
   exa: webSearchPaidProviderSchema.optional(),
   tavily: webSearchPaidProviderSchema.optional(),
+  providerOrder: z.array(webSearchProviderIdSchema).optional(),
 }).optional();
 
 export const toolsConfigSchema = z.object({
@@ -203,13 +206,58 @@ export const notificationChannelsConfigSchema = z.object({
   }).optional(),
 }).optional();
 
-export const runtimeSettingsSchema = z.object({
+export const performancePresetSchema = z.enum(['quiet', 'balanced', 'moderate', 'ultimate']);
+
+/** Accept current + legacy (`performance`→`moderate`, `max`→`ultimate`) preset ids. */
+export const performancePresetInputSchema = z.preprocess((raw) => {
+  if (raw === 'performance') return 'moderate';
+  if (raw === 'max') return 'ultimate';
+  return raw;
+}, performancePresetSchema);
+
+export const performanceSettingsSchema = z.object({
+  preset: performancePresetInputSchema.optional(),
+  budgetPercent: z.number().int().min(10).max(80).optional(),
+  /** @deprecated Prefer budgetPercent — accepted for one-release local migrate. */
   cpuBudgetPercent: z.number().int().min(10).max(80).optional(),
   lazyStorageCache: z.boolean().optional(),
   backgroundConcurrency: z.number().int().min(1).max(8).optional(),
 }).optional();
 
-export const agentXConfigSchema = z.object({
+/** @deprecated Use performanceSettingsSchema */
+export const runtimeSettingsSchema = performanceSettingsSchema;
+/** @deprecated Use performancePresetSchema */
+export const runtimePresetSchema = performancePresetSchema;
+
+function migrateConfigPerformanceKey(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = { ...(raw as Record<string, unknown>) };
+  const legacyRuntime = obj['runtime'];
+  const performance = obj['performance'];
+  if (performance == null && legacyRuntime != null && typeof legacyRuntime === 'object') {
+    const rt = { ...(legacyRuntime as Record<string, unknown>) };
+    if (rt['budgetPercent'] == null && typeof rt['cpuBudgetPercent'] === 'number') {
+      rt['budgetPercent'] = rt['cpuBudgetPercent'];
+    }
+    obj['performance'] = rt;
+  } else if (performance != null && typeof performance === 'object') {
+    const perf = { ...(performance as Record<string, unknown>) };
+    if (perf['budgetPercent'] == null && typeof perf['cpuBudgetPercent'] === 'number') {
+      perf['budgetPercent'] = perf['cpuBudgetPercent'];
+    }
+    obj['performance'] = perf;
+  }
+  const migratedPerf = obj['performance'];
+  if (migratedPerf != null && typeof migratedPerf === 'object') {
+    const perf = migratedPerf as Record<string, unknown>;
+    if (perf['preset'] === 'performance') perf['preset'] = 'moderate';
+    else if (perf['preset'] === 'max') perf['preset'] = 'ultimate';
+  }
+  delete obj['runtime'];
+  return obj;
+}
+
+export const agentXConfigSchema = z.preprocess(migrateConfigPerformanceKey, z.object({
   provider: z.object({
     activeProvider: providerIdSchema,
     activeModel: z.string(),
@@ -239,7 +287,7 @@ export const agentXConfigSchema = z.object({
   tools: toolsConfigSchema,
   channels: notificationChannelsConfigSchema,
   voice: voiceConfigSchema,
-  runtime: runtimeSettingsSchema,
+  performance: performanceSettingsSchema,
   maxSubAgents: z.number().min(1).max(20).optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   maxRetries: z.number().int().min(0).max(10).optional(),
@@ -259,4 +307,4 @@ export const agentXConfigSchema = z.object({
       comment: z.string().optional(),
     })).optional(),
   })).optional(),
-});
+}));

@@ -8,6 +8,7 @@ import {
   Gateway,
   RedisCacheRuntime,
   WebhookNotifierRuntime,
+  unregisterSessionTodoManager,
   type PartPersistFn,
   type CrewManager,
   type TelegramChannelPlugin,
@@ -23,14 +24,35 @@ import {
   crewParticipationMode,
 } from '@agentx/shared';
 import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { getEngine } from './state.js';
 import { ensureChannelAgent, rewireTelegramChannelPermissions } from './channels.js';
 import { resolveCrewPrivateHostForAgent } from '../host-crew-session.js';
 import { persistClarificationResumeFromAgent } from '../clarification-resume.js';
 import { unsubscribeAgent } from '../ws.js';
 import { registerOrphanedEventBus, connectToOrphanedBus, unregisterOrphanedEventBus } from './background-task-bridge.js';
+import { getActiveWorkspacePath } from '../workspace.js';
 const historyHydratedAgents = new WeakSet<Agent>();
+
+/** Hydrate TodoManager from session todos.json and persist later updates. */
+function wireSessionTodoPersistence(agent: Agent, sessDir: string): void {
+  const todoPath = join(sessDir, 'todos.json');
+  try {
+    if (existsSync(todoPath)) {
+      const raw = JSON.parse(readFileSync(todoPath, 'utf-8') || '[]');
+      if (Array.isArray(raw) && raw.length > 0) {
+        agent.todoManager.loadSnapshot(raw, false);
+      }
+    }
+  } catch { /* best-effort hydrate */ }
+
+  agent.todoManager.setPersistHandler((items) => {
+    try {
+      mkdirSync(sessDir, { recursive: true });
+      writeFileSync(todoPath, JSON.stringify(items, null, 2), 'utf-8');
+    } catch { /* best-effort persist */ }
+  });
+}
 
 /** Page recent user/assistant turns into agent memory without loading full session history. */
 export async function hydrateAgentRecentHistory(
@@ -60,12 +82,17 @@ export async function hydrateAgentRecentHistory(
       ]);
       recent = (page.messages ?? []).filter((m) => {
         const role = (m as { role?: string }).role;
-        return role === 'user' || role === 'assistant';
+        if (role !== 'user' && role !== 'assistant') return false;
+        const content = String((m as { content?: unknown }).content ?? '');
+        return !/^\[call_(?:event|divider):/i.test(content.trim());
       }) as Array<Record<string, unknown>>;
     } else if (store?.getMessages) {
       // Legacy adapters: still avoid feeding unbounded history into the model.
       recent = store.getMessages(sessionId)
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => {
+          if (m.role !== 'user' && m.role !== 'assistant') return false;
+          return !/^\[call_(?:event|divider):/i.test(String(m.content ?? '').trim());
+        })
         .slice(-limit) as unknown as Array<Record<string, unknown>>;
     }
     if (recent.length === 0) {
@@ -107,23 +134,9 @@ export function createAgent(
     throw new Error(`Provider "${cfg.provider.activeProvider}" is not fully configured. Please configure it first.`);
   }
 
-  if (session?.scopePath) {
-    eng.toolkit.executor.setScopePath(session.scopePath);
-  }
-
-  // Ensure scopePath is valid — check context.json as fallback
-  const effectiveScopePath = session.scopePath
-    || (() => {
-        try {
-          const ctxPath = join(getDataDir(), 'sessions', session.id, 'context.json');
-          if (existsSync(ctxPath)) {
-            const ctx = JSON.parse(readFileSync(ctxPath, 'utf-8'));
-            return (ctx.__scopePath__ || ctx.scopePath || '') as string;
-          }
-        } catch { /* ignore */ }
-        return '';
-      })()
-    || process.cwd();
+  // Global Agent-X Workspace — all sessions share one sandboxed root.
+  const effectiveScopePath = getActiveWorkspacePath(cfg);
+  eng.toolkit.executor.setScopePath(effectiveScopePath);
 
   const onPart: PartPersistFn = (sessionId, part) => {
     try {
@@ -287,6 +300,7 @@ export function createAgent(
   const dataDir = getDataDir();
   const sessDir = join(dataDir, 'sessions', session.id);
   agent.setContextPersistDir(sessDir, effectiveScopePath);
+  wireSessionTodoPersistence(agent, sessDir);
 
   // Wire session events to StorageAdapter (DB persistence)
   agent.onSessionEvent = (event) => {
@@ -482,6 +496,7 @@ export function destroyAgent(): void {
     if (hasRunningBgTasks && sessionId) {
       registerOrphanedEventBus(sessionId, eng.agent.events);
     }
+    if (sessionId) unregisterSessionTodoManager(sessionId);
     eng.agent = null;
   }
 }

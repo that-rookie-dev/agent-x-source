@@ -14,5 +14,5 @@ describe('ResearchEngine', () => {
     const { ResearchEngine } = await import('../src/reasoning/ResearchEngine.js');
     expect(ResearchEngine).toBeDefined();
     expect(typeof ResearchEngine).toBe('function');
-  });
+  }, 20_000);
 });

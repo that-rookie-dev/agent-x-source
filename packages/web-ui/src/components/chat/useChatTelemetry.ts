@@ -5,7 +5,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { subscribeOptimizedTelemetry } from '../../perf/optimized-telemetry';
 import { ensureRenderInstrumentation } from '../../perf/render-instrumentation';
-import { eventBelongsToViewSession } from '../../chat/session-stream-filter';
+import { eventBelongsToViewSession, filterEventsForViewSession } from '../../chat/session-stream-filter';
 import { applyOperationEventToAssistant } from '../../chat/operation-tool-patch';
 import { stripToolNoise, repairStreamTextGlitches, stripTrailingStreamPreamble, lastMessageIsQuestionnaireCard, mergeIncomingMessageParts, applyToolCompleteMetadata, reconcileStreamingMessageParts, coerceDisplayLabel } from '../../chat/utils';
 import {
@@ -13,13 +13,17 @@ import {
   parseDeepSearchProgressFromStream,
   deepSearchBundleFromMetadata,
   dedupeToolParts,
+  appendThinkingDeltaToParts,
+  sealTrailingThinkingPart,
+  appendStreamText,
   type MessagePart,
 } from '@agentx/shared/browser';
-import { chat, type TelemetryEvent, type Crew, type ConnectionState, type CrewSuggestionEvaluation, type IntegrationActionPreview } from '../../api';
+import { chat, todos, type TelemetryEvent, type Crew, type ConnectionState, type CrewSuggestionEvaluation, type IntegrationActionPreview, type TodoItem } from '../../api';
 import type { UIMessage, PartEntry, ToolCall, SubAgent } from '../../chat/types';
 import { upsertDeepSearchPartEntry } from '../../chat/types';
 import { updateLastMessage, attachChildSessionToAssistant, isTimeoutWarning, replaceWarning, clearTimeoutWarnings } from './message-helpers';
 import { shouldOfferCrewRosterPicker } from '../../chat/crew-suggestion-flow';
+import { normalizeTodoItems } from '../../chat/todoItems';
 import type { CrewWorkerState } from '../CrewWorkerPanel';
 import type { CrewInterMessage } from '../CrewMissionCard';
 
@@ -28,6 +32,8 @@ export interface UseChatTelemetryParams {
   streaming: boolean;
   crewList: Crew[];
   turnActivity: { stage: string; step: number; elapsedMs: number } | null;
+  /** Routed/open session id — used to drop deferred UI when the thread changes. */
+  viewSessionKey: string | null;
 
   // Shared refs
   isInitialLoadRef: React.MutableRefObject<boolean>;
@@ -52,7 +58,6 @@ export interface UseChatTelemetryParams {
   tokenInputRef: React.MutableRefObject<number>;
   tokenOutputRef: React.MutableRefObject<number>;
   tokenReservedRef: React.MutableRefObject<number>;
-  refreshContextRef: React.MutableRefObject<(() => void) | null>;
 
   // Setters
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
@@ -79,6 +84,8 @@ export interface UseChatTelemetryParams {
   setConnState: React.Dispatch<React.SetStateAction<ConnectionState>>;
   setLastEventAt: React.Dispatch<React.SetStateAction<number | null>>;
   setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
+  setTodoItems: React.Dispatch<React.SetStateAction<TodoItem[]>>;
+  setTasksExpanded: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Shared callbacks
   endTurnUi: () => void;
@@ -99,6 +106,7 @@ interface EventHandlerContext {
   outgoingTurnRef: React.MutableRefObject<{ userId: string; userContent: string; placeholderId: string } | null>;
   resendInProgressRef: React.MutableRefObject<boolean>;
   lastTurnFeedbackCandidateRef: React.MutableRefObject<{ messageId: string; elapsedMs: number } | null>;
+  viewSessionIdRef: React.MutableRefObject<string | null>;
   currentSessionIdRef: React.MutableRefObject<string | null>;
   isCrewPrivateRef: React.MutableRefObject<boolean>;
   crewPrivateHostRef: React.MutableRefObject<{ name: string; callsign: string; title?: string } | null>;
@@ -114,7 +122,6 @@ interface EventHandlerContext {
   tokenInputRef: React.MutableRefObject<number>;
   tokenOutputRef: React.MutableRefObject<number>;
   tokenReservedRef: React.MutableRefObject<number>;
-  refreshContextRef: React.MutableRefObject<(() => void) | null>;
 
   // Telemetry-only refs
   streamChunkRAFRef: React.MutableRefObject<number | null>;
@@ -124,6 +131,8 @@ interface EventHandlerContext {
   providerErrorTimerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>;
   toolBatchRef: React.MutableRefObject<TelemetryEvent[]>;
   toolFlushRef: React.MutableRefObject<number | null>;
+  /** Session id that owned the current coalesced stream/thinking buffers. */
+  pendingUiSessionIdRef: React.MutableRefObject<string | null>;
 
   // Setters
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
@@ -144,6 +153,8 @@ interface EventHandlerContext {
   setTokenTotal: React.Dispatch<React.SetStateAction<number>>;
   setCompactionCount: React.Dispatch<React.SetStateAction<number>>;
   setBypassPermissionsState: React.Dispatch<React.SetStateAction<boolean>>;
+  setTodoItems: React.Dispatch<React.SetStateAction<TodoItem[]>>;
+  setTasksExpanded: React.Dispatch<React.SetStateAction<boolean>>;
 
   // Callbacks & helpers
   isCrewEventForCurrentSession: () => boolean;
@@ -160,12 +171,30 @@ interface EventHandlerContext {
 /** Sync voice-only user turns that text chat didn't add locally. */
 const handleMessageSent = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   if (ctx.isInitialLoadRef.current) return;
-  const msg = ev.message as { id?: string; content?: string; role?: string } | undefined;
+  const msg = ev.message as {
+    id?: string;
+    content?: string;
+    role?: string;
+    metadata?: { voiceTurn?: boolean };
+    attachments?: UIMessage['attachments'];
+  } | undefined;
   const text = typeof msg?.content === 'string' ? msg.content.trim() : '';
-  if (!text || msg?.role !== 'user') return;
-  // Text chat already added the user bubble locally — only sync voice-only turns.
+  if ((!text && !(msg?.attachments?.length)) || msg?.role !== 'user') return;
+
+  // Chat composer already inserted the bubble. Only synthesize a row for true
+  // voice turns — never invent a "Voice" chip for ordinary chat/SSE races.
+  const voiceTurn = msg?.metadata?.voiceTurn === true;
+  if (!voiceTurn) return;
+
   ctx.setMessages((prev) => {
-    if (prev.some((m) => m.role === 'user' && m.content === text)) return prev;
+    if (prev.some((m) => (
+      (msg?.id != null && m.id === msg.id)
+      || (m.role === 'user' && m.content.trim() === text)
+    ))) {
+      return prev;
+    }
+    const outgoing = ctx.outgoingTurnRef.current;
+    if (outgoing && outgoing.userContent.trim() === text) return prev;
     return [
       ...prev,
       {
@@ -174,10 +203,90 @@ const handleMessageSent = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
         content: text,
         streaming: false,
         voiceInput: true,
+        ...(msg?.attachments?.length ? { attachments: msg.attachments } : {}),
       },
     ];
   });
 };
+
+function withSyncedSubagentParts(last: UIMessage, subAgents: SubAgent[]): { subAgents: SubAgent[]; parts: PartEntry[] } {
+  const byId = new Map(subAgents.map((a) => [a.id, a]));
+  const parts = (last.parts ?? []).map((p) => {
+    if (p.type !== 'subagent' || !p.agent) return p;
+    const live = byId.get(p.agent.id) ?? [...byId.values()].find((a) => a.name === p.agent!.name && a.status === 'running');
+    return live ? { ...p, id: live.id, agent: { ...p.agent, ...live } } : p;
+  });
+  return { subAgents, parts };
+}
+
+/** Apply thinking / stream / final message updates onto the matching sub-agent card only. */
+function applySubagentLiveTextEvent(prev: UIMessage[], ev: TelemetryEvent): UIMessage[] {
+  const last = prev[prev.length - 1];
+  const subagentId = (ev as { subagentId?: string }).subagentId as string;
+  const parentEvent = (ev as { parentEvent?: Record<string, unknown> }).parentEvent;
+  if (!subagentId || !parentEvent || last?.role !== 'assistant') return prev;
+
+  const patchAgent = (a: SubAgent): SubAgent => {
+    if (parentEvent.type === 'thinking_delta' || parentEvent.type === 'reasoning_delta') {
+      const delta = String(parentEvent.content ?? parentEvent.text ?? parentEvent.delta ?? '');
+      if (!delta) return a;
+      return {
+        ...a,
+        sessionBound: a.sessionBound ?? true,
+        currentStep: 'Thinking…',
+        thinking: appendStreamText(a.thinking || '', delta),
+      };
+    }
+    if (parentEvent.type === 'stream_chunk') {
+      const delta = String(parentEvent.content ?? '');
+      if (!delta) return a;
+      return { ...a, sessionBound: a.sessionBound ?? true, currentStep: 'Writing…', streamContent: (a.streamContent || '') + delta };
+    }
+    if (parentEvent.type === 'message_received') {
+      // Intermediate assistant messages can fire mid-run (clarification, multi-step).
+      // Only refresh streamed text — completion is signaled by parent tool_complete
+      // or background_task_complete.
+      const content = String((parentEvent.message as { content?: string } | undefined)?.content ?? parentEvent.content ?? '');
+      const isUpdate = parentEvent.isUpdate === true;
+      return {
+        ...a,
+        sessionBound: true,
+        status: a.status === 'error' ? 'error' : 'running',
+        currentStep: isUpdate ? (a.currentStep || 'Updating…') : 'Writing…',
+        streamContent: content || a.streamContent,
+        result: content || a.result,
+      };
+    }
+    return a;
+  };
+
+  let matched = false;
+  let subAgents = (last.subAgents ?? []).map((a) => {
+    if (a.id !== subagentId) return a;
+    matched = true;
+    return patchAgent(a);
+  });
+  if (!matched) {
+    const unbound = subAgents.filter((a) => a.status === 'running' && !a.sessionBound && a.kind !== 'crew_worker');
+    if (unbound.length === 1) {
+      const onlyId = unbound[0]!.id;
+      subAgents = subAgents.map((a) =>
+        a.id === onlyId ? patchAgent({ ...a, id: subagentId, sessionBound: true }) : a,
+      );
+    } else {
+      subAgents = [...subAgents, patchAgent({
+        id: subagentId,
+        name: 'Sub-Agent',
+        task: '',
+        status: 'running',
+        kind: 'sub_agent',
+        sessionBound: true,
+      })];
+    }
+  }
+  const synced = withSyncedSubagentParts(last, subAgents);
+  return updateLastMessage(prev, synced);
+}
 
 /** RAF-batch high-frequency tool + subagent tool events to prevent render storms. */
 const handleToolBatchEvent = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
@@ -187,23 +296,28 @@ const handleToolBatchEvent = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
   if (ctx.toolFlushRef.current === null) {
     ctx.toolFlushRef.current = requestAnimationFrame(() => {
       ctx.toolFlushRef.current = null;
-      const batch = ctx.toolBatchRef.current;
+      const rawBatch = ctx.toolBatchRef.current;
       ctx.toolBatchRef.current = [];
+      // Re-filter at flush time — session may have changed since enqueue (cross-session bleed).
+      const batch = filterEventsForViewSession(rawBatch, ctx.viewSessionIdRef.current);
       if (batch.length === 0) return;
-      // Replace the current step line with the latest activity in this batch.
-      for (let i = batch.length - 1; i >= 0; i--) {
-        const e = batch[i]!;
-        const src = e.type === 'subagent_event'
-          ? (e as { parentEvent?: { type?: string; tool?: string } }).parentEvent
-          : e;
-        const toolName = (src?.tool as string) ?? '';
-        if (!toolName) continue;
-        if (src?.type === 'tool_executing') { ctx.setCurrentStep(`Running ${toolName}…`); break; }
-        if (src?.type === 'tool_complete') { ctx.setCurrentStep(`${toolName} · done`); break; }
-        if (src?.type === 'tool_output') { ctx.setCurrentStep(`Running ${toolName}…`); break; }
+      // Main-turn loader: only parent tools. Sub-agent tool activity stays inside the sub-agent card/drawer.
+      const hasParentTool = batch.some((e) => e.type !== 'subagent_event');
+      const hasSubagentTool = batch.some((e) => e.type === 'subagent_event');
+      if (hasParentTool) {
+        for (let i = batch.length - 1; i >= 0; i--) {
+          const e = batch[i]!;
+          if (e.type === 'subagent_event') continue;
+          const toolName = (e.tool as string) ?? '';
+          if (!toolName) continue;
+          if (e.type === 'tool_executing' || e.type === 'tool_output') { ctx.setCurrentStep(`Running ${toolName}…`); break; }
+          if (e.type === 'tool_complete') { ctx.setCurrentStep(`${toolName} · done`); break; }
+        }
+      } else if (hasSubagentTool) {
+        ctx.setCurrentStep('Waiting for sub-agent response…');
       }
       ctx.setMessages(prev => {
-        let current = prev;
+        let current = ensureAssistantBubble(prev, ctx.turnActiveRef.current);
         for (const e of batch) {
           current = e.type === 'subagent_event'
             ? ctx.applySubagentToolEvent(current, e)
@@ -216,21 +330,58 @@ const handleToolBatchEvent = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
             current = updateLastMessage(current, { parts: dedupedParts as PartEntry[] });
           }
         }
+        // Keep waiting label while any sub-agent is still running and parent isn't mid-tool.
+        if (!hasParentTool) {
+          const runningSub = last?.subAgents?.some((a) => a.status === 'running');
+          if (runningSub) ctx.setCurrentStep('Waiting for sub-agent response…');
+        }
         return current;
       });
     });
   }
 };
 
-/** Route subagent events: tool subevents go through RAF batch, others are no-ops. */
+/** Ensure an in-progress assistant bubble exists so mid-turn tools/subagents aren't dropped. */
+function ensureAssistantBubble(prev: UIMessage[], turnActive: boolean): UIMessage[] {
+  const last = prev[prev.length - 1];
+  if (last?.role === 'assistant') return prev;
+  // Don't invent bubbles from stale telemetry after the turn ended.
+  if (!turnActive) return prev;
+  return [
+    ...prev,
+    {
+      id: `assistant-live-${Date.now()}`,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      parts: [],
+      toolCalls: [],
+      subAgents: [],
+    } as UIMessage,
+  ];
+}
+
+/** Route subagent events: tools → RAF batch; thinking/stream → sub-agent card state only. */
 const handleSubagentEvent = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
-  const isSubagentTool = ['tool_executing', 'tool_output', 'tool_complete'].includes(
-    String((ev as { parentEvent?: { type?: string } }).parentEvent?.type ?? ''),
-  );
+  if (ctx.isInitialLoadRef.current) return;
+  const parentType = String((ev as { parentEvent?: { type?: string } }).parentEvent?.type ?? '');
+  const isSubagentTool = ['tool_executing', 'tool_output', 'tool_complete'].includes(parentType);
   if (isSubagentTool) {
     handleToolBatchEvent(ev, ctx);
+    return;
   }
-  // Non-tool subagent events are no-ops (previously: case 'subagent_event': return prev;)
+  if (
+    parentType === 'thinking_delta'
+    || parentType === 'reasoning_delta'
+    || parentType === 'stream_chunk'
+    || parentType === 'message_received'
+  ) {
+    ctx.setCurrentStep('Waiting for sub-agent response…');
+    ctx.setMessages((prev) => applySubagentLiveTextEvent(
+      ensureAssistantBubble(prev, ctx.turnActiveRef.current),
+      ev,
+    ));
+  }
 };
 
 /** Apply token usage metrics and sync turn token count on the assistant message. */
@@ -380,6 +531,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
       const base = ctx.ensureOutgoingTurnMessages(prev);
       const tip = base[base.length - 1];
       if (tip?.role === 'assistant' && tip.streaming) {
+        ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
         ctx.streamChunkPendingRef.current = rawFull || null;
         if (ctx.streamChunkRAFRef.current === null) {
           ctx.streamChunkRAFRef.current = window.setTimeout(() => {
@@ -387,6 +539,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
             const fullContent = ctx.streamChunkPendingRef.current ?? '';
             ctx.streamChunkPendingRef.current = null;
             if (!fullContent) return;
+            if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
             ctx.setMessages(p => {
               const ensured = ctx.ensureOutgoingTurnMessages(p);
               const l = ensured[ensured.length - 1];
@@ -415,6 +568,7 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
       }];
     }
     if (last?.role === 'assistant') {
+      ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
       ctx.streamChunkPendingRef.current = rawFull || null;
       if (ctx.streamChunkRAFRef.current === null) {
         // Coalesced flush: markdown re-parses the active bubble on every
@@ -424,12 +578,28 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
           const fullContent = ctx.streamChunkPendingRef.current ?? '';
           ctx.streamChunkPendingRef.current = null;
           if (!fullContent) return;
+          if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
           ctx.setMessages(p => {
             const l = p[p.length - 1];
             if (l?.role !== 'assistant') return p;
             // Skip identical content commits (common when delta events repeat fullContent).
             if (l.content === fullContent) return p;
-            const parts = l.parts || [];
+            // Only seal thinking once real reply text has started — sealing on the
+            // first empty/noise chunk was splitting thoughts mid-sentence ("The" / "web…").
+            let parts = (l.parts || []) as MessagePart[];
+            const hasRealText = fullContent.replace(/\s+/g, ' ').trim().length >= 8;
+            if (hasRealText) {
+              const pendingThought = ctx.thinkingPendingRef.current;
+              if (pendingThought) {
+                ctx.thinkingPendingRef.current = '';
+                if (ctx.thinkingFlushRef.current !== null) {
+                  clearTimeout(ctx.thinkingFlushRef.current);
+                  ctx.thinkingFlushRef.current = null;
+                }
+                parts = appendThinkingDeltaToParts(parts, pendingThought);
+              }
+              parts = sealTrailingThinkingPart(parts);
+            }
             const lastPart = parts[parts.length - 1];
             const prefixEnd = lastPart?.type === 'text' ? parts.length - 1 : parts.length;
             let prefixLen = 0;
@@ -439,11 +609,11 @@ const handleStreamChunk = (ev: TelemetryEvent, ctx: EventHandlerContext): void =
             }
             const segmentText = fullContent.slice(prefixLen);
             if (lastPart?.type === 'text') {
-              const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: segmentText }];
+              const updatedParts = [...parts.slice(0, -1), { ...lastPart, content: segmentText }] as PartEntry[];
               return updateLastMessage(p, { content: fullContent, parts: updatedParts, streaming: true });
             }
             const textPart: PartEntry = { type: 'text', id: crypto.randomUUID(), content: segmentText };
-            return updateLastMessage(p, { content: fullContent, parts: [...parts, textPart], streaming: true });
+            return updateLastMessage(p, { content: fullContent, parts: [...parts, textPart] as PartEntry[], streaming: true });
           });
           const streamingEst = Math.ceil(fullContent.length / 4);
           ctx.setTokenStreaming(streamingEst);
@@ -609,9 +779,13 @@ const handleMessageReceived = (ev: TelemetryEvent, ctx: EventHandlerContext): vo
 /** Show the permission prompt modal for risky tool operations. */
 const handlePermissionRequired = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   ctx.setMessages((prev) => {
-    // Ignore stale permission prompts replayed from telemetry buffer on page load
-    if (ctx.isInitialLoadRef.current) { return prev; }
-    ctx.setPendingPermissionCount((prev) => prev + 1);
+    // Ignore stale permission prompts replayed from telemetry buffer on page load,
+    // and prompts that arrive after the user already stopped the turn.
+    if (ctx.isInitialLoadRef.current || !ctx.turnActiveRef.current) { return prev; }
+    const isRePrompt = ev.rePrompt === true;
+    if (!isRePrompt) {
+      ctx.setPendingPermissionCount((count) => count + 1);
+    }
     ctx.setPermissionPrompt({
       requestId: (ev.requestId as string) ?? `${ev.tool}-${Date.now()}`,
       tool: (ev.tool as string) ?? 'unknown',
@@ -663,26 +837,35 @@ const handleReasoningDelta = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
   ctx.setMessages((prev) => {
     const last = prev[prev.length - 1];
     if (last?.role !== 'assistant') return prev;
-    const delta = (ev.content as string) ?? (ev.text as string) ?? '';
+    const delta = (ev.content as string) ?? (ev.text as string) ?? (ev.delta as string) ?? '';
     // Coalesce reasoning tokens — flushing per-delta causes a render
-    // storm on reasoning-heavy models.
-    ctx.thinkingPendingRef.current += delta;
+    // storm on reasoning-heavy models. appendStreamText dedupes cumulative/dup chunks.
+    ctx.pendingUiSessionIdRef.current = ctx.viewSessionIdRef.current;
+    ctx.thinkingPendingRef.current = appendStreamText(ctx.thinkingPendingRef.current, delta);
     if (ctx.thinkingFlushRef.current === null) {
       ctx.thinkingFlushRef.current = window.setTimeout(() => {
         ctx.thinkingFlushRef.current = null;
         const pending = ctx.thinkingPendingRef.current;
         ctx.thinkingPendingRef.current = '';
         if (!pending) return;
+        if (ctx.pendingUiSessionIdRef.current !== ctx.viewSessionIdRef.current) return;
         ctx.setMessages(p => {
           const l = p[p.length - 1];
           if (l?.role !== 'assistant') return p;
-          const accumulated = (l.thinking ?? '') + pending;
+          const accumulated = appendStreamText(l.thinking ?? '', pending);
           // Show only the latest thinking fragment as the step line (replaced each flush).
           const tail = accumulated.replace(/\s+/g, ' ').trim().slice(-110);
           if (tail) ctx.setCurrentStep(`Thinking… ${tail}`);
+          // Each thinking phase is its own part; consecutive deltas merge into the
+          // trailing thinking part, and a new part starts after text/tools/subagents.
+          const nextParts = appendThinkingDeltaToParts(
+            (l.parts || []) as MessagePart[],
+            pending,
+          ) as PartEntry[];
           return updateLastMessage(p, {
             thinking: accumulated,
             thinkingStartedAt: l.thinkingStartedAt ?? Date.now(),
+            parts: nextParts,
           });
         });
       }, 120);
@@ -693,9 +876,39 @@ const handleReasoningDelta = (ev: TelemetryEvent, ctx: EventHandlerContext): voi
 
 /** Mark the end of the reasoning/thinking phase. */
 const handleReasoningEnd = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
+  // Flush any coalesced tokens before sealing so the phase isn't split mid-buffer.
+  if (ctx.thinkingFlushRef.current !== null) {
+    clearTimeout(ctx.thinkingFlushRef.current);
+    ctx.thinkingFlushRef.current = null;
+  }
+  const pending = ctx.thinkingPendingRef.current;
+  ctx.thinkingPendingRef.current = '';
   ctx.setMessages((prev) => {
     const last = prev[prev.length - 1];
-    return last?.role === 'assistant' && last.thinking ? updateLastMessage(prev, { thinkingDoneAt: Date.now() }) : prev;
+    if (last?.role !== 'assistant') return prev;
+    let parts = (last.parts || []) as MessagePart[];
+    if (pending) {
+      parts = appendThinkingDeltaToParts(parts, pending);
+    }
+    parts = sealTrailingThinkingPart(parts, { force: true });
+    const accumulated = pending
+      ? appendStreamText(last.thinking ?? '', pending)
+      : last.thinking;
+    const cleaned = accumulated ? repairStreamTextGlitches(accumulated) : undefined;
+    if (cleaned && parts.length > 0) {
+      const lastPart = parts[parts.length - 1];
+      if (lastPart?.type === 'thinking' && lastPart.content) {
+        parts = [
+          ...parts.slice(0, -1),
+          { ...lastPart, content: repairStreamTextGlitches(lastPart.content) },
+        ];
+      }
+    }
+    return updateLastMessage(prev, {
+      ...(cleaned ? { thinking: cleaned } : {}),
+      thinkingDoneAt: Date.now(),
+      parts: parts as PartEntry[],
+    });
   });
 };
 
@@ -955,7 +1168,13 @@ const handleChildSessionStarted = (ev: TelemetryEvent, ctx: EventHandlerContext)
     if (!childSessionId) return prev;
     // Crew mission panel above the input already tracks workers — skip duplicate inline cards.
     if (kind === 'crew_worker') return prev;
-    return attachChildSessionToAssistant(prev, childSessionId, label || 'Background work', kind ?? 'sub_agent');
+    ctx.setCurrentStep('Waiting for sub-agent response…');
+    return attachChildSessionToAssistant(
+      ensureAssistantBubble(prev, ctx.turnActiveRef.current),
+      childSessionId,
+      label || 'Background work',
+      kind ?? 'sub_agent',
+    );
   });
 };
 
@@ -965,7 +1184,14 @@ const handleAgentSpawned = (ev: TelemetryEvent, ctx: EventHandlerContext): void 
     const agentId = ev.agentId as string;
     const task = (ev.task as string) ?? '';
     if (!agentId) return prev;
-    return attachChildSessionToAssistant(prev, agentId, 'Sub-Agent', 'sub_agent', task.slice(0, 200));
+    ctx.setCurrentStep('Waiting for sub-agent response…');
+    return attachChildSessionToAssistant(
+      ensureAssistantBubble(prev, ctx.turnActiveRef.current),
+      agentId,
+      'Sub-Agent',
+      'sub_agent',
+      task.slice(0, 200),
+    );
   });
 };
 
@@ -981,12 +1207,79 @@ const handleCommandAction = (ev: TelemetryEvent, ctx: EventHandlerContext): void
   });
 };
 
-/** Increment compaction count and refresh context. */
+/** Increment compaction count. */
 const handleCompactionComplete = (_ev: TelemetryEvent, ctx: EventHandlerContext): void => {
   ctx.setMessages((prev) => {
     ctx.setCompactionCount(c => c + 1);
-    ctx.refreshContextRef.current?.();
     return prev;
+  });
+};
+
+/** Live TASKS panel updates from TodoManager / todo_write. */
+const handleTodoUpdate = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
+  const items = normalizeTodoItems(ev.items);
+  ctx.setTodoItems(items);
+  if (items.length > 0) ctx.setTasksExpanded(true);
+};
+
+/** Mark a background / fire-and-forget sub-agent card done when the task finishes. */
+const handleBackgroundTaskComplete = (ev: TelemetryEvent, ctx: EventHandlerContext): void => {
+  const childSessionId = String(ev.childSessionId ?? '').trim();
+  const taskId = String(ev.taskId ?? '').trim();
+  const success = ev.success !== false;
+  const summary = String(ev.summary ?? ev.result ?? '').trim();
+  if (!childSessionId && !taskId) return;
+  const matchId = (id: string) =>
+    (childSessionId && id === childSessionId) || (taskId && id === taskId);
+  ctx.setMessages((prev) => {
+    // Background tasks often finish after the parent turn — search all assistant rows.
+    let targetIdx = -1;
+    for (let i = prev.length - 1; i >= 0; i--) {
+      const m = prev[i]!;
+      if (m.role !== 'assistant') continue;
+      if (m.subAgents?.some((a) => matchId(a.id))) {
+        targetIdx = i;
+        break;
+      }
+    }
+    if (targetIdx < 0) return prev;
+    const target = prev[targetIdx]!;
+    const subAgents = (target.subAgents ?? []).map((a) => {
+      if (!matchId(a.id)) return a;
+      return {
+        ...a,
+        status: (success ? 'done' : 'error') as 'done' | 'error',
+        currentStep: success ? 'Done' : 'Failed',
+        result: summary || a.result,
+        sessionBound: true,
+      };
+    });
+    const parts = (target.parts ?? []).map((p) => {
+      if (p.type !== 'subagent' || !p.agent || !matchId(p.agent.id)) return p;
+      return {
+        ...p,
+        agent: {
+          ...p.agent,
+          status: (success ? 'done' : 'error') as 'done' | 'error',
+          currentStep: success ? 'Done' : 'Failed',
+          result: summary || p.agent.result,
+          sessionBound: true,
+        },
+      };
+    });
+    const next = prev.slice();
+    next[targetIdx] = { ...target, subAgents, parts };
+    if (ctx.turnActiveRef.current) {
+      const anyRunning = next.some((m) =>
+        m.role === 'assistant' && m.subAgents?.some((a) => a.status === 'running'),
+      );
+      if (!anyRunning) {
+        ctx.setCurrentStep((prevStep) =>
+          prevStep === 'Waiting for sub-agent response…' ? 'Working…' : prevStep,
+        );
+      }
+    }
+    return next;
   });
 };
 
@@ -1064,6 +1357,8 @@ const telemetryDispatch: Record<string, (ev: TelemetryEvent, ctx: EventHandlerCo
   // Misc
   command_action: handleCommandAction,
   compaction_complete: handleCompactionComplete,
+  todo_update: handleTodoUpdate,
+  background_task_complete: handleBackgroundTaskComplete,
   agent_thinking: noopHandler,
   step_indicator: noopHandler,
 };
@@ -1071,18 +1366,17 @@ const telemetryDispatch: Record<string, (ev: TelemetryEvent, ctx: EventHandlerCo
 
 export function useChatTelemetry(params: UseChatTelemetryParams): void {
   const {
-    streaming, crewList, turnActivity,
+    streaming, crewList, turnActivity, viewSessionKey,
     isInitialLoadRef, turnActiveRef, activeTurnIdRef, outgoingTurnRef, resendInProgressRef,
     lastTurnFeedbackCandidateRef, viewSessionIdRef, currentSessionIdRef, isCrewPrivateRef,
     crewPrivateHostRef, crewMissionSessionIdRef, crewSuggestionHandledRef, crewGateInFlightRef,
     attachCrewRosterPickerRef, rateLimitSeenRef, tokenInputRef, tokenOutputRef, tokenReservedRef,
-    refreshContextRef,
     setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming, setTokenUsed,
     setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
     setPendingPermissionCount, setCrewWorkers, setCrewMissionActive, setCrewMissionId,
     setCrewInterMessages, setTokenInput, setTokenOutput, setTokenReserved, setTokenTotal,
     setCompactionCount, setToolEnablePrompt, setConnState,
-    setLastEventAt, setBypassPermissionsState,
+    setLastEventAt, setBypassPermissionsState, setTodoItems, setTasksExpanded,
     endTurnUi, isCrewEventForCurrentSession,
   } = params;
 
@@ -1098,6 +1392,36 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
   // RAF-batched tool event accumulator (prevents render storm on long-running tasks)
   const toolBatchRef = useRef<TelemetryEvent[]>([]);
   const toolFlushRef = useRef<number | null>(null);
+  const pendingUiSessionIdRef = useRef<string | null>(null);
+  const lastViewSessionForPendingRef = useRef<string | null>(viewSessionKey);
+
+  const clearDeferredTurnUi = useCallback(() => {
+    toolBatchRef.current = [];
+    if (toolFlushRef.current != null) {
+      cancelAnimationFrame(toolFlushRef.current);
+      toolFlushRef.current = null;
+    }
+    streamChunkPendingRef.current = null;
+    if (streamChunkRAFRef.current != null) {
+      clearTimeout(streamChunkRAFRef.current);
+      streamChunkRAFRef.current = null;
+    }
+    thinkingPendingRef.current = '';
+    if (thinkingFlushRef.current != null) {
+      clearTimeout(thinkingFlushRef.current);
+      thinkingFlushRef.current = null;
+    }
+    pendingUiSessionIdRef.current = null;
+  }, []);
+
+  // Drop coalesced tool/stream/thinking buffers when the open chat thread changes.
+  useEffect(() => {
+    const prev = lastViewSessionForPendingRef.current;
+    lastViewSessionForPendingRef.current = viewSessionKey;
+    if (prev != null && viewSessionKey != null && prev !== viewSessionKey) {
+      clearDeferredTurnUi();
+    }
+  }, [viewSessionKey, clearDeferredTurnUi]);
 
   const isAgentRecentlyActive = useCallback((withinMs = 45000) => Date.now() - lastActivityRef.current < withinMs, []);
 
@@ -1143,8 +1467,11 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
 
     // Pure function to apply a single tool event to messages state (used by RAF batch)
     const applyToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
-      const last = prev[prev.length - 1];
-      if (last?.role !== 'assistant') return prev;
+      const withBubble = ensureAssistantBubble(prev, turnActiveRef.current);
+      const last = withBubble[withBubble.length - 1];
+      if (last?.role !== 'assistant') return withBubble;
+      // Rebind prev→withBubble for the rest of this function.
+      prev = withBubble;
       switch (ev.type) {
         case 'tool_executing': {
           const toolName = (ev.tool as string) ?? 'unknown';
@@ -1210,6 +1537,15 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
           const resultStr: string = typeof result === 'string' ? result
             : (result && typeof result === 'object' ? String((result as Record<string, unknown>).output || (result as Record<string, unknown>).message || JSON.stringify(result)) : '');
           if (toolName === 'delegate_to_subagent' && last.subAgents) {
+            // Fire-and-forget ack must NOT mark the chip done — child is still working.
+            const startedBg = /started in background/i.test(resultStr);
+            if (startedBg) {
+              const newSubAgents = last.subAgents.map((a: SubAgent) =>
+                a.id === callId || a.status === 'running'
+                  ? { ...a, status: 'running' as const }
+                  : a);
+              return updateLastMessage(prev, { subAgents: newSubAgents });
+            }
             const newSubAgents = last.subAgents.map((a: SubAgent) =>
               a.status !== 'running' ? a : { ...a, status: 'done' as const, result: resultStr });
             const newParts = (last.parts || []).map((p: PartEntry) =>
@@ -1271,10 +1607,35 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
     };
 
     const applySubagentToolEvent = (prev: UIMessage[], ev: TelemetryEvent): UIMessage[] => {
-      const last = prev[prev.length - 1];
+      const base = ensureAssistantBubble(prev, turnActiveRef.current);
+      const last = base[base.length - 1];
       const subagentId = (ev as { subagentId?: string }).subagentId as string;
       const parentEvent = (ev as { parentEvent?: Record<string, unknown> }).parentEvent;
-      if (!subagentId || !parentEvent || !last?.subAgents) return prev;
+      if (!subagentId || !parentEvent || last?.role !== 'assistant') return base;
+      // Match by id, or upgrade a still-unbound running placeholder if ids haven't synced yet.
+      const resolveAgents = (updater: (a: SubAgent) => SubAgent): SubAgent[] => {
+        const list = last.subAgents ?? [];
+        let matched = false;
+        const mapped = list.map((a: SubAgent) => {
+          if (a.id === subagentId) { matched = true; return updater({ ...a, sessionBound: true }); }
+          return a;
+        });
+        if (matched) return mapped;
+        const unbound = list.filter((a) => a.status === 'running' && !a.sessionBound && a.kind !== 'crew_worker');
+        if (unbound.length !== 1) {
+          // Ambiguous or missing — attach a bound card for this child session id.
+          return [...mapped, updater({
+            id: subagentId,
+            name: 'Sub-Agent',
+            task: '',
+            status: 'running',
+            kind: 'sub_agent',
+            sessionBound: true,
+          })];
+        }
+        const onlyId = unbound[0]!.id;
+        return mapped.map((a) => (a.id === onlyId ? updater({ ...a, id: subagentId, sessionBound: true }) : a));
+      };
       switch (parentEvent.type) {
         case 'tool_executing': {
           const toolName = (parentEvent.tool as string) ?? 'unknown';
@@ -1282,22 +1643,25 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
           const eventArgs = parentEvent.args ?? desc;
           const callId = (parentEvent.callId as string) ?? crypto.randomUUID();
           const tc: ToolCall = { id: callId, name: toolName, args: eventArgs as ToolCall['args'], status: 'running' };
-          const newSubAgents = last.subAgents.map((a: SubAgent) =>
-            a.id !== subagentId ? a : { ...a, toolCalls: [...(a.toolCalls || []), tc] });
-          return updateLastMessage(prev, { subAgents: newSubAgents });
+          const newSubAgents = resolveAgents((a) => ({
+            ...a,
+            currentStep: `Running ${toolName}…`,
+            toolCalls: [...(a.toolCalls || []).filter((t) => t.id !== callId), tc],
+          }));
+          return updateLastMessage(base, withSyncedSubagentParts(last, newSubAgents));
         }
         case 'tool_output': {
           const outputCallId = (parentEvent.callId as string) ?? '';
           const outputText = (parentEvent.output as string) ?? '';
-          if (!outputCallId || !outputText) return prev;
-          const newSubAgents = last.subAgents.map((a: SubAgent) =>
-            a.id !== subagentId ? a : {
-              ...a,
-              toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
-                t.id === outputCallId && t.status === 'running'
-                  ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
-            });
-          return updateLastMessage(prev, { subAgents: newSubAgents });
+          if (!outputCallId || !outputText) return base;
+          const newSubAgents = resolveAgents((a) => ({
+            ...a,
+            currentStep: a.currentStep || 'Running…',
+            toolCalls: (a.toolCalls || []).map((t: ToolCall) =>
+              t.id === outputCallId && t.status === 'running'
+                ? { ...t, streamOutput: (t.streamOutput || '') + outputText } : t),
+          }));
+          return updateLastMessage(base, withSyncedSubagentParts(last, newSubAgents));
         }
         case 'tool_complete': {
           const toolName = (parentEvent.tool as string) ?? '';
@@ -1311,19 +1675,19 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
                 || (result as { message?: string }).message
                 || JSON.stringify(result))
               : '');
-          const newSubAgents = last.subAgents.map((a: SubAgent) =>
-            a.id !== subagentId ? a : {
-              ...a,
-              toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
-                if (callId && t.id !== callId) return t;
-                if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
-                return { ...t, status: 'done' as const, result: resultStr, elapsed };
-              }),
-            });
-          return updateLastMessage(prev, { subAgents: newSubAgents });
+          const newSubAgents = resolveAgents((a) => ({
+            ...a,
+            currentStep: toolName ? `${toolName} · done` : a.currentStep,
+            toolCalls: (a.toolCalls || []).map((t: ToolCall) => {
+              if (callId && t.id !== callId) return t;
+              if (!callId && (t.name !== toolName || t.status !== 'running')) return t;
+              return { ...t, status: 'done' as const, result: resultStr, elapsed };
+            }),
+          }));
+          return updateLastMessage(base, withSyncedSubagentParts(last, newSubAgents));
         }
         default:
-          return prev;
+          return base;
       }
     };
 
@@ -1355,16 +1719,17 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
     const ctx: EventHandlerContext = {
       crewList, turnActivity,
       isInitialLoadRef, turnActiveRef, outgoingTurnRef, resendInProgressRef,
-      lastTurnFeedbackCandidateRef, currentSessionIdRef, isCrewPrivateRef,
+      lastTurnFeedbackCandidateRef, viewSessionIdRef, currentSessionIdRef, isCrewPrivateRef,
       crewPrivateHostRef, crewMissionSessionIdRef, crewSuggestionHandledRef,
       crewGateInFlightRef, attachCrewRosterPickerRef, rateLimitSeenRef,
-      tokenInputRef, tokenOutputRef, tokenReservedRef, refreshContextRef,
+      tokenInputRef, tokenOutputRef, tokenReservedRef,
       streamChunkRAFRef, streamChunkPendingRef, thinkingPendingRef, thinkingFlushRef,
-      providerErrorTimerRef, toolBatchRef, toolFlushRef,
+      providerErrorTimerRef, toolBatchRef, toolFlushRef, pendingUiSessionIdRef,
       setMessages, setStreaming, setTurnActivity, setCurrentStep, setTokenStreaming,
       setTokenUsed, setLoadingSteps, setWarnings, setStepCapPrompt, setPermissionPrompt,
       setPendingPermissionCount, setCrewWorkers, setCrewMissionActive,
       setCrewMissionId, setCrewInterMessages, setTokenTotal, setCompactionCount, setBypassPermissionsState,
+      setTodoItems, setTasksExpanded,
       isCrewEventForCurrentSession, stopTurnIndicator, ensureOutgoingTurnMessages,
       isAgentRecentlyActive, applyToolEvent, applySubagentToolEvent, applyTokenUsageEvent,
     };
@@ -1397,10 +1762,10 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
           setLastEventAt(Date.now());
         } else if (state === 'reconnecting') {
           // On reconnect, fetch current agent state to recover any missed updates
+          const viewSessionId = viewSessionIdRef.current;
           fetch('/api/agent/state', { credentials: 'include' })
             .then(r => r.json())
             .then(data => {
-              const viewSessionId = viewSessionIdRef.current;
               if (!viewSessionId || data.session?.id !== viewSessionId) {
                 stopTurnIndicator();
                 return;
@@ -1413,6 +1778,17 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
               }
             })
             .catch(() => {});
+          // Recover TASKS panel if todo_update events were missed while disconnected
+          if (viewSessionId) {
+            todos.list(viewSessionId)
+              .then((items) => {
+                if (viewSessionIdRef.current !== viewSessionId) return;
+                const normalized = normalizeTodoItems(items);
+                setTodoItems(normalized);
+                if (normalized.length > 0) setTasksExpanded(true);
+              })
+              .catch(() => {});
+          }
         }
       },
     );

@@ -3,6 +3,8 @@ import { getLogger, KnowledgeBaseOrigin, type CreateKnowledgeSourceInput, type K
 import { getAttachmentService } from '../attachments/index.js';
 import type { MemoryFabric } from '../neural/MemoryFabric.js';
 import { getEmbedderInstance, OnnxEmbeddingProvider } from '../neural/OnnxEmbeddingProvider.js';
+import { resolveEmbedTextForNode } from '../neural/retrieval/contextualize.js';
+import { toHalfvecLiteral } from '../neural/VectorQuantizer.js';
 import { DocumentIngestPipeline } from './DocumentIngestPipeline.js';
 import { searchKnowledgeBaseDocuments } from './document-search.js';
 import { KnowledgeBaseSourceStore } from './KnowledgeBaseSourceStore.js';
@@ -171,5 +173,64 @@ export class KnowledgeBaseService {
     );
     this.emitStatus(id, 'pending', 0, 'reprocess');
     this.enqueueProcess(id);
+  }
+
+  /**
+   * Re-embed existing chunk nodes for a source using stored provenance.embedText
+   * (or rebuilt heading path) without re-parsing the original file.
+   */
+  async reEmbedSource(id: string, batchSize = 32): Promise<{ updated: number; failed: number }> {
+    const source = await this.sourceStore.getSource(id);
+    if (!source) throw new Error(`Knowledge base source not found: ${id}`);
+    const embedder = this.getEmbedder();
+    this.emitStatus(id, 'embedding', 10, 're-embed (no re-parse)');
+
+    const { nodes } = await this.fabric.getNodesBySource(id, { limit: 10_000, category: 'source_doc' });
+    const chunks = nodes.filter((n) => n.unitType === 'chunk' || (!n.unitType && n.content));
+    let updated = 0;
+    let failed = 0;
+
+    for (let i = 0; i < chunks.length; i += batchSize) {
+      const batch = chunks.slice(i, i + batchSize);
+      const texts = batch.map((n) =>
+        resolveEmbedTextForNode({
+          content: n.content,
+          label: n.label,
+          headingPath: n.headingPath,
+          provenance: n.provenance,
+        }),
+      );
+      try {
+        const embeddings = await embedder.embedBatch(texts);
+        for (let j = 0; j < batch.length; j++) {
+          const node = batch[j]!;
+          const embedding = embeddings[j];
+          if (!embedding?.length) {
+            failed++;
+            continue;
+          }
+          await this.pool.query(
+            `UPDATE memory_nodes
+                SET embedding = $1::vector,
+                    embedding_halfvec = $2::halfvec,
+                    updated_at = NOW()
+              WHERE id = $3`,
+            [`[${embedding.join(',')}]`, toHalfvecLiteral(embedding), node.id],
+          );
+          updated++;
+        }
+      } catch (err) {
+        this.logger.warn('KB_RE_EMBED', 'Batch re-embed failed', {
+          sourceId: id,
+          error: (err as Error).message,
+        });
+        failed += batch.length;
+      }
+      const progress = 10 + Math.floor(((i + batch.length) / Math.max(chunks.length, 1)) * 85);
+      this.emitStatus(id, 'embedding', progress, `Re-embedded ${Math.min(i + batch.length, chunks.length)}/${chunks.length}`);
+    }
+
+    this.emitStatus(id, 'ready', 100, `Re-embedded ${updated} chunks (failed=${failed})`);
+    return { updated, failed };
   }
 }

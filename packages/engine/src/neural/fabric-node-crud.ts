@@ -139,12 +139,19 @@ export async function bindEdge(ctx: NodeCrudContext, input: MemoryEdgeInput): Pr
 }
 
 export async function fireNeuron(ctx: NodeCrudContext, nodeId: string): Promise<void> {
+  await fireNeurons(ctx, [nodeId]);
+}
+
+/** Batch-touch neurons — preferred on retrieval hot paths. */
+export async function fireNeurons(ctx: NodeCrudContext, nodeIds: string[]): Promise<void> {
+  const ids = [...new Set(nodeIds.filter(Boolean))];
+  if (!ids.length) return;
   await ctx.pool.query(
     `INSERT INTO neuron_activity (node_id, last_accessed_at, access_count)
-     VALUES ($1, NOW(), 1)
+     SELECT unnest($1::uuid[]), NOW(), 1
      ON CONFLICT (node_id)
      DO UPDATE SET last_accessed_at = NOW(), access_count = neuron_activity.access_count + 1`,
-    [nodeId],
+    [ids],
   );
 }
 

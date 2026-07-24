@@ -19,6 +19,8 @@ import {
   resolveContinuationInstruction,
   detectIncompleteLastTurn,
   isContinuationTrigger,
+  isCrewVoiceSessionId,
+  takeCallDividerForPersist,
   type SessionResumeState,
 } from '@agentx/shared';
 import type { SessionManager } from '../session/SessionManager.js';
@@ -238,6 +240,10 @@ export function persistAssistantMessage(ctx: PersistenceContext, msg: Message): 
     if (channel && !metadata['channel']) metadata['channel'] = channel;
     if (cfg.activeProvider && !metadata['provider']) metadata['provider'] = cfg.activeProvider;
     if (cfg.activeModel && !metadata['model']) metadata['model'] = cfg.activeModel;
+    if (isCrewVoiceSessionId(ctx.sessionId) && !metadata['callDivider']) {
+      const divider = takeCallDividerForPersist(ctx.sessionId);
+      if (divider) metadata['callDivider'] = divider;
+    }
     store.insertMessage({
       id: msg.id,
       sessionId: ctx.sessionId,
@@ -261,6 +267,10 @@ export function persistUserMessage(ctx: PersistenceContext, msg: Message): void 
     if (channel && !metadata['channel']) metadata['channel'] = channel;
     if (cfg.activeProvider && !metadata['provider']) metadata['provider'] = cfg.activeProvider;
     if (cfg.activeModel && !metadata['model']) metadata['model'] = cfg.activeModel;
+    if (isCrewVoiceSessionId(msg.sessionId) && !metadata['callDivider']) {
+      const divider = takeCallDividerForPersist(msg.sessionId);
+      if (divider) metadata['callDivider'] = divider;
+    }
     // Extract platform columns from message metadata (set by Agent.sendMessage).
     const platformMessageId = msgMeta['platformMessageId'] as number | undefined;
     const platformChatId = msgMeta['platformChatId'] as number | undefined;

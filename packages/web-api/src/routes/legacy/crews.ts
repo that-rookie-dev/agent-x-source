@@ -17,6 +17,7 @@ import {
   crewRosterPickerUpdateSchema,
   crewChatSessionSchema,
   crewChatVoiceSessionSchema,
+  crewChatVoiceDividerSchema,
 } from '../../validation.js';
 import {
   postCrewSuggestionEvaluate,
@@ -32,6 +33,7 @@ import { persistCrewRosterPickerOffer, updateCrewRosterPickerStatus } from '../.
 import {
   postCrewChatSession,
   postCrewChatVoiceSession,
+  postCrewChatVoiceSessionDivider,
   listCrewChatVoiceSessions,
   deleteCrewChatVoiceSession,
 } from '../../crew-chat.js';
@@ -213,6 +215,7 @@ export function createCrewsRouter(): Router {
   r.post('/api/crew-chat/sessions', validate(crewChatSessionSchema), postCrewChatSession);
   r.get('/api/crew-chat/voice-sessions', listCrewChatVoiceSessions);
   r.post('/api/crew-chat/voice-sessions', validate(crewChatVoiceSessionSchema), postCrewChatVoiceSession);
+  r.post('/api/crew-chat/voice-sessions/:id/dividers', validate(crewChatVoiceDividerSchema), postCrewChatVoiceSessionDivider);
   r.delete('/api/crew-chat/voice-sessions/:id', deleteCrewChatVoiceSession);
 
   r.post('/api/agent-x-core/session', postAgentXCoreSession);

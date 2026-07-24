@@ -10,7 +10,6 @@ import DialogActions from '@mui/material/DialogActions';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import StorageIcon from '@mui/icons-material/Storage';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
@@ -258,10 +257,22 @@ export function PersistenceTab() {
         icon={<StorageIcon sx={{ fontSize: 16 }} />}
         title="Storage"
         subtitle={dbStatus?.connected ? `${backendLabel(currentBackend)} · ${dbStatus.stats.dbSizeFormatted || '—'}` : 'Disconnected'}
+        action={
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<SwapHorizIcon sx={{ fontSize: 14 }} />}
+            onClick={openMigrateDialog}
+            disabled={!dbStatus?.connected || migrating}
+            sx={settingsBtnGhostSx}
+          >
+            {migrateButtonLabel}
+          </Button>
+        }
       />
 
       <SettingsCard title="Active Backend">
-        <Box sx={{ display: 'flex', gap: 1, mb: 1.5, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 1, mb: 1, flexWrap: 'wrap' }}>
           <Box sx={settingsStatusBadgeSx('active')}>{backendLabel(currentBackend)}</Box>
           <Box sx={settingsStatusBadgeSx(dbStatus?.connected ? 'active' : 'warn')}>
             {dbStatus?.connected ? 'Connected' : 'Disconnected'}
@@ -272,24 +283,18 @@ export function PersistenceTab() {
         </Typography>
       </SettingsCard>
 
-      <SettingsCard
-        title="Provisioning"
-        subtitle="Database extensions and schema health"
-      >
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -0.5 }}>
-          <Button onClick={loadProvisionStatus} disabled={statusLoading} size="small" sx={settingsBtnGhostSx}>
-            {statusLoading ? <CircularProgress size={12} /> : <RefreshIcon sx={{ fontSize: 14 }} />}
-          </Button>
-        </Box>
-
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-          <TelemetryRow label="PostgreSQL connection" status={dbStatus?.connected ? 'ok' : 'fail'} />
-          <TelemetryRow
-            label="pgvector extension"
+      <SettingsCard title="Database health" subtitle="Extensions and schema">
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
+          <HealthCard
+            label="PostgreSQL"
+            status={dbStatus?.connected ? 'ok' : 'fail'}
+          />
+          <HealthCard
+            label="pgvector"
             status={statusLoading ? 'pending' : (ps?.vectorAvailable ? 'ok' : 'fail')}
           />
-          <TelemetryRow
-            label="Schema migrations"
+          <HealthCard
+            label="Migrations"
             status={statusLoading ? 'pending' : (ps?.migrationsUpToDate ? 'ok' : (ps?.schemaVersion && ps.schemaVersion > 0 ? 'warn' : 'fail'))}
             detail={ps && !ps.migrationsUpToDate && ps.pendingMigrations > 0 ? `${ps.pendingMigrations} pending` : undefined}
           />
@@ -297,12 +302,7 @@ export function PersistenceTab() {
       </SettingsCard>
 
       <SettingsCard title="Database Stats">
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1, mt: -0.5 }}>
-          <Button size="small" startIcon={<RefreshIcon sx={{ fontSize: 14 }} />} onClick={load} sx={settingsBtnGhostSx}>
-            Refresh
-          </Button>
-        </Box>
-        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 0.75 }}>
           <StatItem label="Size" value={dbStatus?.stats.dbSizeFormatted || '—'} />
           <StatItem label="Tables" value={String(dbStatus?.stats.tableCount || 0)} />
           {dbStatus?.health && (
@@ -312,21 +312,6 @@ export function PersistenceTab() {
           <StatItem label="Sessions" value={String(dbStatus?.stats.tables?.['sessions'] ?? 0)} />
           <StatItem label="Messages" value={String(dbStatus?.stats.tables?.['messages'] ?? 0)} />
           <StatItem label="Memories" value={String(dbStatus?.stats.tables?.['crew_memories'] ?? 0)} />
-        </Box>
-
-        <Box sx={{ mt: 1.5 }}>
-          <Button
-            variant="outlined"
-            startIcon={<SwapHorizIcon sx={{ fontSize: 14 }} />}
-            onClick={openMigrateDialog}
-            disabled={!dbStatus?.connected || migrating}
-            sx={settingsBtnGhostSx}
-          >
-            {migrateButtonLabel}
-          </Button>
-          <Typography sx={{ ...settingsHelperSx, mt: 1, color: settingsTheme.text.dim }}>
-            Copies all domain data to the other backend with schema updates and upsert. Existing rows on the destination are merged, not replaced.
-          </Typography>
         </Box>
       </SettingsCard>
 
@@ -348,7 +333,7 @@ export function PersistenceTab() {
         </Box>
 
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Button variant="outlined" startIcon={<CleaningServicesIcon />} onClick={handleClearCache} disabled={clearingCache} sx={settingsBtnGhostSx}>
+          <Button size="small" variant="outlined" startIcon={<CleaningServicesIcon sx={{ fontSize: 14 }} />} onClick={handleClearCache} disabled={clearingCache} sx={settingsBtnGhostSx}>
             {clearingCache ? <CircularProgress size={14} /> : 'Clear Logs & Cache'}
           </Button>
           {cacheResult && (
@@ -361,8 +346,8 @@ export function PersistenceTab() {
         <Typography sx={{ ...settingsHelperSx, mb: 1.5 }}>
           Clears domain data — sessions, messages, memories, crews, plugins. Credentials and provider config remain intact.
         </Typography>
-        <Button variant="outlined" startIcon={<RestartAltIcon />} onClick={handleSoftReset} disabled={clearing}
-          sx={{ ...settingsBtnGhostSx, borderColor: `${alphaColor(settingsTheme.accent.amber, '55')}`, color: settingsTheme.accent.amber }}>
+        <Button size="small" variant="outlined" startIcon={<RestartAltIcon sx={{ fontSize: 14 }} />} onClick={handleSoftReset} disabled={clearing}
+          sx={{ ...settingsBtnGhostSx, border: `1px solid ${alphaColor(settingsTheme.accent.amber, '55')}`, borderColor: `${alphaColor(settingsTheme.accent.amber, '55')}`, color: settingsTheme.accent.amber }}>
           {clearing ? 'Clearing…' : 'Soft Reset'}
         </Button>
       </SettingsCard>
@@ -469,12 +454,14 @@ export function PersistenceTab() {
         </DialogContent>
         <DialogActions sx={{ px: 2.5, pb: 2, flexWrap: 'wrap', gap: 1 }}>
           {!migrateComplete && (
-            <Button onClick={() => setMigrateOpen(false)} disabled={migrating} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>
+            <Button size="small" variant="outlined" onClick={() => setMigrateOpen(false)} disabled={migrating} sx={settingsBtnGhostSx}>
               Cancel
             </Button>
           )}
           {!migrateComplete && !migrating && (
             <Button
+              size="small"
+              variant="outlined"
               onClick={handleStorageTransfer}
               disabled={targetBackend === 'postgres' && !migrateTestOk}
               sx={settingsBtnGhostSx}
@@ -499,7 +486,7 @@ export function PersistenceTab() {
             </Button>
           )}
           {migrateComplete && (
-            <Button onClick={() => { setMigrateOpen(false); resetMigrateDialog(); }} sx={settingsBtnGhostSx}>
+            <Button size="small" variant="outlined" onClick={() => { setMigrateOpen(false); resetMigrateDialog(); }} sx={settingsBtnGhostSx}>
               Close
             </Button>
           )}
@@ -516,8 +503,8 @@ export function PersistenceTab() {
             placeholder="DELETE" sx={settingsTextFieldSx} />
         </DialogContent>
         <DialogActions sx={{ px: 2.5, pb: 2 }}>
-          <Button onClick={() => setClearOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>Cancel</Button>
-          <Button onClick={handleClear} disabled={clearConfirm !== 'DELETE' || clearing} sx={settingsBtnDangerSx}>
+          <Button size="small" variant="outlined" onClick={() => setClearOpen(false)} sx={settingsBtnGhostSx}>Cancel</Button>
+          <Button size="small" variant="outlined" onClick={handleClear} disabled={clearConfirm !== 'DELETE' || clearing} sx={settingsBtnDangerSx}>
             {clearing ? 'Clearing…' : 'Clear'}
           </Button>
         </DialogActions>
@@ -534,8 +521,8 @@ export function PersistenceTab() {
             placeholder="RESET" sx={settingsTextFieldSx} />
         </DialogContent>
         <DialogActions sx={{ px: 2.5, pb: 2 }}>
-          <Button onClick={() => setResetOpen(false)} sx={{ ...settingsMonoSx, fontSize: '0.65rem', color: settingsTheme.text.dim }}>Cancel</Button>
-          <Button onClick={handleFactoryReset} disabled={resetConfirm !== 'RESET' || resetting} sx={settingsBtnDangerSx}>
+          <Button size="small" variant="outlined" onClick={() => setResetOpen(false)} sx={settingsBtnGhostSx}>Cancel</Button>
+          <Button size="small" variant="outlined" onClick={handleFactoryReset} disabled={resetConfirm !== 'RESET' || resetting} sx={settingsBtnDangerSx}>
             {resetting ? 'Resetting…' : 'Reset Everything'}
           </Button>
         </DialogActions>
@@ -544,19 +531,19 @@ export function PersistenceTab() {
   );
 }
 
-function TelemetryRow({ label, status, detail }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending'; detail?: string }) {
-  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 14, color: settingsTheme.accent.signal }} />
-    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 14, color: settingsTheme.accent.amber }} />
-    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 14, color: settingsTheme.accent.alert }} />
-    : <HelpIcon sx={{ fontSize: 14, color: settingsTheme.text.dim }} />;
-  const text = status === 'ok' ? 'OK' : status === 'warn' ? (detail ? `Warning · ${detail}` : 'Warning') : status === 'fail' ? 'Failed' : 'Checking';
+function HealthCard({ label, status, detail }: { label: string; status: 'ok' | 'warn' | 'fail' | 'pending'; detail?: string }) {
+  const icon = status === 'ok' ? <CheckCircleIcon sx={{ fontSize: 13, color: settingsTheme.accent.signal }} />
+    : status === 'warn' ? <WarningAmberIcon sx={{ fontSize: 13, color: settingsTheme.accent.amber }} />
+    : status === 'fail' ? <ErrorIcon sx={{ fontSize: 13, color: settingsTheme.accent.alert }} />
+    : <HelpIcon sx={{ fontSize: 13, color: settingsTheme.text.dim }} />;
+  const text = status === 'ok' ? 'OK' : status === 'warn' ? (detail ?? 'Warn') : status === 'fail' ? 'Failed' : '…';
   const color = status === 'ok' ? settingsTheme.accent.signal : status === 'warn' ? settingsTheme.accent.amber : status === 'fail' ? settingsTheme.accent.alert : settingsTheme.text.dim;
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5, borderBottom: `1px solid ${settingsTheme.border.subtle}` }}>
-      <Typography sx={{ fontSize: '0.62rem', color: settingsTheme.text.secondary, ...settingsMonoSx }}>{label}</Typography>
+    <Box sx={{ p: 1, borderRadius: '4px', bgcolor: settingsTheme.bg.hud, border: `1px solid ${settingsTheme.border.subtle}`, minHeight: 56 }}>
+      <Typography sx={{ fontSize: '0.5rem', color: settingsTheme.text.dim, mb: 0.5, ...settingsMonoSx, textTransform: 'uppercase', letterSpacing: '0.8px' }}>{label}</Typography>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
         {icon}
-        <Typography sx={{ fontSize: '0.58rem', color, fontWeight: 600, ...settingsMonoSx }}>{text}</Typography>
+        <Typography sx={{ fontSize: '0.62rem', color, fontWeight: 700, ...settingsMonoSx }}>{text}</Typography>
       </Box>
     </Box>
   );
@@ -564,9 +551,9 @@ function TelemetryRow({ label, status, detail }: { label: string; status: 'ok' |
 
 function StatItem({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <Box sx={{ p: 1.25, borderRadius: '4px', bgcolor: settingsTheme.bg.hud, border: `1px solid ${settingsTheme.border.subtle}` }}>
-      <Typography sx={{ fontSize: '0.52rem', color: settingsTheme.text.dim, mb: 0.4, ...settingsMonoSx, textTransform: 'uppercase', letterSpacing: '1px' }}>{label}</Typography>
-      <Typography sx={{ fontSize: '0.72rem', color: color || settingsTheme.text.primary, fontWeight: 700, ...settingsMonoSx }}>{value}</Typography>
+    <Box sx={{ p: 1, borderRadius: '4px', bgcolor: settingsTheme.bg.hud, border: `1px solid ${settingsTheme.border.subtle}` }}>
+      <Typography sx={{ fontSize: '0.5rem', color: settingsTheme.text.dim, mb: 0.35, ...settingsMonoSx, textTransform: 'uppercase', letterSpacing: '0.8px' }}>{label}</Typography>
+      <Typography sx={{ fontSize: '0.68rem', color: color || settingsTheme.text.primary, fontWeight: 700, ...settingsMonoSx }}>{value}</Typography>
     </Box>
   );
 }

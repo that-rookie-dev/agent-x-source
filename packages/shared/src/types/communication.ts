@@ -21,7 +21,7 @@ export interface InternalUserTurn {
 
 export interface TurnAttachment {
   id: string;
-  type: 'file' | 'image' | 'url';
+  type: 'file' | 'image' | 'url' | 'folder';
   name: string;
   mimeType?: string;
   data?: string;
@@ -53,7 +53,7 @@ export interface NormalizedTurn {
 
 export interface NormalizedAttachment {
   id: string;
-  type: 'file' | 'image' | 'url';
+  type: 'file' | 'image' | 'url' | 'folder';
   name: string;
   mimeType: string;
   /** Server-side attachment id; used to fetch content on demand. */

@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { readdir, stat, rm } from 'node:fs/promises';
 import { getLogger, getDataDir, getConfigDir, getCacheDir } from '@agentx/shared';
 import type { AgentXConfig, PermissionRule } from '@agentx/shared';
-import { getEngine, clearEngineDurable, setStorageProgressCallback, applyRuntimeSettings } from '../../engine.js';
+import { getEngine, clearEngineDurable, setStorageProgressCallback, applyPerformanceSettings } from '../../engine.js';
 import {
   validateWebSearchProvider,
   isWebSearchAvailableForChat,
@@ -355,7 +355,7 @@ export function createSettingsRouter(): Router {
       const merged: AgentXConfig = { ...current, permissions: validatedPermissions };
       eng.configManager.save(merged);
       eng.configManager.reload();
-      applyRuntimeSettings(merged);
+      applyPerformanceSettings(merged);
       const executor = eng.toolkit?.executor;
       if (executor && typeof (executor as { setUserConfigRules?: (rules: PermissionRule[]) => void }).setUserConfigRules === 'function') {
         (executor as { setUserConfigRules: (rules: PermissionRule[]) => void }).setUserConfigRules(permissionsToRules(validatedPermissions));
@@ -387,11 +387,22 @@ export function createSettingsRouter(): Router {
         res.status(400).json({ ok: false, error: 'provider must be brave, exa, or tavily' });
         return;
       }
-      let apiKey = String(req.body?.apiKey ?? '').trim();
-      if (!apiKey || apiKey === REDACTED_SECRET) {
+      // Prefer an explicitly provided new key; otherwise always use the server-stored secret.
+      // Never accept legacy redacted placeholders (bullets) as a key.
+      const bodyKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+      const looksPlaceholder = !bodyKey
+        || bodyKey === REDACTED_SECRET
+        || bodyKey.includes('•')
+        || bodyKey === '***'
+        || bodyKey === '********';
+      let apiKey = '';
+      if (!looksPlaceholder) {
+        apiKey = bodyKey;
+      } else {
         try {
           const cfg = getEngine().configManager.load();
-          apiKey = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+          const stored = cfg.tools?.webSearch?.[provider]?.apiKey?.trim() ?? '';
+          apiKey = stored.includes('•') ? '' : stored;
         } catch {
           apiKey = '';
         }

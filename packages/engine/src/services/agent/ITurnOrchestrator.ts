@@ -70,7 +70,6 @@ export interface TurnOrchestratorHost {
   readonly clientSituation: ClientSituation | null;
   readonly lastRagResults: Array<{ content: string; score?: number; metadata?: Record<string, unknown> }>;
   readonly turnWebSearchPolicy: WebSearchTurnPolicy;
-  readonly forcedWebSearchToolName: 'deep_web_search' | 'web_search' | null;
   readonly missionContextProvider: (() => { revision: number; block: string }) | undefined;
 
   // ── Services / components ─────────────────────────────────────────────

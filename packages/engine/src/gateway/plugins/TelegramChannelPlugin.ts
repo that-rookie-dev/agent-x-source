@@ -442,7 +442,7 @@ export class TelegramChannelPlugin implements ChannelPlugin {
 
       const toolId = this.permToolIds.get(permId);
       this.permToolIds.delete(permId);
-      if (this.agent && toolId && choice !== 'allow_once') {
+      if (this.agent && toolId) {
         this.agent.recordToolPermissionDecision(toolId, choice);
       }
       const label = choice === 'allow_once' ? '✅ Allowed (once)' : choice === 'allow_always' ? '✅ Always allowed' : '❌ Denied';

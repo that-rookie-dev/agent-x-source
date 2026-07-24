@@ -13,6 +13,9 @@ vi.mock('../src/engine.js', () => ({
   getAutonomyStatus: vi.fn().mockReturnValue({}),
   awaitEngineStorageReady: vi.fn().mockResolvedValue(undefined),
   applyRuntimeSettings: vi.fn(),
+  applyPerformanceSettings: vi.fn(),
+  applyPerformanceGovernor: vi.fn(),
+  getBackgroundTaskPool: vi.fn().mockReturnValue({ running: 0, pending: 0 }),
   isStorageDeferred: vi.fn().mockReturnValue(false),
   setStorageProgressCallback: vi.fn(),
 }));
@@ -37,6 +40,7 @@ vi.mock('../src/config-redaction.js', () => ({
   redactConfigForClient: vi.fn((cfg: unknown) => cfg),
   mergeConfigPreservingSecrets: vi.fn((a: unknown, b: unknown) => b),
   redactProvidersForClient: vi.fn((p: unknown) => p),
+  scrubPersistedSecretPlaceholders: vi.fn(() => null),
   REDACTED_SECRET: '***',
 }));
 
@@ -101,6 +105,7 @@ vi.mock('../src/validation.js', () => ({
   crewSuggestionResolveSchema: {},
   crewChatSessionSchema: {},
   crewChatVoiceSessionSchema: {},
+  crewChatVoiceDividerSchema: {},
   turnFeedbackSchema: {},
   clarificationRespondSchema: {},
   crewRosterPickerOfferSchema: {},
@@ -138,6 +143,7 @@ vi.mock('../src/crew-chat.js', () => ({
   postCrewChatSession: vi.fn(),
   postCrewChatVoiceSession: vi.fn(),
   listCrewChatVoiceSessions: vi.fn(),
+  postCrewChatVoiceSessionDivider: vi.fn(),
   deleteCrewChatVoiceSession: vi.fn(),
 }));
 
@@ -299,18 +305,19 @@ describe('legacy routes', () => {
     });
   });
 
-  describe('GET /api/runtime/status', () => {
-    it('returns 200 with runtime status', async () => {
+  describe('GET /api/performance/status', () => {
+    it('returns 200 with performance status', async () => {
       (getEngine as any).mockReturnValue({
-        configManager: { load: () => ({ runtime: {} }) },
+        configManager: { load: () => ({ performance: {} }) },
       });
 
-      const res = await fetch(`${baseUrl}/api/runtime/status`);
+      const res = await fetch(`${baseUrl}/api/performance/status`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body).toHaveProperty('cpuCores');
       expect(body).toHaveProperty('backgroundPool');
-      expect(body).toHaveProperty('restartRequired');
+      expect(body).toHaveProperty('showcase');
+      expect(body).toHaveProperty('liveConcurrency');
     });
 
     it('returns 200 with defaults when config load fails', async () => {
@@ -318,7 +325,7 @@ describe('legacy routes', () => {
         configManager: { load: () => { throw new Error('fail'); } },
       });
 
-      const res = await fetch(`${baseUrl}/api/runtime/status`);
+      const res = await fetch(`${baseUrl}/api/performance/status`);
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.cpuCores).toBeGreaterThan(0);

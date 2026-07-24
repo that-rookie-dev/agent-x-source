@@ -25,9 +25,18 @@ export interface AgentPersonaConfig {
 /** Paid web search providers — BYOK only; DuckDuckGo is the free default. */
 export type WebSearchPaidProviderId = 'brave' | 'exa' | 'tavily';
 
+/** All web search providers the agent can try (free + BYOK). */
+export type WebSearchProviderId = 'duckduckgo' | WebSearchPaidProviderId;
+
 export interface WebSearchPaidProviderConfig {
   enabled: boolean;
+  /** Present only when the client is saving a new key (never returned from the API). */
   apiKey?: string;
+  /**
+   * Server → client: whether a key is stored (actual secret is never sent).
+   * Client → server: set `false` to clear the stored key on save.
+   */
+  apiKeyConfigured?: boolean;
 }
 
 export interface WebSearchToolsConfig {
@@ -36,26 +45,43 @@ export interface WebSearchToolsConfig {
   brave?: WebSearchPaidProviderConfig;
   exa?: WebSearchPaidProviderConfig;
   tavily?: WebSearchPaidProviderConfig;
+  /**
+   * Try-order for active providers. The agent uses the first ready tool;
+   * if it returns no/insufficient hits, it falls through to the next.
+   * Inactive / unconfigured providers are skipped at runtime.
+   */
+  providerOrder?: WebSearchProviderId[];
 }
 
 export interface ToolsConfig {
   webSearch?: WebSearchToolsConfig;
 }
 
-import type { RuntimeSettings } from '../runtime-settings.js';
+import type { PerformanceSettings } from '../performance-settings.js';
 
-export type { RuntimeSettings } from '../runtime-settings.js';
+export type { PerformanceSettings } from '../performance-settings.js';
+/** @deprecated Use PerformanceSettings */
+export type { PerformanceSettings as RuntimeSettings } from '../performance-settings.js';
 
 export interface AgentXConfig extends Record<string, unknown> {
   provider: ProviderSettings;
   ui: UISettings;
   organization: OrganizationConfig | null;
   telemetry: boolean;
-  /** CPU, caching, and background worker tuning. Changes require restart. */
-  runtime?: RuntimeSettings;
+  /**
+   * Soft concurrency / resource profile (Settings → Performance).
+   * Maps host CPU+RAM into LLM, tool, crew, background, and ONNX lanes.
+   * Concurrency retunes live on save; ONNX threads / storage hydrate apply after restart.
+   */
+  performance?: PerformanceSettings;
   timezone?: string; // IANA timezone (e.g. 'Asia/Kolkata'). Auto-detected if not set.
   user?: UserConfig;
   setupComplete?: boolean; // true after Mission Control wizard finishes
+  /**
+   * Global Agent-X Workspace root. All chat sessions / tools are sandboxed here.
+   * When unset, defaults to `{dataDir}/workspace` (no user permission required).
+   */
+  workspacePath?: string;
   rag?: RAGConfig;
   tools?: ToolsConfig;
   /** Outbound notification channels (Telegram, Slack, Email, Discord). */

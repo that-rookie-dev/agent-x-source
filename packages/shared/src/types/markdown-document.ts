@@ -14,6 +14,10 @@ export interface MarkdownDocumentRecord {
   sourceRole?: 'user' | 'assistant' | 'system' | null;
   createdAt: string;
   updatedAt: string;
+  /** Persisted list-section day key (`YYYY-MM-DD`), set at create — not recomputed in UI. */
+  listDayKey?: string | null;
+  /** Persisted absolute day label for list dividers. */
+  listDayLabel?: string | null;
 }
 
 export interface CreateMarkdownDocumentInput {

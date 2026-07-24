@@ -395,23 +395,27 @@ export function createAiSdkStreamHandler(
       }
 
       case 'reasoning-start': break;
-      case 'reasoning-end': break;
 
-       case 'reasoning-delta': {
-         const delta = event.text || '';
-         state.accumulatedReasoning += delta;
-         persist({ type: 'reasoning-delta', content: delta, timestamp: Date.now() });
-         emit({ type: 'reasoning_delta', content: delta });
-         
-         // ─── Enhanced: Also emit as thinking event for UI ───
-         emit({
-           type: 'agent_thinking',
-           content: delta,
-           fullThought: state.accumulatedReasoning,
-           agent: 'primary',
-         });
-         break;
-       }
+      case 'reasoning-end': {
+        emit({ type: 'reasoning_end' });
+        break;
+      }
+
+      case 'reasoning-delta': {
+        // AI SDK fullStream uses `text`; provider protocol uses `delta`.
+        const delta = extractStreamTextDelta(event as Record<string, unknown>);
+        if (!delta) break;
+        state.accumulatedReasoning = appendStreamText(state.accumulatedReasoning, delta);
+        persist({ type: 'reasoning-delta', content: delta, timestamp: Date.now() });
+        emit({ type: 'reasoning_delta', content: delta });
+        emit({
+          type: 'agent_thinking',
+          content: delta,
+          fullThought: state.accumulatedReasoning,
+          agent: 'primary',
+        });
+        break;
+      }
 
       case 'tool-input-start':
       case 'tool-input-delta':

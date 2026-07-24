@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -24,9 +24,11 @@ function permissionState(state: string): { label: string; badge: 'active' | 'idl
 
 interface VoiceMicTestPanelProps {
   compact?: boolean;
+  /** Optional control rendered on the same row as Test microphone (e.g. Test Voice). */
+  leading?: ReactNode;
 }
 
-export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
+export function VoiceMicTestPanel({ compact = false, leading }: VoiceMicTestPanelProps) {
   const mic = useMicrophonePermission();
   const [prepromptOpen, setPrepromptOpen] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -96,10 +98,12 @@ export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: compact ? 1 : 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: compact ? 0.75 : 1.5 }}>
+        {leading}
         <Box sx={settingsStatusBadgeSx(perm.badge)}>{perm.label}</Box>
         <Button
           size="small"
+          variant="outlined"
           onClick={() => { void handleTestMic(); }}
           disabled={testing || (mic.blocked && mic.state === 'denied')}
           sx={settingsBtnGhostSx}
@@ -107,7 +111,7 @@ export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
           {testing ? 'Listening…' : 'Test microphone'}
         </Button>
         {testing && (
-          <Button size="small" onClick={stopTest} sx={settingsBtnGhostSx}>Stop</Button>
+          <Button size="small" variant="outlined" onClick={stopTest} sx={settingsBtnGhostSx}>Stop</Button>
         )}
       </Box>
 
@@ -138,7 +142,7 @@ export function VoiceMicTestPanel({ compact = false }: VoiceMicTestPanelProps) {
               <Typography key={line} component="li" sx={settingsHelperSx}>{line}</Typography>
             ))}
           </Box>
-          <Button size="small" sx={{ ...settingsBtnGhostSx, mt: 1 }} onClick={() => { void mic.openSettings(); }}>
+          <Button size="small" variant="outlined" sx={{ ...settingsBtnGhostSx, mt: 1 }} onClick={() => { void mic.openSettings(); }}>
             Open system settings
           </Button>
         </Alert>

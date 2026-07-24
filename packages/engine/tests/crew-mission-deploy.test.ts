@@ -6,7 +6,9 @@ import {
   ensureHubCrewOnRoster,
   ensureCrewMembersOnRoster,
   recruitCandidatesForMission,
+  resolveMentionedCrewMembers,
 } from '../src/crew/crew-mission-deploy.js';
+import { parseCrewMentionKeys } from '../src/agent/crew-mission-helpers.js';
 
 function mockCrew(overrides: Partial<Crew> & Pick<Crew, 'id' | 'name' | 'callsign' | 'systemPrompt'>): Crew {
   return {
@@ -23,6 +25,7 @@ function createMockCrewManager(initial: Crew[] = []): CrewManager {
   return {
     get: (id: string) => crews.get(id),
     list: () => [...crews.values()],
+    isIntentionallyDeleted: () => false,
     create: (input: CrewCreateInput) => {
       const crew = mockCrew({
         id: input.id ?? `crew-${crews.size}`,
@@ -161,5 +164,55 @@ describe('crew-mission-deploy roster recruit', () => {
 
     expect(deployed).toEqual(['hub-nova_ops']);
     expect(crewManager.list()).toHaveLength(1);
+  });
+
+  it('parseCrewMentionKeys reads composer @crew chips', () => {
+    expect(parseCrewMentionKeys(
+      'Hi @crew[efe_popov_0lmv8l:Efe%20Popov], analyse @file[tax.pdf]?',
+    )).toEqual(['efe_popov_0lmv8l']);
+  });
+
+  it('resolveMentionedCrewMembers recruits Hub catalog specialists not on session roster', async () => {
+    const crewManager = createMockCrewManager();
+    const sessionMembers: Array<{ crew: Crew; expertise: string[]; active: boolean }> = [];
+    const agent = {
+      getCrewMembers: () => sessionMembers,
+      addCrewMember: vi.fn((crew: Crew) => {
+        sessionMembers.push({ crew, expertise: crew.expertise ?? [], active: true });
+      }),
+      setCrewEnabled: vi.fn(),
+    };
+
+    const { members, unresolved } = await resolveMentionedCrewMembers(
+      crewManager,
+      agent as never,
+      catalogStore,
+      'Hi @crew[nova_ops:Nova], please help',
+    );
+
+    expect(unresolved).toEqual([]);
+    expect(members).toHaveLength(1);
+    expect(members[0]!.crew.callsign).toBe('nova_ops');
+    expect(agent.addCrewMember).toHaveBeenCalled();
+    expect(agent.setCrewEnabled).toHaveBeenCalledWith('hub-nova_ops', true);
+  });
+
+  it('resolveMentionedCrewMembers reports unresolved unknown callsigns', async () => {
+    const crewManager = createMockCrewManager();
+    const agent = {
+      getCrewMembers: () => [],
+      addCrewMember: vi.fn(),
+      setCrewEnabled: vi.fn(),
+    };
+
+    const { members, unresolved } = await resolveMentionedCrewMembers(
+      crewManager,
+      agent as never,
+      catalogStore,
+      '@crew[missing_specialist:Missing]',
+    );
+
+    expect(members).toEqual([]);
+    expect(unresolved).toEqual(['missing_specialist']);
   });
 });

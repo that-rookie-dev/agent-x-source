@@ -24,6 +24,7 @@ import {
 } from './ChatSessionProvider';
 import { useCrewCallOptional, crewCallTargetFromPrivateHost } from '../crew-call';
 import { getCrewAccent } from '../../styles/crew-theme';
+import { usePersonaName } from '../../hooks/usePersonaName';
 
 export interface ChatHeaderProps {
   panelHeaderRowSx: SxProps;
@@ -48,6 +49,7 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
   } = useChatSessionSettersContext();
   // Navigation handlers.
   const { handleShowSessions } = useChatNavigationHandlersContext();
+  const personaName = usePersonaName();
 
   const handleCrewCall = () => {
     if (!crewCall || !currentSessionId || !crewPrivateHost) return;
@@ -89,7 +91,9 @@ export const ChatHeader = React.memo(function ChatHeader({ panelHeaderRowSx }: C
         />
       )}
       <Typography sx={{ fontSize: '0.7rem', color: colors.text.secondary, fontFamily: "'JetBrains Mono', monospace", flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {currentSessionTitle ?? 'New Session'}
+        {coreSession
+          ? personaName
+          : (currentSessionTitle ?? 'New Session')}
       </Typography>
       <ConnectionHealthDot state={connState} lastEventAt={lastEventAt} />
       {isCrewPrivateSession && crewPrivateHost && crewCall && (

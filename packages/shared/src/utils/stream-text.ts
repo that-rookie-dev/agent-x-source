@@ -40,22 +40,46 @@ export function extractStreamTextDelta(event: Record<string, unknown>): string {
 
 /**
  * Repair common stream concatenation glitches for display/restore.
- * - Leading token doubled without space (TheThe, NowNow)
- * - Trailing clause duplicated when prefixLen/stream state desyncs
+ * - Whole-token glued doubles (TheThe, HTTPHTTP) — never mid-word pairs like nn in running
+ * - Spaced token doubles from duplex persist (means means, is is)
+ * - Extension doubles (.js.js)
+ * - Trailing clause duplicated when stream state desyncs
  */
 export function repairStreamTextGlitches(text: string): string {
   if (!text || text.length < 4) return text;
 
   let out = text;
 
-  // TheThe / NowNow — same token repeated at the start with no space
-  out = out.replace(/^([A-Za-z]{1,30})\1(?=\s|[a-z])/g, '$1');
+  // Exact whole-word glued doubles: HTTPHTTP, TheThe, NowNow (min length 2)
+  for (let i = 0; i < 6; i++) {
+    const next = out.replace(/\b([A-Za-z]{2,24})\1\b/g, '$1');
+    if (next === out) break;
+    out = next;
+  }
 
-  // Trailing duplicate clause (same substring appears earlier, non-overlapping)
-  const minClause = 24;
+  // Numeric glued doubles: 500500
+  out = out.replace(/\b(\d{1,12})\1\b/g, '$1');
+
+  // Extension doubles: .js.js / .tsx.tsx
+  out = out.replace(/(\.[A-Za-z][A-Za-z0-9]{0,7})\1\b/g, '$1');
+
+  // Spaced token doubles from duplex deltas: "means means", "is is", "Next Next"
+  for (let i = 0; i < 8; i++) {
+    const next = out.replace(/\b([A-Za-z0-9][A-Za-z0-9._-]{0,40})\s+\1\b/g, '$1');
+    if (next === out) break;
+    out = next;
+  }
+
+  // Collapse runs of spaces left by removed duplicate tokens
+  out = out.replace(/[^\S\n]{2,}/g, ' ');
+
+  // Trailing duplicate clause (same substring appears earlier, non-overlapping).
+  // Only trim when the duplicate is a substantial clause — avoid cutting normal endings.
+  const minClause = 40;
   const maxScan = Math.floor(out.length / 2);
   for (let len = maxScan; len >= minClause; len--) {
     const tail = out.slice(-len);
+    if (!/^[\sA-Za-z"'`]/.test(tail)) continue;
     const firstIdx = out.indexOf(tail);
     if (firstIdx > 0 && firstIdx + len <= out.length - len) {
       let trimAt = out.length - len;

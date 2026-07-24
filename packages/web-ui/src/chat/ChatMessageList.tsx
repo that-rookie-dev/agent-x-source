@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, type MouseEvent } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ReplayIcon from '@mui/icons-material/Replay';
@@ -7,6 +7,7 @@ import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { ChatMessageTurn } from './ChatMessageTurn';
 import { AgentTurnLoader } from './AgentTurnLoader';
 import { ChatUserMessage } from './ChatUserMessage';
+import { handleExternalAnchorClick } from '../utils/open-external-url';
 
 interface ChatMessageListProps {
   items: VisibleMessageItem[];
@@ -18,6 +19,7 @@ interface ChatMessageListProps {
   onCrewRosterPickerSubmit?: (messageId: string, selected: CrewMatchCandidate[]) => void;
   onCrewRosterPickerSkip?: (messageId: string, dismissForSession?: boolean) => void;
   onViewCrewDossier?: (candidate: CrewMatchCandidate) => void;
+  onViewCrewByCallsign?: (callsign: string, name?: string) => void;
   pendingFeedbackMessageId?: string | null;
   onTurnFeedback?: (messageId: string, rating: import('@agentx/shared/browser').TurnFeedbackRating) => void;
   onSaveMarkdown?: (message: UIMessage) => void;
@@ -30,7 +32,7 @@ interface ChatMessageListProps {
 }
 
 /** Virtual-ish message list — content-visibility keeps long sessions smooth. */
-export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting, turnStreaming, turnActivityLabel, freezeLayout }: ChatMessageListProps) {
+export const ChatMessageList = memo(function ChatMessageList({ items, loadingSteps, onResend, bottomRef, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, onViewCrewByCallsign, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting, turnStreaming, turnActivityLabel, freezeLayout }: ChatMessageListProps) {
   const renderMessage = useCallback((msg: UIMessage, idx: number) => {
     const isLast = idx === items.length - 1;
     const hasText = !!(msg.content?.trim() || msg.parts?.some((p) => p.type === 'text' && p.content?.trim()));
@@ -39,7 +41,7 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
     const showLoading = isLast && msg.streaming && !hasText && !hasQuestionnaire && !hasCrewPicker;
 
     if (msg.role === 'user') {
-      return <ChatUserMessage message={msg} />;
+      return <ChatUserMessage message={msg} onCrewClick={onViewCrewByCallsign} />;
     }
     return (
       <ChatMessageTurn
@@ -56,10 +58,14 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
         feedbackSubmitting={feedbackSubmitting}
       />
     );
-  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting]);
+  }, [items.length, loadingSteps, onOpenChildSession, onQuestionnaireRespond, onCrewRosterPickerSubmit, onCrewRosterPickerSkip, onViewCrewDossier, onViewCrewByCallsign, pendingFeedbackMessageId, onTurnFeedback, onSaveMarkdown, feedbackSubmitting]);
+
+  const onLinkClickCapture = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    handleExternalAnchorClick(event);
+  }, []);
 
   return (
-    <>
+    <Box onClickCapture={onLinkClickCapture}>
       {items.map(({ msg, isLastUser }, idx) => {
         const keepVisible = freezeLayout || idx >= items.length - 2;
         return (
@@ -86,6 +92,6 @@ export const ChatMessageList = memo(function ChatMessageList({ items, loadingSte
       })}
       {turnStreaming ? <AgentTurnLoader label={turnActivityLabel} /> : null}
       <div ref={bottomRef as React.RefObject<HTMLDivElement>} />
-    </>
+    </Box>
   );
 });

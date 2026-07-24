@@ -30,6 +30,13 @@ describe('repairStreamTextGlitches', () => {
     expect(repairStreamTextGlitches('NowNow try running')).toBe('Now try running');
   });
 
+  it('fixes glued and spaced duplex tokens from reasoning persist bug', () => {
+    expect(repairStreamTextGlitches('HTTPHTTP  500500 means means Next Next.js.js')).toBe(
+      'HTTP 500 means Next.js',
+    );
+    expect(repairStreamTextGlitches('pnpm is is available available')).toBe('pnpm is available');
+  });
+
   it('removes trailing duplicate clause', () => {
     const bad =
       'The problem is that the imports are relative: problem is that the imports are relative';

@@ -10,6 +10,21 @@ describe('TurnJourney', () => {
     });
     expect(result.journeyBlock).toBe('');
     expect(result.ragResults).toEqual([]);
+    expect(result.mentionedKb).toEqual([]);
+  });
+
+  it('forbids disk fallback when @kb is mentioned', async () => {
+    const result = await runTurnJourney({
+      userText: 'Summarize @kb[src-tax:CG_TaxForecast_2026.pdf] for Q1',
+      skip: false,
+      availableToolIds: ['knowledge_base_search', 'web_search', 'shell_exec', 'file_read'],
+    });
+    expect(result.mentionedKb).toEqual([
+      { sourceId: 'src-tax', name: 'CG_TaxForecast_2026.pdf' },
+    ]);
+    expect(result.journeyBlock).toContain('FORBIDDEN for @kb docs');
+    expect(result.journeyBlock).toContain('sourceId=src-tax');
+    expect(result.journeyBlock).toContain('Never open the original file from disk');
   });
 
   it('builds a staged brief with tools inventory', async () => {

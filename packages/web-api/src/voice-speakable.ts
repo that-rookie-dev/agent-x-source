@@ -142,6 +142,14 @@ export function isCrewCallEventText(text: string): boolean {
   return /^\[call_event:(open|resume)\]$/i.test(text.trim());
 }
 
+/** Non-spoken transcript markers (kickoff events + persisted call dividers). */
+export function isCallTranscriptMarkerText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (isCrewCallEventText(trimmed)) return true;
+  return /^\[call_divider:(daytime|time|duration)\]/i.test(trimmed);
+}
+
 /** True when a voice/text session already has real turns (not just call_event markers). */
 export function crewCallSessionHasSpokenHistory(
   messages: Array<{ role?: string; content?: unknown }>,
@@ -150,7 +158,7 @@ export function crewCallSessionHasSpokenHistory(
     if (msg.role !== 'user' && msg.role !== 'assistant') continue;
     const text = typeof msg.content === 'string' ? msg.content.trim() : '';
     if (!text) continue;
-    if (isCrewCallEventText(text)) continue;
+    if (isCallTranscriptMarkerText(text)) continue;
     return true;
   }
   return false;

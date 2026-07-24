@@ -1,6 +1,12 @@
 import type { EmbeddingProvider, KnowledgeSearchResult } from '@agentx/shared';
 import type { MemoryFabric, MemoryNode } from '../neural/MemoryFabric.js';
 import type { KnowledgeBaseSourceStore } from './KnowledgeBaseSourceStore.js';
+import {
+  getRetrievalSettings,
+  applyScoreGate,
+  heuristicRerank,
+  expandEvidenceNeighborhood,
+} from '../neural/retrieval/index.js';
 
 function looksLikeIndexOrToc(content: string): boolean {
   const text = content.trim();
@@ -49,15 +55,55 @@ export async function searchKnowledgeBaseDocuments(
   topK = 5,
   sourceId?: string,
 ): Promise<KnowledgeSearchResult[]> {
+  const settings = getRetrievalSettings();
   const embedding = await embedder.embed(query);
-  const vectorHits = await fabric.vectorSearch(embedding, {
-    limit: Math.max(topK * 4, 20),
-    category: 'source_doc',
-  });
+  const overFetch = Math.max(topK * 4, settings.vectorOverFetch);
+  // Scope at the SQL layer when @kb pins a source — never rely on global top-K
+  // then post-filter (small/new docs used to vanish entirely).
+  const searchOpts = {
+    limit: overFetch,
+    category: 'source_doc' as const,
+    ...(sourceId ? { sourceId } : {}),
+  };
+  const vectorHits = settings.hybridEnabled
+    ? await fabric.hybridSearch(embedding, query, {
+        ...searchOpts,
+        vectorLimit: overFetch,
+        lexicalLimit: overFetch,
+      })
+    : await fabric.vectorSearch(embedding, searchOpts);
 
   let filtered = vectorHits.filter((n) => n.unitType === 'chunk' || !n.unitType);
   if (sourceId) {
     filtered = filtered.filter((n) => n.sourceId === sourceId);
+  }
+  filtered = applyScoreGate(filtered, {
+    minScore: settings.minScoreKb,
+    maxPerSource: sourceId ? Math.max(settings.maxChunksPerSource, topK) : settings.maxChunksPerSource,
+  });
+
+  // Pinned @kb source with READY chunks but weak vector match: still surface text.
+  if (filtered.length === 0 && sourceId) {
+    filtered = await fallbackPinnedSourceChunks(fabric, sourceId, query, Math.min(topK, settings.injectKeep));
+  }
+
+  if (settings.rerankEnabled) {
+    filtered = heuristicRerank(query, filtered);
+  }
+  filtered = filtered.slice(0, settings.rerankKeep);
+  const expandTop = Math.min(topK, settings.graphExpandOnlyOnTopHits, filtered.length);
+  filtered = await expandEvidenceNeighborhood(fabric, filtered.slice(0, expandTop), {
+    mode: 'order',
+    minScore: settings.minScoreKb,
+  });
+  filtered = applyScoreGate(filtered, {
+    minScore: settings.minScoreKb,
+    maxPerSource: sourceId ? Math.max(settings.maxChunksPerSource, topK) : settings.maxChunksPerSource,
+  }).slice(0, Math.min(topK, settings.injectKeep));
+
+  // Second chance after expand/gate for pinned sources.
+  if (filtered.length === 0 && sourceId) {
+    filtered = await fallbackPinnedSourceChunks(fabric, sourceId, query, Math.min(topK, settings.injectKeep));
   }
 
   const dense: KnowledgeSearchResult[] = [];
@@ -72,7 +118,48 @@ export async function searchKnowledgeBaseDocuments(
     dense.push(nodeToHit(node, nameCache.get(sid)!, 'chunk'));
   }
 
-  return pageAwareRerank(dense, fabric, sourceStore, topK);
+  return pageAwareRerank(dense, fabric, sourceStore, Math.min(topK, settings.injectKeep));
+}
+
+/** When a pinned source is READY but hybrid+gate returns nothing, return its chunks. */
+async function fallbackPinnedSourceChunks(
+  fabric: MemoryFabric,
+  sourceId: string,
+  query: string,
+  limit: number,
+): Promise<MemoryNode[]> {
+  const lexical = await fabric.lexicalSearch(query, {
+    limit: Math.max(limit, 8),
+    category: 'source_doc',
+    sourceId,
+  });
+  const lexicalChunks = lexical.filter((n) => n.unitType === 'chunk' || !n.unitType);
+  if (lexicalChunks.length > 0) {
+    return lexicalChunks.slice(0, limit).map((n) => ({
+      ...n,
+      // Ensure gate sees cosine-like confidence (lexical path has no vector distance).
+      distance: n.distance ?? 0.35,
+    }));
+  }
+
+  const nodes = await loadSourceNodes(fabric, sourceId);
+  const chunks = nodes.filter((n) => n.unitType === 'chunk' || !n.unitType);
+  if (chunks.length === 0) return [];
+
+  const q = query.toLowerCase();
+  const terms = q.split(/\s+/).filter((t) => t.length > 2);
+  const ranked = chunks
+    .map((n) => {
+      const body = (n.content || '').toLowerCase();
+      const hits = terms.reduce((acc, t) => acc + (body.includes(t) ? 1 : 0), 0);
+      return { n, hits };
+    })
+    .sort((a, b) => b.hits - a.hits || (a.n.provenance?.index as number ?? 0) - (b.n.provenance?.index as number ?? 0));
+
+  return ranked.slice(0, limit).map(({ n, hits }) => ({
+    ...n,
+    distance: hits > 0 ? 0.3 : 0.45,
+  }));
 }
 
 async function pageAwareRerank(

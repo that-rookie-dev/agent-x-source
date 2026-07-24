@@ -14,6 +14,8 @@ import {
   getAgentFilesDir,
   getLogger,
   isCrewVoiceSessionId,
+  buildListDayDivider,
+  takeCallDividerForPersist,
   VOICE_PERMISSION_TIMEOUT_MS,
   VOICE_PERMISSION_TIMEOUT_INSTRUCTION,
 } from '@agentx/shared';
@@ -38,6 +40,7 @@ import {
   persistXaiConversationId,
   touchVoiceRealtimeActive,
 } from '../voice-realtime-store.js';
+import { seedCallDividerClockFromStore } from '../seed-call-divider-clock.js';
 import {
   buildColdSummaryText,
   buildWarmReminderText,
@@ -901,6 +904,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       ?? this.model
       ?? 'grok-voice-latest';
     try {
+      const { dayKey: listDayKey, dayLabel: listDayLabel } = buildListDayDivider();
       store.createSession({
         id,
         title: id === '__channel__:voice' ? 'Voice' : 'Chat',
@@ -910,6 +914,8 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         scopePath: getAgentFilesDir(),
         tokenAvailable: 128_000,
         tokenUsed: 0,
+        listDayKey,
+        listDayLabel,
       } as unknown as Omit<StorableSession, 'id' | 'createdAt' | 'updatedAt'>);
     } catch (err) {
       getLogger().error('XAI_VOICE', `Failed to create voice session: ${err instanceof Error ? err.message : String(err)}`);
@@ -930,6 +936,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         new Promise((_, reject) => setTimeout(() => reject(new Error('hydrate timeout')), 2_000)),
       ]);
     } catch { /* ignore — voice uplink must not wait on storage */ }
+    seedCallDividerClockFromStore(id);
   }
 
   /**
@@ -1029,6 +1036,10 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       provider: 'xai',
       model: this.model,
     };
+    if (isCrewVoiceSessionId(id)) {
+      const divider = takeCallDividerForPersist(id);
+      if (divider) metadata.callDivider = divider;
+    }
     try { persistMessageDirect(id, 'user', text, { metadata }); } catch { /* best-effort */ }
     this.markVoiceActive();
   }
@@ -1238,6 +1249,10 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       provider: 'xai',
       model: this.model,
     };
+    if (isCrewVoiceSessionId(id)) {
+      const divider = takeCallDividerForPersist(id);
+      if (divider) metadata.callDivider = divider;
+    }
     try { persistMessageDirect(id, 'assistant', text, { metadata }); } catch { /* best-effort */ }
     this.markVoiceActive();
   }

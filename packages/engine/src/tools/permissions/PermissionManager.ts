@@ -52,6 +52,15 @@ export class PermissionManager {
     this.bypassPermissions = false;
   }
 
+  /** Revoke one-time (allow_once) grants so each turn starts fresh. */
+  revokeOneTimePermissions(): void {
+    for (const [key, permission] of this.permissions) {
+      if (permission.decision === 'allow_once') {
+        this.permissions.delete(key);
+      }
+    }
+  }
+
   allowAll(): void {
     this.permissions.set('__all__', {
       id: '__all__',

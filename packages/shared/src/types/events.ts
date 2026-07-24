@@ -162,6 +162,8 @@ export type EngineEvent =
   | { type: 'token_usage'; totalTokens: number; contextWindow: number; turnTokens?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; reservedTokens?: number; streamingTokens?: number; estimated?: boolean }
   | { type: 'thinking_delta'; content?: string; text?: string }
   | { type: 'reasoning_delta'; content: string }
+  | { type: 'reasoning_end' }
+  | { type: 'thinking_end' }
   | { type: 'context_warning'; currentTokens: number; threshold: number; percentage: number }
   | { type: 'crew_activity'; crewId: string; crewName?: string; activity: 'speaking' | 'thinking' | 'done'; content?: string }
   | { type: 'crew_feedback'; crewId: string; positive: boolean }
@@ -189,7 +191,10 @@ export interface FormattedResponse {
 
 export interface TodoItem {
   id: number;
+  /** Short one-line heading shown in the TASKS sidebar. */
   title: string;
+  /** Longer task body kept for processing / agent context; not shown as the heading. */
+  detail?: string;
   status: 'not-started' | 'in-progress' | 'completed';
 }
 

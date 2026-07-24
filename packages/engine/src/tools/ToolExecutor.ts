@@ -11,6 +11,8 @@ import {
   blockCredentialScavenger,
   blockThirdPartyLocalSubstitute,
 } from '../integrations/third-party-access-guard.js';
+import type { KbDocumentTurnPolicy } from '../knowledge-base/kb-document-access-guard.js';
+import { blockKbDiskFallback } from '../knowledge-base/kb-document-access-guard.js';
 import { ToolPermissionService, type ToolPermissionHost } from '../services/tool/ToolPermissionService.js';
 
 
@@ -112,6 +114,7 @@ export class ToolExecutor implements ToolPermissionHost {
   private sessionContextKind?: SessionContextKind;
   private runtimeConfig: AgentXConfig | null = null;
   private thirdPartyTurnPolicy: ThirdPartyTurnPolicy | null = null;
+  private kbDocumentTurnPolicy: KbDocumentTurnPolicy | null = null;
   private turnAborted = false;
   private permissionPromptHook?: PermissionPromptHook;
   private permissionService: ToolPermissionService;
@@ -155,6 +158,14 @@ export class ToolExecutor implements ToolPermissionHost {
 
   getThirdPartyTurnPolicy(): ThirdPartyTurnPolicy | null {
     return this.thirdPartyTurnPolicy;
+  }
+
+  setKbDocumentTurnPolicy(policy: KbDocumentTurnPolicy | null): void {
+    this.kbDocumentTurnPolicy = policy;
+  }
+
+  getKbDocumentTurnPolicy(): KbDocumentTurnPolicy | null {
+    return this.kbDocumentTurnPolicy;
   }
 
   setTurnAborted(aborted: boolean): void {
@@ -390,6 +401,10 @@ export class ToolExecutor implements ToolPermissionHost {
 
     const thirdPartyBlock = blockThirdPartyLocalSubstitute(toolId, this.thirdPartyTurnPolicy);
     if (thirdPartyBlock) return thirdPartyBlock;
+
+    // @kb-pinned documents — Knowledge Base search only; never open originals from disk
+    const kbDiskBlock = blockKbDiskFallback(toolId, this.kbDocumentTurnPolicy);
+    if (kbDiskBlock) return kbDiskBlock;
 
     // Safety audit — intercept before execution
     if (this.safetyAuditor) {

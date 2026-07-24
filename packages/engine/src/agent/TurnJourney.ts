@@ -9,6 +9,7 @@
 import { getLogger } from '@agentx/shared';
 import { getRAGEngineInstance } from '../commands/builtin/rag_index.js';
 import { getKnowledgeBaseService } from '../knowledge-base/global-manager.js';
+import type { MasterKind } from '../document-studio/types.js';
 
 const logger = getLogger();
 
@@ -64,6 +65,8 @@ export interface TurnJourneyResult {
   journeyBlock: string;
   stages: TurnJourneyStageReport[];
   elapsedMs: number;
+  /** Composer @kb mentions detected in the user text (empty when none / skip). */
+  mentionedKb: Array<{ sourceId: string; name: string }>;
 }
 
 const WEB_TOOLS = new Set(['web_search', 'deep_web_search', 'web_fetch', 'web_scrape']);
@@ -90,22 +93,166 @@ function listPresent(toolIds: string[], candidates: string[]): string[] {
   return candidates.filter((id) => toolIds.includes(id));
 }
 
+/** Composer `@kb[sourceId:name]` mentions — pin retrieval to those sources. */
+export function parseKbMentionSourceIds(content: string): Array<{ sourceId: string; name: string }> {
+  const out: Array<{ sourceId: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@kb\[([^:\]]+):([^\]]+)\]/g)) {
+    const sourceId = match[1]!.trim();
+    if (!sourceId || seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    let name = match[2]!;
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // keep raw
+    }
+    out.push({ sourceId, name });
+  }
+  return out;
+}
+
+/** Composer `@template[templateId:name]` mentions — pin Template Library generate tools. */
+export function parseTemplateMentionIds(content: string): Array<{ templateId: string; name: string }> {
+  const out: Array<{ templateId: string; name: string }> = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@template\[([^:\]]+):([^\]]+)\]/g)) {
+    const templateId = match[1]!.trim();
+    if (!templateId || seen.has(templateId)) continue;
+    seen.add(templateId);
+    let name = match[2]!;
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // keep raw
+    }
+    out.push({ templateId, name });
+  }
+  return out;
+}
+
+const MASTER_KINDS: MasterKind[] = ['layout', 'structure', 'standard', 'data', 'prior_artifact'];
+
+function parseColonOptionalRole<T extends string>(
+  token: string,
+  roles: readonly string[],
+  defaultRole: string,
+): { id: T; role: string } | null {
+  const trimmed = token.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(':');
+  if (parts.length === 2 && roles.includes(parts[0]!.trim())) {
+    const role = parts[0]!.trim();
+    const id = parts[1]!.trim();
+    if (!id) return null;
+    return { id: id as T, role };
+  }
+  return { id: trimmed as T, role: defaultRole };
+}
+
+/** `@master[role:id,...]` mentions — role is optional and defaults to `layout`. */
+export function parseMasterMentionIds(content: string): Array<{ masterId: string; role: MasterKind }> {
+  const out: Array<{ masterId: string; role: MasterKind }> = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@master\[([^\]]+)\]/g)) {
+    for (const raw of match[1]!.split(',')) {
+      const parsed = parseColonOptionalRole<MasterKind>(raw, MASTER_KINDS, 'layout');
+      if (!parsed || seen.has(parsed.id)) continue;
+      seen.add(parsed.id);
+      out.push({ masterId: parsed.id, role: parsed.role as MasterKind });
+    }
+  }
+  return out;
+}
+
+/** `@binder[binderId]` mentions. */
+export function parseBinderMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@binder');
+}
+
+/** `@dataset[mappingId]` mentions — resolved to a mapping input ref. */
+export function parseDatasetMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@dataset');
+}
+
+/** `@job[answerSetId]` or `@job[jobId]` mentions — resolved to an answer-set input ref. */
+export function parseJobMentionIds(content: string): string[] {
+  return parseSimpleMentionIds(content, '@job');
+}
+
+/** `@kb[sourceId,sourceId]` mentions for Document Studio job inputs. */
+export function parseKbMentionIds(content: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const match of content.replace(/\u200b/g, '').matchAll(/@kb\[([^\]]+)\]/g)) {
+    for (const raw of match[1]!.split(',')) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+function parseSimpleMentionIds(content: string, prefix: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escaped}\\[([^\\]]+)\\]`, 'g');
+  for (const match of content.replace(/\u200b/g, '').matchAll(re)) {
+    for (const raw of match[1]!.split(',')) {
+      const id = raw.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+function stripMentionTokensForSearch(userText: string): string {
+  return userText
+    .replace(/@kb\[[^\]]+\]/g, ' ')
+    .replace(/@template\[[^\]]+\]/g, ' ')
+    .replace(/@file\[[^\]]+\]/g, ' ')
+    .replace(/@folder\[[^\]]+\]/g, ' ')
+    .replace(/@crew\[[^\]]+\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 async function prefetchLocalKnowledge(userText: string): Promise<{
   hits: TurnJourneyRagHit[];
   stages: TurnJourneyStageReport[];
+  mentionedKb: Array<{ sourceId: string; name: string }>;
 }> {
   const stages: TurnJourneyStageReport[] = [];
   const hits: TurnJourneyRagHit[] = [];
+  const mentionedKb = parseKbMentionSourceIds(userText);
+  const searchQuery = stripMentionTokensForSearch(userText) || userText;
 
   const kbStart = Date.now();
   const kb = getKnowledgeBaseService();
   if (kb) {
     try {
-      const kbResults = await withPrefetchTimeout(
-        'Knowledge Base search',
-        kb.search(userText, 8),
-        [],
-      );
+      const kbResults = mentionedKb.length > 0
+        ? (
+          await Promise.all(
+            mentionedKb.map((m) =>
+              withPrefetchTimeout(
+                `Knowledge Base search (${m.sourceId})`,
+                kb.search(searchQuery, 8, m.sourceId),
+                [],
+              ),
+            ),
+          )
+        ).flat()
+        : await withPrefetchTimeout(
+          'Knowledge Base search',
+          kb.search(searchQuery, 8),
+          [],
+        );
       for (const r of kbResults) {
         hits.push({
           content: r.content,
@@ -116,13 +263,17 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
             sourceName: r.sourceName || r.sourceId,
             kind: r.kind,
             pageNumber: r.metadata?.pageNumber,
+            sourceId: r.sourceId,
           },
         });
       }
+      const pinDetail = mentionedKb.length > 0
+        ? ` pinned to ${mentionedKb.map((m) => m.name || m.sourceId).join(', ')}`
+        : '';
       stages.push({
         id: 'local_knowledge',
         status: 'done',
-        detail: `Knowledge Base: ${kbResults.length} hit(s)`,
+        detail: `Knowledge Base: ${kbResults.length} hit(s)${pinDetail}`,
         elapsedMs: Date.now() - kbStart,
       });
     } catch (e) {
@@ -146,7 +297,7 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
   const rag = getRAGEngineInstance();
   if (rag?.isEnabled) {
     try {
-      const docs = await withPrefetchTimeout('Codebase RAG search', rag.search(userText, 3), []);
+      const docs = await withPrefetchTimeout('Codebase RAG search', rag.search(searchQuery, 3), []);
       for (const d of docs) {
         hits.push({
           content: d.content,
@@ -171,7 +322,7 @@ async function prefetchLocalKnowledge(userText: string): Promise<{
     ...hits.filter((h) => h.metadata?.kind === 'codebase'),
   ].slice(0, 8);
 
-  return { hits: kbFirst, stages };
+  return { hits: kbFirst, stages, mentionedKb };
 }
 
 function buildJourneyBlock(opts: {
@@ -180,21 +331,46 @@ function buildJourneyBlock(opts: {
   localHitCount: number;
   toolIds: string[];
   stages: TurnJourneyStageReport[];
+  mentionedKb: Array<{ sourceId: string; name: string }>;
+  mentionedTemplates: Array<{ templateId: string; name: string }>;
 }): string {
   const integrations = summarizeIntegrations(opts.toolIds);
   const webTools = listPresent(opts.toolIds, [...WEB_TOOLS]);
   const memoryTools = listPresent(opts.toolIds, [...MEMORY_TOOLS]);
   const hasKnowledgeSearch = opts.toolIds.includes('knowledge_base_search');
+  const kbPinLine = opts.mentionedKb.length > 0
+    ? opts.mentionedKb
+      .map((m) => `${m.name || m.sourceId} (sourceId=${m.sourceId})`)
+      .join('; ')
+    : '';
+  const templatePinLine = opts.mentionedTemplates.length > 0
+    ? opts.mentionedTemplates
+      .map((m) => `${m.name || m.templateId} (templateId=${m.templateId})`)
+      .join('; ')
+    : '';
+  const templateHint = templatePinLine
+    ? [
+        `- User @template-mentioned Template Library item(s): ${templatePinLine}.`,
+        '- STRICT: Use template_inspect then template_fill with that templateId. Do NOT recreate the layout from scratch or from RAG text.',
+        '- Understand the template design, then clone it with available data (same format). Missing slots stay blank; extra data is ignored. Fonts, colors, and images stay intact.',
+      ].join('\n')
+    : '';
 
   if (opts.voiceTurn || opts.compact) {
     const integLine =
       integrations.length > 0
         ? `MCP ready: ${integrations.join(', ')}.`
         : 'No MCP integrations connected.';
+    const kbHint = kbPinLine
+      ? ` STRICT @kb: only knowledge_base_search with sourceId for: ${kbPinLine}. NEVER file_read/shell_exec/glob on the original upload.`
+      : '';
+    const tplHint = templatePinLine
+      ? ` STRICT @template: template_inspect then template_fill to clone design for ${templatePinLine}. Never rebuild layout.`
+      : '';
     return [
       '[TURN_JOURNEY]',
       'Default silent research order (user did not need to request tools):',
-      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_base_search.`,
+      `1. LOCAL — ${opts.localHitCount > 0 ? `${opts.localHitCount} excerpt(s) injected above` : 'none yet'}; if weak, call knowledge_base_search.${kbHint}${tplHint}`,
       `2. INTEGRATIONS — ${integLine} Use matching integration__* tools when the ask involves those apps.`,
       `3. WEB — ${webTools.length > 0 ? webTools.join(', ') : 'unavailable'} only if local+MCP cannot answer or facts may be stale.`,
       '4. MODEL — brief answer from trained knowledge last; say when unsure.',
@@ -213,11 +389,22 @@ function buildJourneyBlock(opts: {
     opts.localHitCount > 0
       ? `- Done: ${opts.localHitCount} excerpt(s) are injected as [RELEVANT_DOCUMENTS]. Prefer body text over TOC/index lines. Cite source/page when answering from them.`
       : '- Prefetch found nothing useful yet (or KB empty). Proceed to stage 2.',
+    kbPinLine
+      ? [
+          `- User @kb-mentioned Knowledge Base document(s): ${kbPinLine}.`,
+          '- STRICT: These are Knowledge Base docs. Answer ONLY via injected [RELEVANT_DOCUMENTS] and/or knowledge_base_search with the given sourceId.',
+          '- FORBIDDEN for @kb docs: file_read, shell_exec, python_rpc, glob, folder_list, or any disk/shell open of the original upload path — even if you think the file is on disk.',
+          '- If knowledge_base_search returns no matches, say the document may still be indexing (READY). Do NOT fall back to disk.',
+        ].join('\n')
+      : '',
+    templateHint,
     '- If excerpts answer the question fully → answer now and stop. Do not invent extra tool calls.',
     '',
     'STAGE 2 — DEEPER LOCAL RETRIEVAL (tools, only if needed)',
     hasKnowledgeSearch
-      ? '- Call knowledge_base_search with a more precise query when excerpts look like indexes/metadata or miss the answer.'
+      ? (kbPinLine
+        ? `- Call knowledge_base_search with sourceId set to the @kb-mentioned document(s) when you need more depth: ${kbPinLine}. Never open the original file from disk.`
+        : '- Call knowledge_base_search with a more precise query when excerpts look like indexes/metadata or miss the answer.')
       : '- knowledge_base_search unavailable.',
     memoryTools.length > 0
       ? `- Also available: ${memoryTools.join(', ')} for prior chat/memory facts.`
@@ -259,6 +446,7 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
       journeyBlock: '',
       stages: [{ id: 'local_knowledge', status: 'skipped', detail: 'Fast path — journey skipped' }],
       elapsedMs: 0,
+      mentionedKb: parseKbMentionSourceIds(input.userText),
     };
   }
 
@@ -274,7 +462,9 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
     id: 'deeper_retrieval',
     status: 'ready',
     detail: toolIds.includes('knowledge_base_search')
-      ? 'knowledge_base_search available'
+      ? (local.mentionedKb.length > 0
+        ? `knowledge_base_search available (prefer @kb sourceId)`
+        : 'knowledge_base_search available')
       : 'limited retrieval tools',
   });
   stages.push({
@@ -296,12 +486,15 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
     detail: 'Trained knowledge fallback',
   });
 
+  const mentionedTemplates = parseTemplateMentionIds(input.userText);
   const journeyBlock = buildJourneyBlock({
     voiceTurn: input.voiceTurn === true,
     compact: input.compact === true,
     localHitCount: ragResults.length,
     toolIds,
     stages,
+    mentionedKb: local.mentionedKb,
+    mentionedTemplates,
   });
 
   return {
@@ -309,5 +502,6 @@ export async function runTurnJourney(input: TurnJourneyInput): Promise<TurnJourn
     journeyBlock,
     stages,
     elapsedMs: Date.now() - started,
+    mentionedKb: local.mentionedKb,
   };
 }

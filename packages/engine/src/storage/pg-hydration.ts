@@ -38,6 +38,7 @@ export async function hydrateEssentialCache(ctx: HydrationContext): Promise<void
               host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
               host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
               host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
+              list_day_key as "listDayKey",list_day_label as "listDayLabel",
               parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
        FROM sessions`,
     );
@@ -91,6 +92,7 @@ export async function hydrateCache(ctx: HydrationContext): Promise<void> {
               host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
               host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
               host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
+              list_day_key as "listDayKey",list_day_label as "listDayLabel",
               parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
        FROM sessions`,
     );
@@ -267,6 +269,7 @@ export async function hydrateMessageCache(ctx: HydrationContext, sessionId: stri
                 host_crew_name as "hostCrewName",host_crew_callsign as "hostCrewCallsign",
                 host_crew_title as "hostCrewTitle",host_crew_color as "hostCrewColor",
                 host_crew_catalog_id as "hostCrewCatalogId",host_crew_category_id as "hostCrewCategoryId",
+              list_day_key as "listDayKey",list_day_label as "listDayLabel",
                 parent_id as "parentId",created_at as "createdAt",updated_at as "updatedAt"
          FROM sessions WHERE id = $1`,
         [sessionId],

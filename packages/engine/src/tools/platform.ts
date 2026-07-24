@@ -1,13 +1,27 @@
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { IS_WINDOWS, IS_MACOS } from '@agentx/shared';
 
 export { IS_WINDOWS, IS_MACOS, IS_LINUX } from '@agentx/shared';
+
+/**
+ * Prefer absolute shell paths — Electron / packaged runtimes often ship a
+ * stripped PATH where bare `sh` resolves to ENOENT ("spawn sh ENOENT").
+ */
+export function resolveUnixShellPath(): string {
+  for (const candidate of ['/bin/sh', '/usr/bin/sh', '/bin/bash', '/usr/bin/bash']) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return process.env['SHELL'] && existsSync(process.env['SHELL'])
+    ? process.env['SHELL']!
+    : 'sh';
+}
 
 export function getShell(): string[] {
   if (IS_WINDOWS) {
     return ['cmd.exe', '/c'];
   }
-  return ['sh', '-c'];
+  return [resolveUnixShellPath(), '-c'];
 }
 
 export function getShellCommand(command: string): { cmd: string; args: string[] } {
@@ -15,7 +29,7 @@ export function getShellCommand(command: string): { cmd: string; args: string[] 
     const shell = process.env['COMSPEC'] || 'cmd.exe';
     return { cmd: shell, args: ['/d', '/s', '/c', command] };
   }
-  return { cmd: 'sh', args: ['-c', command] };
+  return { cmd: resolveUnixShellPath(), args: ['-c', command] };
 }
 
 export function getWhichCommand(): string {

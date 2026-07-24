@@ -45,6 +45,16 @@ describe('search-config', () => {
     expect(listActiveWebSearchProviders(rt)).toEqual(['duckduckgo', 'brave']);
   });
 
+  it('respects custom providerOrder for active providers', () => {
+    const rt = resolveWebSearchRuntime({
+      duckduckgo: { enabled: true },
+      brave: { enabled: true, apiKey: 'bsa-test' },
+      tavily: { enabled: true, apiKey: 'tvly-test' },
+      providerOrder: ['tavily', 'brave', 'duckduckgo', 'exa'],
+    });
+    expect(listActiveWebSearchProviders(rt)).toEqual(['tavily', 'brave', 'duckduckgo']);
+  });
+
   it('allows disabling DuckDuckGo', () => {
     const rt = resolveWebSearchRuntime({
       duckduckgo: { enabled: false },
@@ -52,6 +62,14 @@ describe('search-config', () => {
     });
     expect(rt.duckduckgo).toBe(false);
     expect(listActiveWebSearchProviders(rt)).toEqual(['brave']);
+  });
+
+  it('mergeWebSearchToolsConfig preserves providerOrder', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { providerOrder: ['exa', 'duckduckgo', 'brave', 'tavily'] },
+      { brave: { enabled: true } },
+    );
+    expect(merged.providerOrder).toEqual(['exa', 'duckduckgo', 'brave', 'tavily']);
   });
 
   it('applyWebSearchConfigFromAgentConfig updates runtime', () => {
@@ -72,6 +90,23 @@ describe('search-config', () => {
       { brave: { enabled: false } },
     );
     expect(merged.brave?.apiKey).toBe('keep-me');
+    expect(merged.brave?.enabled).toBe(false);
+  });
+
+  it('mergeWebSearchToolsConfig ignores legacy redacted placeholders', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { brave: { enabled: true, apiKey: 'real-secret' } },
+      { brave: { enabled: true, apiKey: '••••••••' } },
+    );
+    expect(merged.brave?.apiKey).toBe('real-secret');
+  });
+
+  it('mergeWebSearchToolsConfig clears key when apiKeyConfigured is false', () => {
+    const merged = mergeWebSearchToolsConfig(
+      { brave: { enabled: true, apiKey: 'real-secret' } },
+      { brave: { enabled: false, apiKeyConfigured: false } },
+    );
+    expect(merged.brave?.apiKey).toBe('');
     expect(merged.brave?.enabled).toBe(false);
   });
 

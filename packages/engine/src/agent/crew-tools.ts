@@ -7,12 +7,12 @@ const DOMAIN_TOOL_BUNDLES: Record<string, string[]> = {
   devops: ['shell_exec', 'file_read', 'file_write', 'folder_list', 'container_list', 'container_run', 'container_compose', 'git_status', 'git_diff', 'test_run'],
   backend: ['file_read', 'file_write', 'code_search', 'code_replace', 'code_insert', 'shell_exec', 'test_run', 'test_coverage', 'git_diff', 'git_commit'],
   frontend: ['file_read', 'file_write', 'code_search', 'code_replace', 'browser_open', 'browser_screenshot', 'test_run', 'package_run'],
-  design: ['file_read', 'file_write', 'doc_markdown', 'doc_html', 'browser_open', 'browser_screenshot'],
+  design: ['file_read', 'file_write', 'gen_markdown', 'gen_html', 'browser_open', 'browser_screenshot'],
   security: ['file_read', 'code_search', 'code_grep', 'security_audit', 'security_secrets', 'shell_exec'],
-  compliance: ['file_read', 'folder_list', 'glob', 'grep', 'code_search', 'code_grep', 'code_definitions', 'security_audit', 'security_secrets', 'pkg_audit', 'git_status', 'git_diff', 'git_log', 'env_read', 'container_list', 'container_logs', 'shell_exec', 'json_parse', 'pdf_read', 'doc_markdown', 'test_run', 'http_get'],
+  compliance: ['file_read', 'folder_list', 'glob', 'grep', 'code_search', 'code_grep', 'code_definitions', 'security_audit', 'security_secrets', 'pkg_audit', 'git_status', 'git_diff', 'git_log', 'env_read', 'container_list', 'container_logs', 'shell_exec', 'json_parse', 'pdf_read', 'gen_markdown', 'test_run', 'http_get'],
   data: ['file_read', 'file_write', 'db_query', 'json_parse', 'csv_parse', 'pdf_read', 'shell_exec'],
-  finance: ['file_read', 'pdf_read', 'csv_parse', 'json_parse', 'doc_markdown'],
-  tax: ['file_read', 'pdf_read', 'csv_parse', 'json_parse', 'doc_markdown'],
+  finance: ['file_read', 'pdf_read', 'csv_parse', 'json_parse', 'gen_markdown'],
+  tax: ['file_read', 'pdf_read', 'csv_parse', 'json_parse', 'gen_markdown'],
 };
 
 const CORE_CREW_TOOLS = [
@@ -20,7 +20,7 @@ const CORE_CREW_TOOLS = [
   'code_search', 'code_replace', 'code_insert', 'code_grep', 'code_definitions',
   'shell_exec', 'test_run', 'test_coverage', 'git_status', 'git_diff', 'git_commit',
   'browser_open', 'browser_screenshot', 'http_get', 'http_post',
-  'pdf_read', 'csv_parse', 'json_parse', 'doc_markdown',
+  'pdf_read', 'csv_parse', 'json_parse', 'gen_markdown',
   'deep_web_search', 'web_search', 'web_fetch',
   'crew_message', 'crew_response', 'ask_clarification',
 ];

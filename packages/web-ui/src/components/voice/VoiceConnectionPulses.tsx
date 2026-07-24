@@ -94,7 +94,8 @@ export function VoiceConnectionPulses({ active }: { active: boolean }) {
               <polyline
                 points={pointsStr}
                 fill="none"
-                stroke={active ? 'rgba(59, 130, 246, 0.12)' : 'rgba(59, 130, 246, 0.06)'}
+                stroke="var(--ax-accent-blue)"
+                strokeOpacity={active ? 0.28 : 0.12}
                 strokeWidth={1}
                 strokeLinejoin="round"
                 strokeLinecap="round"
@@ -104,13 +105,15 @@ export function VoiceConnectionPulses({ active }: { active: boolean }) {
                 cx={trace.points[2]}
                 cy={trace.points[3]}
                 r={1.5}
-                fill={active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.15)'}
+                fill="var(--ax-accent-blue)"
+                fillOpacity={active ? 0.45 : 0.22}
               />
               <circle
                 cx={trace.points[4]}
                 cy={trace.points[5]}
                 r={1.5}
-                fill={active ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.15)'}
+                fill="var(--ax-accent-blue)"
+                fillOpacity={active ? 0.45 : 0.22}
               />
               {/* Animated dots traveling along the trace */}
               {Array.from({ length: numPulses }).map((_, j) => (
@@ -203,7 +206,7 @@ function TraceDot({
     <circle
       ref={ref}
       r={2}
-      fill="rgba(59, 130, 246, 0.9)"
+      fill="var(--ax-accent-blue)"
     />
   );
 }

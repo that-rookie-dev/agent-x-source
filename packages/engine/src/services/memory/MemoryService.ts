@@ -32,6 +32,13 @@ import type {
   SearchOptions,
 } from './IMemoryService.js';
 import { MemoryCacheService, type MemoryCacheServiceOptions } from './MemoryCacheService.js';
+import {
+  getRetrievalSettings,
+  toEvidenceUnit,
+  packEvidenceBlocks,
+  EMPTY_EVIDENCE_MARKER,
+  type EvidenceUnit,
+} from '../../neural/retrieval/index.js';
 
 export interface MemoryServiceOptions {
   pool: Pool;
@@ -154,7 +161,8 @@ export class MemoryService implements IMemoryService {
         vectorLimit: vectorLimit ?? 8,
         userProfileLimit: isSuper ? 8 : 0,
         episodicLimit: 5,
-        minRelevance: minRelevance ?? 0.35,
+        minRelevance: minRelevance ?? 0.42,
+        queryEmbedding: embedding,
       });
 
       const chunkNodes = await this.searchSourceDocChunks(embedding, sessionId, isSuper, minRelevance);
@@ -327,7 +335,7 @@ export class MemoryService implements IMemoryService {
         limit: 5,
         category: 'source_doc',
       });
-      const threshold = minRelevance ?? 0.25;
+      const threshold = minRelevance ?? 0.40;
       return raw.filter((n) => {
         const distance = (n as unknown as { distance?: number }).distance;
         return distance == null || (1 - distance) >= threshold;
@@ -339,33 +347,45 @@ export class MemoryService implements IMemoryService {
     result: Awaited<ReturnType<typeof vectorMemoryPrefetch>>,
     compact: boolean,
   ): MemoryContextState {
-    const MAX_CHARS = compact ? COMPACT_MEMORY_MAX_CHARS : FULL_MEMORY_MAX_CHARS;
+    const settings = getRetrievalSettings();
+    const MAX_CHARS = compact
+      ? Math.min(COMPACT_MEMORY_MAX_CHARS, settings.maxEvidenceCharsCompact)
+      : Math.min(FULL_MEMORY_MAX_CHARS, settings.maxEvidenceCharsFull);
 
-    const fmt = (nodes: Array<{ label: string; content: string; category: string }>, maxChars: number) => {
-      const lines: string[] = [];
-      let used = 0;
-      for (const n of nodes) {
-        const line = `- [${n.category}] ${n.label}: ${n.content.replace(/\n+/g, ' ').slice(0, 200)}`;
-        if (used + line.length > maxChars) break;
-        lines.push(line);
-        used += line.length + 1;
+    const pack = (nodes: MemoryNode[], maxChars: number, startIndex: number) => {
+      const units: EvidenceUnit[] = [];
+      for (let i = 0; i < nodes.length; i++) {
+        const u = toEvidenceUnit(nodes[i]!, i);
+        if (u) units.push(u);
       }
-      return lines.join('\n');
+      return packEvidenceBlocks(units, {
+        maxChars,
+        maxLineChars: settings.maxEvidenceLineChars,
+        startIndex,
+      });
     };
 
-    const userProfileText = fmt(result.userProfile, Math.floor(MAX_CHARS * 0.35));
-    const episodicText = fmt(result.episodic, Math.floor(MAX_CHARS * 0.25));
-    const semanticText = fmt(result.vector, Math.floor(MAX_CHARS * 0.4));
+    let idx = 1;
+    const profile = pack(result.userProfile, Math.floor(MAX_CHARS * 0.30), idx);
+    idx += profile.count;
+    const episodic = pack(result.episodic, Math.floor(MAX_CHARS * 0.25), idx);
+    idx += episodic.count;
+    const semantic = pack(result.vector, Math.floor(MAX_CHARS * 0.45), idx);
 
-    if (semanticText || episodicText || userProfileText) {
-      getLogger().info(
-        'MEMORY_SERVICE',
-        `assembleContext: ${result.all.length} nodes (userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length})`,
-      );
+    const episodicText = [profile.text, episodic.text].filter(Boolean).join('\n');
+    const semanticText = semantic.text;
+
+    if (!episodicText && !semanticText) {
+      return { episodic: '', semantic: EMPTY_EVIDENCE_MARKER, graph: '' };
     }
 
+    getLogger().info(
+      'MEMORY_SERVICE',
+      `assembleContext: ${profile.count + episodic.count + semantic.count} evidence units (userProfile=${result.userProfile.length}, episodic=${result.episodic.length}, semantic=${result.vector.length})`,
+    );
+
     return {
-      episodic: [userProfileText, episodicText].filter(Boolean).join('\n'),
+      episodic: episodicText,
       semantic: semanticText,
       graph: '',
     };

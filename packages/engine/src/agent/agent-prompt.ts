@@ -28,6 +28,8 @@ import {
   createMultiCrewSection,
   createUserSection,
   createTaskPanelSection,
+  createActiveTodosSection,
+  createMissionPlanSection,
   createSessionNarrativeSection,
   createTurnFeedbackSection,
   createInstructionsSection,
@@ -35,6 +37,7 @@ import {
   createSystemOverrideSection,
   type SectionContext,
 } from '../prompt/assembly/index.js';
+import { createDocumentStudioSection } from './document-studio-prompts.js';
 
 /** Slice of Agent required by the prompt registration helpers. */
 export interface PromptRegistrationContext {
@@ -71,6 +74,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
     const secCtx = ctx.createSectionContext();
     ctx.promptAssembly
       .register(createRulesSection({ technicalExecutor: true }))
+      .register(createMissionPlanSection(secCtx.scopePath))
       .register(createQuestionnaireGuideSection())
       .register(createChatMarkdownSection())
       .register(createMarkdownSection())
@@ -123,6 +127,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createPersonaToneSection(secCtx))
       .register(createWorkingDirectorySection(secCtx))
       .register(createCompactRulesSection())
+      .register(createMissionPlanSection(secCtx.scopePath))
       .register(createChannelSuperSessionSection(ctx.personaName))
       .register(createChannelLinkedContextSection(secCtx))
       .register(createChannelMessagingSection(ctx.personaName))
@@ -137,6 +142,8 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createMultiCrewSection(secCtx))
       .register(createCrewRosterGuideSection())
       .register(createUserSection(secCtx))
+      .register(createTaskPanelSection())
+      .register(createActiveTodosSection(secCtx))
       .register(createMemoryContextSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
     if (systemOverride) {
@@ -154,8 +161,11 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createLocalPersonaGuardSection(ctx.personaName))
       .register(createWorkingDirectorySection(secCtx))
       .register(createCompactRulesSection())
+      .register(createMissionPlanSection(secCtx.scopePath))
       .register(createUserSection(secCtx))
       .register(createSessionNarrativeSection(secCtx))
+      .register(createTaskPanelSection())
+      .register(createActiveTodosSection(secCtx))
       .register(createMemoryContextSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
   } else {
@@ -165,6 +175,8 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createPersonaToneSection(secCtx))
       .register(createWorkingDirectorySection(secCtx))
       .register(createRulesSection())
+      .register(createDocumentStudioSection())
+      .register(createMissionPlanSection(secCtx.scopePath))
       .register(createThirdPartyServicesSection())
       .register(createQuestionnaireGuideSection())
       .register(createChatMarkdownSection())
@@ -181,6 +193,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createSessionNarrativeSection(secCtx))
       .register(createTurnFeedbackSection(secCtx))
       .register(createTaskPanelSection())
+      .register(createActiveTodosSection(secCtx))
       .register(createMemoryContextSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
   }

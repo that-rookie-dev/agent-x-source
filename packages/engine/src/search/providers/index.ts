@@ -3,7 +3,11 @@ import { searchDuckDuckGo } from './duckduckgo.js';
 import { searchBrave } from './brave.js';
 import { searchExa } from './exa.js';
 import { searchTavily } from './tavily.js';
-import { getWebSearchRuntime, listActiveWebSearchProviders } from '../search-config.js';
+import {
+  getWebSearchRuntime,
+  listActiveWebSearchProviders,
+  type ResolvedWebSearchProvider,
+} from '../search-config.js';
 
 function mergeSerpHits(batches: SerpHit[][]): SerpHit[] {
   const seen = new Set<string>();
@@ -19,27 +23,50 @@ function mergeSerpHits(batches: SerpHit[][]): SerpHit[] {
   return out;
 }
 
-export async function runWebSearch(query: string, limit = 10): Promise<SerpHit[]> {
+async function searchOneProvider(
+  provider: ResolvedWebSearchProvider,
+  query: string,
+  limit: number,
+): Promise<SerpHit[]> {
   const rt = getWebSearchRuntime();
-  const tasks: Array<Promise<SerpHit[]>> = [];
+  switch (provider) {
+    case 'duckduckgo':
+      return searchDuckDuckGo(query, limit);
+    case 'brave':
+      return rt.brave ? searchBrave(query, rt.brave, limit) : [];
+    case 'exa':
+      return rt.exa ? searchExa(query, rt.exa, limit) : [];
+    case 'tavily':
+      return rt.tavily ? searchTavily(query, rt.tavily, limit) : [];
+    default:
+      return [];
+  }
+}
 
-  if (rt.duckduckgo) {
-    tasks.push(searchDuckDuckGo(query, limit));
-  }
-  if (rt.brave) {
-    tasks.push(searchBrave(query, rt.brave, limit));
-  }
-  if (rt.exa) {
-    tasks.push(searchExa(query, rt.exa, limit));
-  }
-  if (rt.tavily) {
-    tasks.push(searchTavily(query, rt.tavily, limit));
+/** Minimum hits before we stop cascading to the next provider. */
+function enoughHits(limit: number): number {
+  return Math.min(limit, Math.max(3, Math.ceil(limit * 0.3)));
+}
+
+/**
+ * Search using configured providers in priority order.
+ * Tries each active provider until enough results accumulate (or the list ends).
+ */
+export async function runWebSearch(query: string, limit = 10): Promise<SerpHit[]> {
+  const providers = listActiveWebSearchProviders();
+  if (providers.length === 0) return [];
+
+  const threshold = enoughHits(limit);
+  let accumulated: SerpHit[] = [];
+
+  for (const provider of providers) {
+    const hits = await searchOneProvider(provider, query, limit).catch(() => [] as SerpHit[]);
+    if (hits.length === 0) continue;
+    accumulated = mergeSerpHits([accumulated, hits]);
+    if (accumulated.length >= threshold) break;
   }
 
-  if (tasks.length === 0) return [];
-
-  const batches = await Promise.all(tasks.map((t) => t.catch(() => [] as SerpHit[])));
-  return mergeSerpHits(batches).slice(0, limit);
+  return accumulated.slice(0, limit);
 }
 
 export function describeActiveWebSearchProviders(): string {

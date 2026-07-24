@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, statSync, renameSync, rmSync, cpSync, copyFileSync } from 'node:fs';
-import { resolve, dirname, basename, extname, isAbsolute } from 'node:path';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, statSync, renameSync, rmSync, cpSync, copyFileSync, openSync, readSync, closeSync } from 'node:fs';
+import { resolve, dirname, basename, extname, isAbsolute, normalize, sep, relative } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 import { isAgentInternalPath } from '@agentx/shared';
@@ -8,23 +8,78 @@ import { getAICommentMarker } from './markers.js';
 
 /**
  * Resolve a user-supplied path against the agent's scope path.
- * Strips leading "/" from absolute paths so they are treated as relative
- * to the workspace, preventing the agent from escaping scope when it
- * passes "/file.md" or "/etc/passwd" instead of "file.md".
- * App-internal paths (data/tmp/files) are preserved as-is so internal file
- * processing can use absolute paths to the Agent-X sandbox directories.
+ * Absolute paths already inside the workspace are kept as-is (no double-join).
+ * Absolute paths outside the workspace are rejected by returning a path that
+ * ScopeGuard will block. App-internal Agent-X paths are preserved.
  */
-function resolveScopedPath(scopePath: string, file: string): string {
-  if (isAbsolute(file) && isAgentInternalPath(file)) {
-    return resolve(file);
+export function resolveScopedPath(scopePath: string, file: string): string {
+  if (!file || !String(file).trim()) return resolve(scopePath, '.');
+  const raw = String(file).trim();
+  if (isAbsolute(raw) && isAgentInternalPath(raw)) {
+    return resolve(raw);
   }
-  const safe = isAbsolute(file) ? file.slice(1) : file;
-  return resolve(scopePath, safe);
+  const scope = resolve(scopePath);
+  if (isAbsolute(raw)) {
+    const abs = normalize(raw);
+    const rel = relative(scope, abs);
+    // Already under scope (or is the scope root) — use absolute path directly.
+    if (rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))) {
+      return abs;
+    }
+    // Outside scope: keep absolute so ScopeGuard can deny (do not strip "/" and re-join).
+    return abs;
+  }
+  return resolve(scope, raw);
+}
+
+function isAgentCreatedFile(filePath: string): boolean {
+  try {
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) return false;
+    const head = readFileSync(filePath, 'utf-8').slice(0, 8000);
+    return /\bAI\b[\s—:-].*\d{4}-\d{2}-\d{2}/.test(head) || head.includes('AI —');
+  } catch {
+    return false;
+  }
+}
+
+function assertSafeDelete(targetPath: string, kind: 'file' | 'directory'): ToolResult | null {
+  if (isAgentInternalPath(targetPath)) return null;
+  if (kind === 'file') {
+    if (isAgentCreatedFile(targetPath)) return null;
+    return {
+      success: false,
+      output: `Refused to delete "${targetPath}": it does not look like an Agent-X–created file. Only delete files this agent wrote (or use an explicit high-risk permission / bypass for user-owned files).`,
+      error: 'DELETE_GUARD',
+    };
+  }
+  // Directory: refuse if any non-agent file exists inside (shallow + one level).
+  try {
+    const entries = readdirSync(targetPath, { withFileTypes: true });
+    for (const ent of entries) {
+      const child = resolve(targetPath, ent.name);
+      if (ent.isFile() && !isAgentCreatedFile(child)) {
+        return {
+          success: false,
+          output: `Refused to delete directory "${targetPath}": contains user/pre-existing file "${ent.name}". Only remove directories made of Agent-X–created files.`,
+          error: 'DELETE_GUARD',
+        };
+      }
+    }
+  } catch {
+    /* existence checked by caller */
+  }
+  return null;
 }
 
 export async function fileRead(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
   const filePath = resolveScopedPath(context.scopePath, args['path'] as string);
   try {
+    // PDFs are binary — never utf-8 dump them; extract text via pdf_read path.
+    if (/\.pdf$/i.test(filePath) || isPdfMagic(filePath)) {
+      const { pdfRead } = await import('./documents.js');
+      return pdfRead({ path: args['path'] ?? filePath }, context);
+    }
+
     const content = readFileSync(filePath, 'utf-8');
     const MAX_CHARS = 50000;
     if (content.length > MAX_CHARS) {
@@ -47,6 +102,23 @@ export async function fileRead(args: Record<string, unknown>, context: ToolExecu
     return { success: true, output: content };
   } catch (error) {
     return { success: false, output: `Failed to read file: ${(error as Error).message}`, error: 'READ_ERROR' };
+  }
+}
+
+function isPdfMagic(filePath: string): boolean {
+  let fd: number | undefined;
+  try {
+    if (!existsSync(filePath)) return false;
+    fd = openSync(filePath, 'r');
+    const head = Buffer.alloc(5);
+    const n = readSync(fd, head, 0, 5, 0);
+    return n >= 5 && head.toString('latin1').startsWith('%PDF-');
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try { closeSync(fd); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -82,6 +154,8 @@ export async function fileDelete(args: Record<string, unknown>, context: ToolExe
     if (!existsSync(filePath)) {
       return { success: false, output: 'File does not exist', error: 'NOT_FOUND' };
     }
+    const guard = assertSafeDelete(filePath, 'file');
+    if (guard) return guard;
     unlinkSync(filePath);
     return { success: true, output: `Deleted ${filePath}` };
   } catch (error) {
@@ -106,6 +180,8 @@ export async function folderDelete(args: Record<string, unknown>, context: ToolE
     if (!existsSync(dirPath)) {
       return { success: false, output: 'Directory does not exist', error: 'NOT_FOUND' };
     }
+    const guard = assertSafeDelete(dirPath, 'directory');
+    if (guard) return guard;
     rmSync(dirPath, { recursive: true });
     return { success: true, output: `Deleted directory ${dirPath}` };
   } catch (error) {
