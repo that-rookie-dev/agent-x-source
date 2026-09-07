@@ -1,4 +1,4 @@
-import { type ChildProcess, execSync } from 'node:child_process';
+import { type ChildProcess, execFileSync, execSync } from 'node:child_process';
 import { getDataDir, getLogger } from '@agentx/shared';
 import { IS_WINDOWS } from './platform.js';
 import type { AgentEventBus } from '../EventBus.js';
@@ -230,9 +230,11 @@ export class AgentProcessRegistry {
 
     try {
       if (IS_WINDOWS) {
-        // Kill the entire process tree so shell grandchildren are also stopped.
-        const treeFlag = p.detached ? '/T' : '';
-        try { execSync(`taskkill ${treeFlag} /F /PID ${pid} 2>nul`, { timeout: 5000 }); } catch { /* ignore */ }
+        // Kill the process (and its tree when detached) via taskkill args, not a shell string.
+        const args = p.detached ? ['/T', '/F', '/PID', String(pid)] : ['/F', '/PID', String(pid)];
+        try {
+          execFileSync('taskkill', args, { timeout: 5000, stdio: 'ignore', windowsHide: true });
+        } catch { /* ignore */ }
       } else if (p.detached) {
         // Detached background processes are their own group leaders: kill the whole group.
         try {

@@ -574,12 +574,18 @@ If the test is correct and the issue is in the source code, say "SOURCE_BUG" and
 
     getLogger().info('ENGINEERING_CREW', `QaEngineer starting server in terminal: ${startCommand}`);
     const manager = TerminalManager.getInstance();
-    const session = manager.start({
-      command: startCommand,
-      cwd: this.cwd,
-      sessionId: `qa-engineer-${task.id}`,
-      label: `Server: ${startCommand}`,
-    });
+    let session;
+    try {
+      session = manager.start({
+        command: startCommand,
+        cwd: this.cwd,
+        sessionId: `qa-engineer-${task.id}`,
+        label: `Server: ${startCommand}`,
+      });
+    } catch (err) {
+      getLogger().warn('ENGINEERING_CREW', `Failed to start QA server terminal: ${(err as Error).message}`);
+      return null;
+    }
     const terminalId = session.id;
 
     // Wait for the server to become ready by polling the target URL

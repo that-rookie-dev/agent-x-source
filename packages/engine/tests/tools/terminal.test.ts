@@ -4,12 +4,28 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TerminalManager } from '../../src/tools/TerminalManager.js';
-import { terminalStart, terminalRead, terminalSend, terminalKill, terminalList } from '../../src/tools/builtin/terminal.js';
+import { terminalStart, terminalRead, terminalKill, terminalList } from '../../src/tools/builtin/terminal.js';
 import type { ToolExecutionContext } from '@agentx/shared';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const manager = TerminalManager.getInstance();
+const isWin = process.platform === 'win32';
+const linger = isWin ? 'ping -n 31 127.0.0.1 >nul' : 'sleep 30';
+const lingerShort = isWin ? 'ping -n 6 127.0.0.1 >nul' : 'sleep 5';
+const delayedEcho = isWin ? 'ping -n 2 127.0.0.1 >nul & echo test output 12345' : 'sleep 0.3 && echo test output 12345';
+const delayedRead = isWin ? 'ping -n 2 127.0.0.1 >nul & echo read test output' : 'sleep 0.3 && echo read test output';
+
+function waitForExit(session: { isAlive: () => boolean; onExit: (listener: (info: { exitCode: number; pid: number }) => void) => () => void }, timeoutMs = 4000): Promise<void> {
+  if (!session.isAlive()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out waiting for terminal exit')), timeoutMs);
+    session.onExit(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 
 function makeContext(scopePath: string, sessionId = 'test-session'): ToolExecutionContext {
   return {
@@ -28,10 +44,8 @@ describe('TerminalManager', () => {
     });
     expect(session.id).toMatch(/^term-/);
     expect(session.pid).toBeGreaterThan(0);
-    expect(session.isAlive()).toBe(true);
 
-    // Wait for it to finish
-    await new Promise((r) => setTimeout(r, 500));
+    await waitForExit(session);
 
     const info = session.toInfo();
     expect(info.command).toBe('echo hello');
@@ -43,7 +57,7 @@ describe('TerminalManager', () => {
 
   it('lists terminals by session', async () => {
     const session = manager.start({
-      command: 'sleep 2',
+      command: lingerShort,
       cwd: tmpdir(),
       sessionId: 'test-list-session',
     });
@@ -57,7 +71,7 @@ describe('TerminalManager', () => {
 
   it('captures output', async () => {
     const session = manager.start({
-      command: 'sh -c "sleep 0.3 && echo test output 12345"',
+      command: delayedEcho,
       cwd: tmpdir(),
       sessionId: 'test-output-session',
     });
@@ -73,7 +87,7 @@ describe('TerminalManager', () => {
 
   it('kills a terminal', async () => {
     const session = manager.start({
-      command: 'sleep 30',
+      command: linger,
       cwd: tmpdir(),
       sessionId: 'test-kill-session',
     });
@@ -110,7 +124,7 @@ describe('terminal tools', () => {
 
   it('terminal_read returns output in tail mode', async () => {
     const ctx = makeContext(tmpdir(), testSessionId);
-    const startResult = await terminalStart({ command: 'sh -c "sleep 0.3 && echo read test output"' }, ctx);
+    const startResult = await terminalStart({ command: delayedRead }, ctx);
     const terminalId = startResult.metadata!.terminalId as string;
 
     // Wait for output
@@ -126,7 +140,7 @@ describe('terminal tools', () => {
     // Kill any leftover terminals first
     manager.killBySession(testSessionId);
     await new Promise((r) => setTimeout(r, 100));
-    await terminalStart({ command: 'sleep 5', label: 'test-sleep' }, ctx);
+    await terminalStart({ command: lingerShort, label: 'test-sleep' }, ctx);
 
     const listResult = await terminalList({}, ctx);
     expect(listResult.success).toBe(true);
@@ -136,7 +150,7 @@ describe('terminal tools', () => {
 
   it('terminal_kill kills a terminal', async () => {
     const ctx = makeContext(tmpdir(), testSessionId);
-    const startResult = await terminalStart({ command: 'sleep 10' }, ctx);
+    const startResult = await terminalStart({ command: linger }, ctx);
     const terminalId = startResult.metadata!.terminalId as string;
 
     const killResult = await terminalKill({ terminalId }, ctx);

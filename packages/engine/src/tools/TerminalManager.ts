@@ -14,6 +14,7 @@
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { generateId, getLogger } from '@agentx/shared';
+import { getShellCommand } from './platform.js';
 
 type PtyModule = typeof import('@homebridge/node-pty-prebuilt-multiarch');
 type PtyProcess = ReturnType<PtyModule['spawn']>;
@@ -88,16 +89,16 @@ class TerminalSession {
     this.label = opts.label ?? opts.command.slice(0, 60);
     this.createdAt = Date.now();
 
-    const env = {
-      ...process.env,
-      TERM: 'xterm-256color',
-      ...opts.env,
-    } as Record<string, string>;
+    const env: Record<string, string> = { TERM: 'xterm-256color' };
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    if (opts.env) Object.assign(env, opts.env);
 
-    // Spawn through a shell so the command string is parsed properly
-    // (supports pipes, &&, redirects, etc.)
-    const shell = process.env['SHELL'] ?? '/bin/sh';
-    this.ptyProcess = loadPty().spawn(shell, ['-c', opts.command], {
+    // Spawn through the platform shell so the command string is parsed
+    // (pipes, &&, redirects) and Windows does not try to exec /bin/sh.
+    const shell = getShellCommand(opts.command);
+    this.ptyProcess = loadPty().spawn(shell.cmd, shell.args, {
       name: 'xterm-256color',
       cols: opts.cols ?? 120,
       rows: opts.rows ?? 30,
@@ -106,6 +107,13 @@ class TerminalSession {
     });
 
     this.pid = this.ptyProcess.pid;
+
+    const handleExit = (exitCode: number): void => {
+      if (!this.alive && this.exitCode !== null) return;
+      this.alive = false;
+      this.exitCode = exitCode;
+      this.emitter.emit('exit', { exitCode, pid: this.pid });
+    };
 
     this.ptyProcess.onData((data: string) => {
       this.output += data;
@@ -127,9 +135,16 @@ class TerminalSession {
     });
 
     this.ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-      this.alive = false;
-      this.exitCode = exitCode;
-      this.emitter.emit('exit', { exitCode, pid: this.pid });
+      handleExit(exitCode);
+    });
+
+    // Fast commands (echo, true) can exit before onExit is subscribed.
+    setImmediate(() => {
+      try {
+        process.kill(this.pid, 0);
+      } catch {
+        handleExit(this.exitCode ?? 0);
+      }
     });
   }
 
