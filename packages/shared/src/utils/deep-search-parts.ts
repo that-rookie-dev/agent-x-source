@@ -125,7 +125,7 @@ export function orderPartsForChatRender<T extends { type: string; id?: string; t
   const questionnaireParts: T[] = [];
   const nonDeep: T[] = [];
   for (const p of parts) {
-    if (p.type === 'deep_search' && p.id) {
+    if ((p.type === 'deep_search' || p.type === 'download') && p.id) {
       deepSearchById.set(p.id, p);
     } else if (p.type === 'questionnaire') {
       questionnaireParts.push(p);

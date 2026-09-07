@@ -14,6 +14,7 @@ import {
   getAssetManager,
   getVoiceSidecarManager,
   installVoiceDependencies,
+  ensureVoiceDownloadRuntime,
 } from './shared.js';
 import {
   getVoiceConfig,
@@ -116,20 +117,28 @@ function createVoiceRoutesRouter(): Router {
       return res.json({ ok: true, assetId, status: 'running' });
     }
 
-    voiceJobStatuses.set(assetId, { status: 'running', progress: 0 });
-    getAssetManager().downloadAsset(asset, (progress) => {
-      voiceJobStatuses.set(assetId, {
-        status: progress.status,
-        progress: progress.progress,
-        error: progress.error,
-        detail: progress.detail,
-        downloadedMB: progress.downloadedMB,
-        totalMB: progress.totalMB,
-      });
-    })
-      .then(async (installed) => {
+    voiceJobStatuses.set(assetId, {
+      status: 'running',
+      progress: 0,
+      detail: 'Preparing Python environment…',
+    });
+
+    void (async () => {
+      try {
+        await ensureVoiceDownloadRuntime((detail, progress) => {
+          voiceJobStatuses.set(assetId, { status: 'running', progress, detail });
+        });
+        const installed = await getAssetManager().downloadAsset(asset, (progress) => {
+          voiceJobStatuses.set(assetId, {
+            status: progress.status,
+            progress: progress.progress,
+            error: progress.error,
+            detail: progress.detail,
+            downloadedMB: progress.downloadedMB,
+            totalMB: progress.totalMB,
+          });
+        });
         addDownloadedAsset(installed);
-        // Register alias assets (e.g. kokoro-af for kokoro-onnx)
         try {
           const manifest = loadVoiceModelsManifest();
           await registerAliasAssets(manifest, assetId, voiceDataDir(), getVoiceConfig, addDownloadedAsset);
@@ -137,13 +146,13 @@ function createVoiceRoutesRouter(): Router {
           voiceError('Failed to register alias assets after download', error, { assetId });
         }
         voiceJobStatuses.set(assetId, { status: 'complete', progress: 100 });
-      })
-      .catch((error) => {
+      } catch (error) {
         voiceJobStatuses.set(assetId, {
           status: 'error',
           error: error instanceof Error ? error.message : String(error),
         });
-      });
+      }
+    })();
 
     res.json({ ok: true, assetId, status: 'running' });
   });

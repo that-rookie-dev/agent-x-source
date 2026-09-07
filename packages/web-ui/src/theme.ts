@@ -235,10 +235,16 @@ const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
           WebkitFontSmoothing: 'antialiased',
         },
         '::selection': { background: v('ink'), color: v('bg-primary') },
-        // Hide scrollbars everywhere while keeping overflow scrollable.
+        // No glow or shadow effects anywhere in the app UI.
         '*': {
           scrollbarWidth: 'none',
           msOverflowStyle: 'none',
+          boxShadow: 'none !important',
+          textShadow: 'none !important',
+        },
+        '*:focus-visible': {
+          outline: `1px solid ${alphaColor(v('accent-blue'), '33')} !important`,
+          outlineOffset: 1,
         },
         '*::-webkit-scrollbar': {
           display: 'none',
@@ -264,6 +270,11 @@ const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
         '.ax-scroll': {
           overflow: 'auto',
           '& > *': { flexShrink: 0 },
+        },
+        // Remove the inner focus outline from text inputs/editable areas;
+        // the outer input border (MuiOutlinedInput fieldset, custom input border, etc.) stays visible.
+        'input, textarea, [contenteditable="true"]': {
+          outline: 'none !important',
         },
       },
     },
@@ -328,10 +339,45 @@ const themeOptions: CssVarsThemeOptions & Parameters<typeof createTheme>[0] = {
       styleOverrides: {
         root: {
           '& .MuiOutlinedInput-root': {
-            '& fieldset': { borderColor: v('border-strong') },
-            '&:hover fieldset': { borderColor: v('border-accent') },
-            '&.Mui-focused fieldset': { borderColor: v('accent-blue') },
+            '& fieldset': { borderColor: v('border-default') },
+            '&:hover fieldset': { borderColor: v('border-strong') },
+            '&.Mui-focused fieldset': { borderColor: v('border-accent') },
           },
+        },
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          '& fieldset': { borderColor: v('border-default') },
+          '&:hover fieldset': { borderColor: v('border-strong') },
+          '&.Mui-focused fieldset': { borderColor: v('border-accent') },
+          '& input:focus-visible, & textarea:focus-visible': { outline: 'none !important' },
+        },
+      },
+    },
+    MuiInput: {
+      styleOverrides: {
+        root: {
+          '&:before': { borderBottom: `1px solid ${v('border-default')}` },
+          '&:after': { borderBottom: `2px solid ${v('border-accent')}` },
+          '&:hover:not(.Mui-disabled):before': { borderBottom: `1px solid ${v('border-strong')}` },
+        },
+      },
+    },
+    MuiFilledInput: {
+      styleOverrides: {
+        root: {
+          '&:before': { borderBottom: `1px solid ${v('border-default')}` },
+          '&:after': { borderBottom: `2px solid ${v('border-accent')}` },
+          '&:hover:not(.Mui-disabled):before': { borderBottom: `1px solid ${v('border-strong')}` },
+        },
+      },
+    },
+    MuiInputBase: {
+      styleOverrides: {
+        root: {
+          '& input:focus-visible, & textarea:focus-visible': { outline: 'none !important' },
         },
       },
     },

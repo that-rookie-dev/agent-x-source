@@ -13,6 +13,10 @@ vi.mock('../../src/channels-sync.js', () => ({
   getTelegramInboundStatus: vi.fn(),
 }));
 
+vi.mock('@agentx/engine', () => ({
+  getRuntimeCapabilityManager: () => null,
+}));
+
 import { getEngine, isStorageDeferred } from '../../src/engine.js';
 import { getTelegramInboundStatus } from '../../src/channels-sync.js';
 import { router as healthRouter } from '../../src/routes/health.js';
@@ -51,5 +55,7 @@ describe('health router', () => {
     expect(body.status).toBe('ok');
     expect(body.sessions).toBe(2);
     expect(body.crews).toBe(1);
+    expect(body.syntheticIntelligence).toBeTruthy();
+    expect(body.syntheticIntelligence.sandbox).toBe('process');
   });
 });

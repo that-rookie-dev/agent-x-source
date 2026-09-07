@@ -6,7 +6,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
-import { getLogger, resolveMaxOutputTokens } from '@agentx/shared';
+import { getLogger, ollamaOpenAiBaseUrl, resolveMaxOutputTokens } from '@agentx/shared';
 import { createGroq } from '@ai-sdk/groq';
 import { createCohere } from '@ai-sdk/cohere';
 import { createMistral } from '@ai-sdk/mistral';
@@ -132,7 +132,9 @@ export function createAiSdkModel(config: AgentXConfig, explicitApiKey?: string):
     case 'together':
     case 'moonshot':
     case 'fireworks': {
-      const resolvedUrl = baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1';
+      const resolvedUrl = activeProvider === 'ollama'
+        ? ollamaOpenAiBaseUrl(baseURL)
+        : (baseURL || DEFAULT_BASE_URLS[activeProvider] || 'https://api.openai.com/v1');
       const compat = createOpenAICompatible({
         name: activeProvider,
         apiKey,
@@ -297,7 +299,7 @@ export function createAiSdkTools(
   emit: (event: EngineEvent) => void,
   waitForClarification: (questionnaire: QuestionnairePayload) => Promise<string>,
   runSubAgent: (instruction: string, tools: string[] | undefined, timeout: number, background?: boolean) => Promise<{ success: boolean; output: string; elapsed: number; agentId?: string }>,
-  onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>) => void,
+  onToolExecuted?: (toolId: string, success: boolean, output: string, elapsed: number, args?: Record<string, unknown>, metadata?: Record<string, unknown>) => void,
   parentSpan?: Span,
   filteredToolIds?: string[],
   preToolCallCheck?: (toolId: string, args: Record<string, unknown>) => string | null,
@@ -692,7 +694,7 @@ export function createAiSdkTools(
             const reflectedOutput = reflectOutput(targetId, result.output);
             result.output = reflectedOutput;
             recordCall(targetId, resolved.resolvedArgs, reflectedOutput, result.success);
-            onToolExecuted?.(targetId, result.success, reflectedOutput, Date.now() - startTime, resolved.resolvedArgs);
+            onToolExecuted?.(targetId, result.success, reflectedOutput, Date.now() - startTime, resolved.resolvedArgs, result.metadata);
             emit({ type: 'tool_complete', tool: toolDef.id, result, elapsed: Date.now() - startTime, args: args as Record<string, unknown>, callId });
             const loginResponse = await promptForLogin(targetId, result);
             if (loginResponse) return loginResponse;
@@ -810,7 +812,7 @@ export function createAiSdkTools(
                const reflectedOutput = reflectOutput(toolDef.id, result.output);
                result.output = reflectedOutput;
                recordCall(toolDef.id, args as Record<string, unknown>, reflectedOutput, result.success);
-               onToolExecuted?.(toolDef.id, result.success, reflectedOutput, elapsed, args as Record<string, unknown>);
+               onToolExecuted?.(toolDef.id, result.success, reflectedOutput, elapsed, args as Record<string, unknown>, result.metadata);
                emit({
                  type: 'tool_complete',
                  tool: toolDef.id,

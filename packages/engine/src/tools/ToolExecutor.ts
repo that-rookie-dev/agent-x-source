@@ -429,6 +429,10 @@ export class ToolExecutor implements ToolPermissionHost {
     return this.handlers.has(toolId);
   }
 
+  unregisterHandler(toolId: string): boolean {
+    return this.handlers.delete(toolId);
+  }
+
   unregisterHandlersByPrefix(prefix: string): number {
     let removed = 0;
     for (const toolId of [...this.handlers.keys()]) {
@@ -610,7 +614,7 @@ export class ToolExecutor implements ToolPermissionHost {
       sessionId,
       scopePath: this.scopeGuard.getScopePath(),
       contextKind: this.sessionContextKind,
-      timeout: this.voiceTurnActive ? 22_000 : 30_000,
+      timeout: tool?.timeoutMs ?? (this.voiceTurnActive ? 22_000 : 30_000),
       voiceTurn: this.voiceTurnActive,
       config: this.runtimeConfig ?? undefined,
       ...(this.inboundSourceChannel ? { sourceChannel: this.inboundSourceChannel } : {}),
@@ -653,19 +657,29 @@ export class ToolExecutor implements ToolPermissionHost {
 
     try {
       const startTime = Date.now();
-      
-      // Race between handler execution and timeout
+
+      // Race between handler execution and timeout. Handler errors are converted to a
+      // ToolResult so the race only rejects on our timeout, avoiding unhandled
+      // rejections from the losing promise.
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<ToolResult>((_, reject) => {
-        setTimeout(() => {
+        timeoutId = setTimeout(() => {
           abortController.abort();
           reject(new Error(`Tool execution timeout after ${context.timeout}ms`));
         }, context.timeout);
       });
 
+      const handlerPromise = handler(args, context).catch((error: unknown) => ({
+        success: false,
+        output: error instanceof Error ? error.message : 'Tool execution failed',
+        error: 'EXECUTION_ERROR',
+      }));
+
       const rawResult = await Promise.race([
-        handler(args, context),
+        handlerPromise,
         timeoutPromise,
       ]);
+      clearTimeout(timeoutId);
       const result = normalizeToolResult(toolId, rawResult);
 
       const elapsed = Date.now() - startTime;

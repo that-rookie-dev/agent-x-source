@@ -3000,6 +3000,22 @@ export const subagents = {
   cancel: (id: string) => request<{ ok: boolean }>(`/subagents/${id}/cancel`, { method: 'POST' }),
 };
 
+export interface AgentProcessInfo {
+  pid: number;
+  command: string;
+  sessionId: string;
+  scopePath: string;
+  cwd: string;
+  startTime: number;
+  status: 'running' | 'stopping' | 'exited';
+  port?: number;
+}
+
+export const processes = {
+  bySession: (sessionId: string) => request<{ processes: AgentProcessInfo[] }>(`/processes/session/${sessionId}`).then((r) => r.processes),
+  kill: (pid: number, sessionId: string) => request<{ ok: boolean }>(`/processes/${pid}/kill`, { method: 'POST', body: JSON.stringify({ sessionId }) }),
+};
+
 export type PerformancePresetId = 'quiet' | 'balanced' | 'moderate' | 'ultimate';
 
 export interface PerformanceLanesInfo {
@@ -3353,7 +3369,225 @@ export const adoption = {
     }),
 };
 
+export type CapabilityRecord = import('@agentx/shared').Capability;
+export type GraduationGateRecord = import('@agentx/shared').GraduationGate;
+export type CapabilityAuditRecord = import('@agentx/shared').CapabilityAuditEvent;
+export type ObservedPatternRecord = import('@agentx/shared').ObservedPattern;
+export type CapabilityTestCaseRecord = import('@agentx/shared').CapabilityTestCase;
+export type CapabilityUsageReportRecord = import('@agentx/shared').CapabilityUsageReport;
+export type SyntheticIntelligenceSettings = import('@agentx/shared').SyntheticIntelligenceConfig;
+
+export const capabilities = {
+  list: (opts?: { status?: string; kind?: string; q?: string; origin?: string; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.status) params.set('status', opts.status);
+    if (opts?.kind) params.set('kind', opts.kind);
+    if (opts?.q) params.set('q', opts.q);
+    if (opts?.origin) params.set('origin', opts.origin);
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.offset) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return request<{
+      capabilities: CapabilityRecord[];
+      stats: { total: number; byStatus: Record<string, number>; byKind: Record<string, number> };
+    }>(`/capabilities${qs ? `?${qs}` : ''}`);
+  },
+  stats: () => request<{
+    total: number;
+    byStatus: Record<string, number>;
+    byKind: Record<string, number>;
+    tools: number;
+    skills: number;
+    pendingApprovals: number;
+  }>('/capabilities/stats'),
+  get: (id: string) => request<{
+    capability: CapabilityRecord;
+    gates: GraduationGateRecord[];
+    audit: CapabilityAuditRecord[];
+    usage: CapabilityUsageReportRecord | null;
+  }>(`/capabilities/${id}`),
+  update: (id: string, body: { name?: string; description?: string; sourceCode?: string; promptTemplate?: string; content?: string }) =>
+    request<{ capability: CapabilityRecord }>(`/capabilities/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  updateCapabilityContent: (id: string, body: { name?: string; description?: string; sourceCode?: string; promptTemplate?: string; content?: string }) =>
+    request<{ capability: CapabilityRecord }>(`/capabilities/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  generate: (body: { prompt: string; kind?: 'tool' | 'skill' | 'knowledge' | 'auto'; language?: string; sessionId?: string }) =>
+    request<{ proposal: { proposedCapability: CapabilityRecord; confidence: number; alternatives: string[] } }>(
+      '/capabilities/generate',
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  clarify: (prompt: string) =>
+    request<{ questions: string[]; inferredKind: string }>('/capabilities/generate/clarify', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    }),
+  approve: (id: string, gate?: 'sandbox' | 'trial' | 'registration') =>
+    request<{ capability: CapabilityRecord }>(`/capabilities/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ gate: gate ?? 'registration' }),
+    }),
+  reject: (id: string, reason?: string, feedback?: string) =>
+    request<{ ok: boolean }>(`/capabilities/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? '', feedback }),
+    }),
+  disable: (id: string) =>
+    request<{ capability: CapabilityRecord }>(`/capabilities/${id}/disable`, { method: 'POST', body: '{}' }),
+  enable: (id: string) =>
+    request<{ capability: CapabilityRecord }>(`/capabilities/${id}/enable`, { method: 'POST', body: '{}' }),
+  archive: (id: string) =>
+    request<{ ok: boolean }>(`/capabilities/${id}/archive`, { method: 'POST', body: '{}' }),
+  sandbox: (id: string) =>
+    request<{ result: import('@agentx/shared').CapabilitySandboxResult; capability: CapabilityRecord }>(
+      `/capabilities/${id}/sandbox`,
+      { method: 'POST', body: '{}' },
+    ),
+  test: (id: string, args: Record<string, unknown>) =>
+    request<{ result: import('@agentx/shared').CapabilitySandboxResult }>(`/capabilities/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ input: args, args }),
+    }),
+  testCases: (id: string) => request<{ testCases: CapabilityTestCaseRecord[] }>(`/capabilities/${id}/test-cases`),
+  saveTestCase: (id: string, name: string, input: Record<string, unknown>) =>
+    request<{ testCase: CapabilityTestCaseRecord }>(`/capabilities/${id}/test-cases`, {
+      method: 'POST',
+      body: JSON.stringify({ name, input }),
+    }),
+  renameTestCase: (id: string, caseId: string, name: string, input: Record<string, unknown>) =>
+    request<{ testCase: CapabilityTestCaseRecord }>(`/capabilities/${id}/test-cases/${caseId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name, input }),
+    }),
+  deleteTestCase: (id: string, caseId: string) =>
+    request<{ ok: boolean }>(`/capabilities/${id}/test-cases/${caseId}`, { method: 'DELETE' }),
+  runTestCase: (id: string, caseId: string) =>
+    request<{ result: import('@agentx/shared').CapabilitySandboxResult }>(`/capabilities/${id}/test-cases/${caseId}/run`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  runAllTests: (id: string) =>
+    request<{ results: Array<{ testCase: CapabilityTestCaseRecord; result: import('@agentx/shared').CapabilitySandboxResult }> }>(
+      `/capabilities/${id}/run-all-tests`,
+      { method: 'POST', body: '{}' },
+    ),
+  usage: (id: string) => request<{ usage: CapabilityUsageReportRecord }>(`/capabilities/${id}/usage`),
+  observations: (opts?: { minConfidence?: number; minFrequency?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.minConfidence != null) params.set('minConfidence', String(opts.minConfidence));
+    if (opts?.minFrequency != null) params.set('minFrequency', String(opts.minFrequency));
+    const qs = params.toString();
+    return request<{ observations: ObservedPatternRecord[] }>(`/capabilities/observed${qs ? `?${qs}` : ''}`);
+  },
+  acknowledgeObservation: (id: string) =>
+    request<{ ok: boolean }>(`/capabilities/observed/${id}/acknowledge`, { method: 'POST', body: '{}' }),
+  ignoreObservation: (id: string) =>
+    request<{ ok: boolean }>(`/capabilities/observed/${id}/ignore`, { method: 'POST', body: '{}' }),
+  generateFromObservation: (id: string) =>
+    request<{ proposal: { proposedCapability: CapabilityRecord } | null }>(`/capabilities/observed/${id}/generate`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  settings: () => request<{ settings: SyntheticIntelligenceSettings }>('/capabilities/settings'),
+  updateSettings: (settings: SyntheticIntelligenceSettings) =>
+    request<{ settings: SyntheticIntelligenceSettings }>('/capabilities/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings }),
+    }),
+  consent: (generationConsent: 'unset' | 'once' | 'always' | 'deny' | 'deny-permanently') =>
+    request<{ settings: SyntheticIntelligenceSettings }>('/capabilities/consent', {
+      method: 'POST',
+      body: JSON.stringify({ generationConsent }),
+    }),
+  metrics: () => request<{
+    metrics: Record<string, number>;
+    alerts: string[];
+    health: Record<string, unknown>;
+  }>('/capabilities/metrics'),
+  dashboard: () => request<{
+    stats: { total: number; byStatus: Record<string, number>; byKind: Record<string, number> };
+    topTools: Array<{ name: string; uses: number; lastUsedAt: number }>;
+    failedGens: number;
+    approvalRate: number;
+    pipeline: Record<string, number>;
+    recent: CapabilityAuditRecord[];
+  }>('/capabilities/dashboard'),
+};
+
 // ─── Factory Reset ───
 export const factoryReset = {
   reset: () => request<{ ok: boolean; message: string }>('/reset', { method: 'POST' }),
+};
+
+// ─── Engineering Crew ───
+export interface EngineeringCrewVerification {
+  criterion: string;
+  passed: boolean;
+  detail?: string;
+  command?: string;
+  exitCode?: number;
+  output?: string;
+}
+
+export interface EngineeringCrewUnknown {
+  question: string;
+  resolution?: string;
+  escalated?: boolean;
+}
+
+export interface EngineeringCrewPhase {
+  id: string;
+  title: string;
+  status: 'pending' | 'in_progress' | 'verified' | 'failed' | 'blocked';
+  dependsOn: string[];
+  acceptanceCriteria: string[];
+  unknowns: EngineeringCrewUnknown[];
+  verification: EngineeringCrewVerification[];
+  implementationNotes?: string | null;
+}
+
+export interface EngineeringCrewRun {
+  taskId: string;
+  objective?: string;
+  status: 'complete' | 'blocked' | 'in_progress' | 'failed' | 'timed_out' | 'cancelled' | 'unknown';
+  phases: EngineeringCrewPhase[];
+}
+
+export interface EngineeringCrewPlanArtifact {
+  taskId: string;
+  objective: string;
+  acceptanceCriteria: string[];
+  phases: EngineeringCrewPhase[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const engineeringCrew = {
+  listRuns: () =>
+    request<{ runs: EngineeringCrewRun[] }>('/engineering-crew/runs').then((r) => r.runs ?? []),
+  getRun: (taskId: string) =>
+    request<{ run: { taskId: string; plan: EngineeringCrewPlanArtifact } }>(`/engineering-crew/runs/${encodeURIComponent(taskId)}`).then((r) => r.run),
+  getPhases: (taskId: string) =>
+    request<{ phases: EngineeringCrewPhase[] }>(`/engineering-crew/runs/${encodeURIComponent(taskId)}/phases`).then((r) => r.phases ?? []),
+  getVerification: (taskId: string, phaseId: string) =>
+    request<{ phaseId: string; title: string; status: string; verification: EngineeringCrewVerification[]; acceptanceCriteria: string[] }>(
+      `/engineering-crew/runs/${encodeURIComponent(taskId)}/phases/${encodeURIComponent(phaseId)}/verification`,
+    ),
+  getCriteria: (taskId: string) =>
+    request<{ objective: string; acceptanceCriteria: string[]; unknowns: Array<EngineeringCrewUnknown & { phaseId: string }>; blocked: boolean }>(
+      `/engineering-crew/runs/${encodeURIComponent(taskId)}/criteria`,
+    ),
+  // #3/#4: Manual trigger, resume, and delete endpoints
+  triggerRun: (objective: string, sessionId?: string) =>
+    request<{ status: string; objective: string; sessionId: string }>('/engineering-crew/runs', {
+      method: 'POST',
+      body: JSON.stringify({ objective, sessionId }),
+    }),
+  resumeRun: (taskId: string, objective?: string) =>
+    request<{ status: string; taskId: string; objective: string }>(`/engineering-crew/runs/${encodeURIComponent(taskId)}/resume`, {
+      method: 'POST',
+      body: JSON.stringify({ objective }),
+    }),
+  deleteRun: (taskId: string) =>
+    request<{ status: string; taskId: string }>(`/engineering-crew/runs/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    }),
 };

@@ -190,8 +190,8 @@ async function ensureVoiceRuntimeReady(): Promise<void> {
   const checkImport = async (): Promise<boolean> => {
     if (!existsSync(venvPy)) return false;
     try {
-      await execVoiceCommand(venvPy, ['-c', 'import agentx_voice'], {
-        label: 'check-agentx-voice-import',
+      await execVoiceCommand(venvPy, ['-c', 'import speechbrain'], {
+        label: 'check-speechbrain-import',
         timeout: 15_000,
         env: pythonEnv(),
       });

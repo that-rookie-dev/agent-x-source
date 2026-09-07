@@ -1,15 +1,25 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
 
-type BuildSystem = 'npm' | 'pnpm' | 'yarn' | 'cargo' | 'go' | 'make' | 'cmake' | 'tsc' | 'unknown';
+type BuildSystem = 'npm' | 'pnpm' | 'yarn' | 'cargo' | 'go' | 'make' | 'cmake' | 'tsc' | 'maven' | 'gradle' | 'dotnet' | 'unknown';
 
 function detectBuild(cwd: string): BuildSystem {
+  if (existsSync(join(cwd, 'pom.xml'))) return 'maven';
+  if (
+    existsSync(join(cwd, 'build.gradle')) ||
+    existsSync(join(cwd, 'build.gradle.kts')) ||
+    existsSync(join(cwd, 'settings.gradle')) ||
+    existsSync(join(cwd, 'settings.gradle.kts'))
+  ) return 'gradle';
   if (existsSync(join(cwd, 'Makefile'))) return 'make';
   if (existsSync(join(cwd, 'CMakeLists.txt'))) return 'cmake';
   if (existsSync(join(cwd, 'Cargo.toml'))) return 'cargo';
   if (existsSync(join(cwd, 'go.mod'))) return 'go';
+  try {
+    if (readdirSync(cwd).some((f) => f.endsWith('.csproj') || f.endsWith('.sln'))) return 'dotnet';
+  } catch { /* ignore */ }
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8')) as Record<string, unknown>;
     const scripts = (pkg?.scripts ?? {}) as Record<string, unknown>;
@@ -34,11 +44,11 @@ function execCmd(cmd: string, cwd: string, timeout = 180000): ToolResult {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    return { success: true, output: output.trim() || 'Build succeeded' };
+    return { success: true, output: output.trim() || 'Build succeeded', metadata: { exitCode: 0, command: cmd } };
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message: string };
+    const err = error as { stdout?: string; stderr?: string; message: string; status?: number };
     const output = [err.stdout, err.stderr].filter(Boolean).join('\n').trim() || err.message;
-    return { success: false, output, error: 'BUILD_FAILED' };
+    return { success: false, output, error: 'BUILD_FAILED', metadata: { exitCode: err.status ?? 1, command: cmd } };
   }
 }
 
@@ -59,8 +69,21 @@ export async function build(args: Record<string, unknown>, context: ToolExecutio
     case 'cmake':
       execSync('mkdir -p build', { cwd });
       return execCmd('cmake --build build', cwd);
+    case 'maven': return execCmd(`${mvnCmd(cwd)} -B package${release ? '' : ' -DskipTests=false'}`, cwd, 300_000);
+    case 'gradle': return execCmd(`${gradleCmd(cwd)} build`, cwd, 300_000);
+    case 'dotnet': return execCmd(`dotnet build${release ? ' -c Release' : ''}`, cwd, 300_000);
     default: return { success: false, output: 'Unknown build system. Use shell_exec instead.', error: 'UNSUPPORTED' };
   }
+}
+
+/** Prefer the Maven wrapper when present so builds don't depend on a system-installed Maven. */
+function mvnCmd(cwd: string): string {
+  return existsSync(join(cwd, 'mvnw')) ? './mvnw' : 'mvn';
+}
+
+/** Prefer the Gradle wrapper when present, for the same reason. */
+function gradleCmd(cwd: string): string {
+  return existsSync(join(cwd, 'gradlew')) ? './gradlew' : 'gradle';
 }
 
 export async function buildRun(args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
@@ -76,6 +99,9 @@ export async function buildRun(args: Record<string, unknown>, context: ToolExecu
     case 'pnpm': return execCmd(`pnpm start${args_str ? ` ${args_str}` : ''}`, cwd);
     case 'yarn': return execCmd(`yarn start${args_str ? ` ${args_str}` : ''}`, cwd);
     case 'make': return execCmd(`make run${args_str ? ` ARGS="${args_str}"` : ''}`, cwd);
+    case 'maven': return execCmd(`${mvnCmd(cwd)} -B spring-boot:run`, cwd, 60_000);
+    case 'gradle': return execCmd(`${gradleCmd(cwd)} run`, cwd, 60_000);
+    case 'dotnet': return execCmd(`dotnet run${args_str ? ` -- ${args_str}` : ''}`, cwd, 60_000);
     default: return { success: false, output: 'Use shell_exec to run this project', error: 'UNSUPPORTED' };
   }
 }
@@ -91,6 +117,9 @@ export async function buildCheck(_args: Record<string, unknown>, context: ToolEx
     case 'npm': return execCmd('npm run build', cwd);
     case 'pnpm': return execCmd('pnpm run build', cwd);
     case 'yarn': return execCmd('yarn build', cwd);
+    case 'maven': return execCmd(`${mvnCmd(cwd)} -B test`, cwd, 300_000);
+    case 'gradle': return execCmd(`${gradleCmd(cwd)} check`, cwd, 300_000);
+    case 'dotnet': return execCmd('dotnet test', cwd, 300_000);
     default: return { success: false, output: 'Unknown build system', error: 'UNSUPPORTED' };
   }
 }
@@ -107,6 +136,9 @@ export async function buildClean(_args: Record<string, unknown>, context: ToolEx
       return { success: true, output: 'Cleaned build artifacts' };
     }
     case 'make': return execCmd('make clean', cwd, 60000);
+    case 'maven': return execCmd(`${mvnCmd(cwd)} -B clean`, cwd, 60_000);
+    case 'gradle': return execCmd(`${gradleCmd(cwd)} clean`, cwd, 60_000);
+    case 'dotnet': return execCmd('dotnet clean', cwd, 60_000);
     default: return { success: true, output: 'No build artifacts to clean' };
   }
 }

@@ -2,14 +2,13 @@ import { exec, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { ToolResult, ToolExecutionContext } from '@agentx/shared';
-import { IS_WINDOWS, getShellCommand, getProcessListCommand } from '../platform.js';
+import { getShellCommand, getProcessListCommand } from '../platform.js';
 import { DockerSandbox } from '../../sandbox/DockerSandbox.js';
 import { recordCompactionFromShell } from '../../agent/compaction-file-hooks.js';
+import { getAgentProcessRegistry } from '../AgentProcessRegistry.js';
 import {
   buildShellEnv,
-  isTrackedShellPid,
-  trackShellChildPid,
-  untrackShellPid,
+  isBlockedDownloadCommand,
   validateCommandScope,
 } from '../shell-security.js';
 
@@ -49,6 +48,10 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
   recordCompactionFromShell(context.sessionId, context.scopePath, command, cwd);
   const scopeErr = validateCommandScope(command, context.scopePath, cwd);
   if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
+  const downloadCheck = isBlockedDownloadCommand(command);
+  if (downloadCheck.blocked) {
+    return { success: false, output: downloadCheck.reason ?? 'File downloads must use http_download only.', error: 'DOWNLOAD_BLOCKED' };
+  }
   const maxShellTimeout = context.voiceTurn ? 20_000 : 600_000;
   const timeout = Math.min((args['timeout'] as number) ?? 30000, maxShellTimeout);
   const maxLength = (args['maxLength'] as number) ?? 30000;
@@ -81,7 +84,7 @@ export async function shellExec(args: Record<string, unknown>, context: ToolExec
     });
     const combined = [stdout, stderr].filter(Boolean).join('\n').trim();
     const truncated = combined.length > maxLength ? combined.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : combined;
-    return { success: true, output: truncated };
+    return { success: true, output: truncated, metadata: { exitCode: 0 } };
   } catch (error) {
     const err = error as { stdout?: string; stderr?: string; message: string; code?: number };
     const output = [err.stdout, err.stderr].filter(Boolean).join('\n').trim() || err.message;
@@ -103,17 +106,37 @@ export async function shellBackground(args: Record<string, unknown>, context: To
   const cwd = args['cwd'] ? resolve(context.scopePath, args['cwd'] as string) : context.scopePath;
   const scopeErr = validateCommandScope(command, context.scopePath, cwd);
   if (scopeErr) return { success: false, output: scopeErr, error: 'SCOPE_VIOLATION' };
+  const downloadCheck = isBlockedDownloadCommand(command);
+  if (downloadCheck.blocked) {
+    return { success: false, output: downloadCheck.reason ?? 'File downloads must use http_download only.', error: 'DOWNLOAD_BLOCKED' };
+  }
 
   try {
     const shell = getShellCommand(command);
     const child = spawn(shell.cmd, shell.args, {
       cwd,
       detached: true,
-      stdio: 'ignore',
+      // stdin ignored, stdout/stderr piped so the Process Supervisor (AgentProcessRegistry)
+      // can capture a bounded log tail — needed to give the user something useful ("crashed
+      // with: <last lines>") instead of just "the process is no longer running" when a
+      // long-running dev server/background job dies unexpectedly.
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: buildShellEnv(cwd),
     });
     child.unref();
-    trackShellChildPid(child.pid);
+    const registry = getAgentProcessRegistry();
+    registry.track(child, {
+      command,
+      sessionId: context.sessionId,
+      scopePath: context.scopePath,
+      cwd,
+      detached: true,
+    });
+    if (child.pid) {
+      const pid = child.pid;
+      child.stdout?.on('data', (data: Buffer) => registry.appendLog(pid, data.toString()));
+      child.stderr?.on('data', (data: Buffer) => registry.appendLog(pid, data.toString()));
+    }
     return {
       success: true,
       output: `Background process started (PID: ${child.pid})`,
@@ -131,7 +154,7 @@ export async function processKill(args: Record<string, unknown>): Promise<ToolRe
   if (!pid || pid <= 0) {
     return { success: false, output: 'Invalid PID', error: 'KILL_ERROR' };
   }
-  if (!isTrackedShellPid(pid)) {
+  if (!getAgentProcessRegistry().isTracked(pid)) {
     return {
       success: false,
       output: `PID ${pid} was not started by Agent-X shell tools — kill denied for safety`,
@@ -139,18 +162,11 @@ export async function processKill(args: Record<string, unknown>): Promise<ToolRe
     };
   }
 
-  try {
-    if (IS_WINDOWS && signal === 'SIGTERM') {
-      await execAsync(`taskkill /PID ${pid} /F 2>nul`, { encoding: 'utf-8' });
-    } else {
-      process.kill(pid, signal);
-    }
-    untrackShellPid(pid);
-    return { success: true, output: `Sent ${signal} to PID ${pid}` };
-  } catch (error) {
-    untrackShellPid(pid);
-    return { success: false, output: `Failed to kill process: ${(error as Error).message}`, error: 'KILL_ERROR' };
+  const ok = getAgentProcessRegistry().kill(pid, signal);
+  if (!ok) {
+    return { success: false, output: `Failed to kill process ${pid}`, error: 'KILL_ERROR' };
   }
+  return { success: true, output: `Sent ${signal} to PID ${pid}` };
 }
 
 export async function processList(_args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolResult> {
@@ -188,7 +204,13 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
       stdio: ['pipe', 'pipe', 'pipe'],
       env: buildShellEnv(cwd),
     });
-    trackShellChildPid(child.pid);
+    getAgentProcessRegistry().track(child, {
+      command,
+      sessionId: context.sessionId,
+      scopePath: context.scopePath,
+      cwd,
+      detached: false,
+    });
 
     let stdout = '';
     let stderr = '';
@@ -210,7 +232,7 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
     });
 
     child.on('close', (code) => {
-      if (child.pid) untrackShellPid(child.pid);
+      if (child.pid) getAgentProcessRegistry().untrack(child.pid);
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
       const truncated = output.length > maxLength ? output.slice(0, maxLength) + `\n… [output truncated at ${maxLength} chars]` : output;
       resolvePromise({
@@ -222,7 +244,7 @@ export async function shellExecStreaming(args: Record<string, unknown>, context:
     });
 
     child.on('error', (err) => {
-      if (child.pid) untrackShellPid(child.pid);
+      if (child.pid) getAgentProcessRegistry().untrack(child.pid);
       resolvePromise({ success: false, output: `Failed to start: ${err.message}`, error: 'SPAWN_ERROR' });
     });
   });

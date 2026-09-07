@@ -155,6 +155,37 @@ export const featureRoutingConfigSchema = z.object({
   memoryExtraction: z.enum(['cloud', 'local']).optional(),
   memoryConsolidation: z.enum(['cloud', 'local']).optional(),
   embeddings: z.enum(['cloud', 'local']).optional(),
+  capabilityGeneration: z.enum(['cloud', 'local']).optional(),
+}).optional();
+
+export const syntheticIntelligenceConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  autoGraduateTools: z.boolean().optional(),
+  maxGeneratedToolCount: z.number().int().min(0).max(500).optional(),
+  allowUserPromptGeneration: z.boolean().optional(),
+  sandboxMode: z.preprocess(
+    (value) => (value === 'docker' || value === 'namespace' ? 'process' : value),
+    z.enum(['process', 'disabled']).optional(),
+  ),
+  maxGenerationsPerSession: z.number().int().min(0).max(50).optional(),
+  maxObservationsPerHour: z.number().int().min(0).max(500).optional(),
+  trialDurationMs: z.number().int().min(0).optional(),
+  trialMaxUses: z.number().int().min(0).max(10_000).optional(),
+  trialAutoPromote: z.boolean().optional(),
+  concurrentSandboxLimit: z.number().int().min(1).max(8).optional(),
+  sandboxTimeoutMs: z.number().int().min(250).max(120_000).optional(),
+  maxSourceCodeBytes: z.number().int().min(256).max(100_000).optional(),
+  maxDependencies: z.number().int().min(0).max(20).optional(),
+  dailySandboxBudgetMs: z.number().int().min(0).optional(),
+  minObservationsBeforeProposal: z.number().int().min(1).max(50).optional(),
+  minConfidenceThreshold: z.number().min(0).max(1).optional(),
+  observationWindowMs: z.number().int().min(1_000).optional(),
+  maxActiveObservations: z.number().int().min(1).max(500).optional(),
+  sweepEveryTurns: z.number().int().min(1).max(100).optional(),
+  deprecationSweepMs: z.number().int().min(1_000).optional(),
+  maxSideEffects: z.number().int().min(0).max(20).optional(),
+  generationConsent: z.enum(['unset', 'once', 'always', 'deny', 'deny-permanently']).optional(),
+  rolloutStage: z.enum(['observe-only', 'propose', 'trial', 'auto-low-risk']).optional(),
 }).optional();
 
 export const webSearchPaidProviderSchema = z.object({
@@ -293,6 +324,7 @@ export const agentXConfigSchema = z.preprocess(migrateConfigPerformanceKey, z.ob
   }),
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
+  syntheticIntelligence: syntheticIntelligenceConfigSchema,
   ui: z.object({
     theme: z.enum(['dark', 'light']),
     showTokenBar: z.boolean(),

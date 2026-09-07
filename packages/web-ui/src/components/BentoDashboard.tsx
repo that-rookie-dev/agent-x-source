@@ -223,7 +223,6 @@ function ArcMeter({
             transform={`rotate(${rotate} ${size / 2} ${size / 2})`}
             style={{
               transition: 'stroke-dasharray 480ms cubic-bezier(0.22, 1, 0.36, 1)',
-              filter: `drop-shadow(0 0 6px ${alphaColor(accent, '66')})`,
             }}
           />
         </svg>

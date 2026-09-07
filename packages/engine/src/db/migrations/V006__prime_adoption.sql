@@ -111,7 +111,8 @@ CREATE TABLE IF NOT EXISTS command_journal (
   result JSONB,
   error TEXT,
   received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  completed_at TIMESTAMPTZ
+  completed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_command_journal_session

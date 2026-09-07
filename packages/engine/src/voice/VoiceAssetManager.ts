@@ -277,7 +277,12 @@ export class VoiceAssetManager {
           resolvePromise({ stdout, stderr });
           return;
         }
-        const err = new Error(`Python asset command failed with exit code ${code}`);
+        const stderrHint = stderr.trim().split('\n').filter(Boolean).at(-1);
+        const err = new Error(
+          stderrHint
+            ? `Python asset command failed: ${stderrHint}`
+            : `Python asset command failed with exit code ${code}`,
+        );
         getLogger().error('VOICE', err, {
           detail: 'Python asset command failed',
           python: this.pythonExecutable,

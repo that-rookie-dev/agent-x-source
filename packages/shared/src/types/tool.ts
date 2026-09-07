@@ -11,7 +11,7 @@ export interface ToolDefinition {
   schema: ToolParameterSchema;
   examples?: string[];
   composable: boolean;
-  source: 'builtin' | 'plugin' | 'integration';
+  source: 'builtin' | 'plugin' | 'integration' | 'generated';
   parallelMode?: ParallelMode;
   isInteractive?: boolean;
   isDestructive?: boolean;
@@ -42,7 +42,8 @@ export type ToolCategory =
   | 'scheduler'
   | 'agent_orchestration'
   | 'agent_meta'
-  | 'integrations';
+  | 'integrations'
+  | 'internal';
 
 export type ToolRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 

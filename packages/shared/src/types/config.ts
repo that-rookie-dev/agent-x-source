@@ -130,6 +130,8 @@ export interface AgentXConfig extends Record<string, unknown> {
   host?: HostConfig;
   localModel?: LocalModelConfig;
   featureRouting?: FeatureRoutingConfig;
+  /** Runtime capability growth (Synthetic Intelligence). Default off. */
+  syntheticIntelligence?: import('./capability.js').SyntheticIntelligenceConfig;
   maxSubAgents?: number; // Maximum number of concurrent sub-agents (default: 5, max: 20)
 
   /** Maximum autonomous LLM↔tool cycles per turn (default: 20, increase for complex tasks) */
@@ -204,6 +206,7 @@ export interface FeatureRoutingConfig {
   memoryExtraction?: 'cloud' | 'local';
   memoryConsolidation?: 'cloud' | 'local';
   embeddings?: 'cloud' | 'local';
+  capabilityGeneration?: 'cloud' | 'local';
 }
 
 export interface ProviderSettings {

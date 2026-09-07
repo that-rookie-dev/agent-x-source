@@ -16,7 +16,7 @@ export default defineConfig({
   // external so only the current platform's binary is loaded at runtime.
   // httpcloak's ESM wrapper uses createRequire(import.meta.url)./index.js,
   // which becomes a self-require cycle when bundled (see web-api startup error).
-  external: ['pdfjs-dist', 'pdfjs-dist/build/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.mjs', 'esbuild', '@napi-rs/canvas', 'httpcloak', 'playwright'],
+  external: ['pdfjs-dist', 'pdfjs-dist/build/pdf.mjs', 'pdfjs-dist/legacy/build/pdf.mjs', 'esbuild', '@napi-rs/canvas', 'httpcloak', 'playwright', '@homebridge/node-pty-prebuilt-multiarch'],
   banner: {
     js: "import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
   },

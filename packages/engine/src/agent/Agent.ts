@@ -39,6 +39,11 @@ import { TaskManager } from './TaskManager.js';
 import { setTaskManagerInstance } from '../commands/builtin/tasks.js';
 import { registerSessionTodoManager } from '../tools/TodoAccess.js';
 import { setSubAgentManagerInstance } from '../tools/builtin/subagent.js';
+import { getAgentProcessRegistry } from '../tools/AgentProcessRegistry.js';
+import { EngineeringCrew, type EngineeringCrewResult, type SessionContext } from '../engineering-crew/EngineeringCrew.js';
+import { SubAgentManagerSpawner } from '../engineering-crew/SubAgentSpawner.js';
+import { routeCodingTask, type RouterDecision, type RouterContext, type LLMIntentClassifier } from '../engineering-crew/CodingTaskRouter.js';
+import { EngineeringCrewStore } from '../engineering-crew/EngineeringCrewStore.js';
 import { setCrewDelegator } from '../tools/builtin/delegate-to-crew.js';
 import { setCrewHubSearcher } from '../tools/builtin/search-crew-hub.js';
 import { buildCrewRosterHintBlock } from '../crew/crew-roster-hint.js';
@@ -83,6 +88,7 @@ import { maybeSyncGoalFromUserPrompt } from '../goal/goal-from-prompt.js';
 import { applyAdoptionTurnPolicy, clearAdoptionTurnPolicy } from '../adoption/adoption-turn-policy.js';
 import { CLARIFICATION_AWAITING_USER } from './ClarificationTurnPause.js';
 import { getExecutableSkillRegistry } from '../executable-skills/ExecutableSkillRegistry.js';
+import { getRuntimeCapabilityManager } from '../synthetic/RuntimeCapabilityManager.js';
 import { getDurableTurnStore } from '../durable-turn/DurableTurnStore.js';
 import { getSessionGenerationManager } from '../session-generation/SessionGenerationManager.js';
 import { isEngineShuttingDown } from '../runtime/ShutdownGate.js';
@@ -126,9 +132,7 @@ import {
 import { incrementAdoptionMetric } from '../adoption/adoption-metrics.js';
 import { SpecialistRegistry } from './SpecialistRegistry.js';
 import type { SpecialistType } from './SpecialistRegistry.js';
-import { SkillGenerator } from './SkillGenerator.js';
 import { ReflectionLoop } from './ReflectionLoop.js';
-import { SkillRegistry } from './SkillRegistry.js';
 import { TreeOfThoughts } from '../reasoning/TreeOfThoughts.js';
 import { ResearchEngine } from '../reasoning/ResearchEngine.js';
 import { CrewOrchestrator, buildCrewPrivateFastReplyPrompt, type CrewMember } from './CrewOrchestrator.js';
@@ -176,9 +180,9 @@ import { createAiSdkStreamHandler, consumeStreamWithWatchdog, STREAM_IDLE_TIMEOU
 import type { PartPersistFn } from './AiSdkStreamHandler.js';
 import { applyRichResponsePolicy } from './rich-response-policy.js';
 import {
+  applyInstructedActionConsent,
   detectsExplicitDeliverableRequest,
   detectsSessionProactiveConsentWaiver,
-  PROACTIVE_DELIVERABLE_TOOLS,
 } from '../services/tool/proactive-deliverable-consent.js';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
 import {
@@ -506,8 +510,6 @@ export class Agent {
 
   // ─── Reflection & Learning (lazy-init)
   private _reflectionLoop: ReflectionLoop | null = null;
-  private _skillGenerator: SkillGenerator | null = null;
-  private _skillRegistry: SkillRegistry | null = null;
 
   // ─── Neural memory (lazy-init)
   private _turnFeedbackService: TurnFeedbackService | null = null;
@@ -591,14 +593,6 @@ export class Agent {
   private get reflectionLoop(): ReflectionLoop {
     if (!this._reflectionLoop) this._reflectionLoop = new ReflectionLoop();
     return this._reflectionLoop;
-  }
-
-  private get skillGenerator(): SkillGenerator | null {
-    return this._skillGenerator;
-  }
-
-  private get skillRegistry(): SkillRegistry | null {
-    return this._skillRegistry;
   }
 
   get bypassPermissions(): boolean {
@@ -718,6 +712,8 @@ export class Agent {
     if (scopePath) this.contextTracker.setScopePath(scopePath);
   }
   private maxSubAgents = 8;
+  /** #16: Active Engineering Crew instance — set during crew runs so the REST API can cancel it. */
+  private activeCrew: EngineeringCrew | null = null;
   private unregisterPerformanceTune: (() => void) | null = null;
   public sessionManager: SessionManager | null = null;
   private enabledCrewSessionIds: Set<string> = new Set();
@@ -1093,6 +1089,11 @@ export class Agent {
     this.subAgents.setParentAgent(this);
     this.subAgents.ingestBackgroundResultsForSession(this.sessionId);
     setSubAgentManagerInstance(this.subAgents);
+    // Process Supervisor (docs/engineering-crew/DESIGN.md Section 4.6): let AgentProcessRegistry
+    // push proactive process_status_changed events into this session when a `shell_background`
+    // process this session started exits or crashes, instead of only reporting status the next
+    // time the user happens to ask.
+    getAgentProcessRegistry().registerSessionEventBus(this.sessionId, this.eventBus);
 
     setCrewDelegator(async (crewName: string, taskDescription: string) => {
       if (!this.crewOrchestrator) return { success: false, output: 'No crews available.' };
@@ -1399,7 +1400,7 @@ export class Agent {
     this.agentBus = getAgentBus();
     this.agentBus.attachEventBus(this.eventBus);
     this.specialistRegistry = new SpecialistRegistry(this.agentBus);
-    // skillGenerator and reflectionLoop are lazy-init (created on first access)
+    // reflectionLoop is lazy-init (created on first access)
 
     // Register this agent on the bus with persona identity
     const identity = this.options.promptProfile === 'crew_private' && this.options.crewPrivateHost
@@ -1601,6 +1602,16 @@ export class Agent {
 
   getScopePath(): string {
     return this.scopePath;
+  }
+
+  /** #16: Get the active Engineering Crew instance (if running) for cancellation. */
+  getActiveCrew(): EngineeringCrew | null {
+    return this.activeCrew;
+  }
+
+  /** #14: Get the SubAgentManager — used by standalone REST API crew runs. */
+  getSubAgentManager(): SubAgentManager {
+    return this.subAgents;
   }
 
   setScopePath(path: string): void {
@@ -2087,6 +2098,7 @@ export class Agent {
     // Store the per-message instruction for injection during completion (not in history)
     this.pendingInstruction = options?.instruction || null;
     this.mergeInterAgentAutoBlocksIntoPendingInstruction();
+    await this.injectSyntheticIntelligenceTurn(cleanContent);
     this.pendingVoiceMerge = options?.voiceMergeIntoMessage ?? null;
     this.pendingDelegateCrewIds = options?.delegateCrewIds?.length ? [...options.delegateCrewIds] : null;
     if (options?.clientSituation) {
@@ -2358,50 +2370,16 @@ export class Agent {
     // Reset turn-level permission auto-approve from any prior batch approval
     this.turnApprovedAll = false;
     this.toolExecutor?.getPermissionManager().revokeOneTimePermissions();
-    // Clear per-turn inline tool consent (bypass-mode enforcement).
+    // Clear per-turn inline tool consent, then re-apply from this user turn
+    // ("yes please", "save it to Articles", "don't ask again").
     this.toolExecutor?.clearToolConsent();
-
-    // ─── Bypass-mode consent detection ───
-    // When bypass is OFF and the user sends a short affirmative ("yes", "go ahead",
-    // "proceed", "do it", "sure", "ok"), check if the last assistant message asked
-    // for permission. If so, grant consent for the tools mentioned so the agent can
-    // proceed without triggering a permission modal.
-    if (!this.bypassPermissions && this.toolExecutor) {
-      const affirmativePattern = /^(yes|yeah|yep|sure|ok|okay|go ahead|proceed|do it|go for it|please do|that's fine|looks good|approve|approved|confirm|confirmed|save it|save this|write it)\b[!.?]*\s*$/i;
-      if (affirmativePattern.test(cleanContent.trim())) {
-        const lastAssistant = [...this.messages].reverse().find((m) => m.role === 'assistant' && typeof m.content === 'string');
-        if (lastAssistant && typeof lastAssistant.content === 'string') {
-          // Check if the assistant asked for permission (mentions a tool or asks "should I")
-          const askedForPermission = /should i (go ahead|proceed|use|run|call|create|write|execute|save)|may i (proceed|use|run|call|create|write|save)|can i (proceed|use|run|call|create|write|go ahead|save)|want me to (proceed|use|run|call|create|write|go ahead|save)|i need to (use|run|call|create|write|execute|proceed|save)|save (?:this|it|that) (?:to|as)|(?:markdown|md|pdf|docx|file)\b/i.test(lastAssistant.content);
-          if (askedForPermission) {
-            // Grant consent for all registered tools that were mentioned in the assistant message.
-            // This is intentionally broad — the user said "yes" to the agent's request.
-            const registry = this.toolExecutor.getRegistry();
-            for (const tool of registry.list()) {
-              const toolName = tool.id ?? tool.name ?? '';
-              if (toolName && lastAssistant.content.toLowerCase().includes(toolName.toLowerCase())) {
-                this.toolExecutor.grantToolConsent(toolName);
-              }
-            }
-            // Also grant consent for commonly gated / deliverable tools when the
-            // assistant asked generically (e.g. "Should I save this?").
-            const commonGatedTools = [
-              'file_write', 'file_edit', 'shell_exec', 'web_fetch', 'web_scrape',
-              ...PROACTIVE_DELIVERABLE_TOOLS,
-            ];
-            const askedSave = /save|write|export|markdown|document|pdf|docx/i.test(lastAssistant.content);
-            for (const t of new Set(commonGatedTools)) {
-              if (
-                lastAssistant.content.toLowerCase().includes(t.replace(/_/g, ' '))
-                || lastAssistant.content.toLowerCase().includes(t)
-                || (askedSave && PROACTIVE_DELIVERABLE_TOOLS.has(t))
-              ) {
-                this.toolExecutor.grantToolConsent(t);
-              }
-            }
-          }
-        }
-      }
+    if (this.toolExecutor) {
+      const lastAssistant = [...this.messages].reverse().find((m) => m.role === 'assistant' && typeof m.content === 'string');
+      applyInstructedActionConsent(
+        this.toolExecutor,
+        cleanContent,
+        typeof lastAssistant?.content === 'string' ? lastAssistant.content : undefined,
+      );
     }
 
     const isCrewPrivate = this.options.promptProfile === 'crew_private';
@@ -2798,6 +2776,36 @@ export class Agent {
        if (!this.options.channelSession && !(await this.checkConnectivity())) {
          throw new Error('Cannot reach LLM provider. Check your internet connection.');
        }
+
+       // ─── Engineering Crew pipeline (design doc Section 4.1) ───
+       // Substantial software-engineering tasks route through the isolated
+       // Engineering Crew (Architect → Coder ⇄ Verifier → Reviewer) instead of
+       // the single-LLM completion loop. Trivial coding stays on the fast path.
+       const crewCtx = await this.buildCrewRouterContext();
+       const crewRoute = await routeCodingTask(content, this.currentCategory, crewCtx, this.buildLLMIntentClassifier());
+       if (crewRoute.useEngineeringCrew) {
+         this.emit({ type: 'loading_start', stage: 'engineering_crew' });
+         getLogger().info('ENGINEERING_CREW', `Routing to Engineering Crew: ${crewRoute.reason}`);
+         const crewMessage = await this.runEngineeringCrew(content, startTime, crewRoute);
+         this.noteTurnOutcome(crewMessage.content);
+         const stepExec2 = loadSteps[2];
+         if (stepExec2) this.emit({ type: 'loading_step_update', stepId: stepExec2.id, label: stepExec2.label, status: 'completed' });
+         const stepVerify2 = loadSteps[3];
+         if (stepVerify2) this.emit({ type: 'loading_step_update', stepId: stepVerify2.id, label: stepVerify2.label, status: 'completed' });
+         this.contextTracker.record('assistant', crewMessage.content, this.options.crewPrivateHost?.name);
+         this.extractTasksFromResponse(crewMessage.content);
+         this.extractMemories(content, crewMessage.content);
+         this.persistSessionToolFindings(content);
+         this.toolCallLogForReflection = [];
+         this.stopTurnHeartbeat();
+         this.turnState.complete();
+         this.emitTurnState('done');
+         this.emit({ type: 'loading_end' });
+         void this.maybeEnqueueFollowUpAgentMessages();
+         this.logTurnOutcome(startTime, true, content);
+         return crewMessage;
+       }
+
        const assistantMessage = await this.runCompletionLoop(startTime);
        this.noteTurnOutcome(assistantMessage.content);
 
@@ -2825,11 +2833,11 @@ export class Agent {
       this.extractMemories(content, assistantMessage.content);
       this.persistSessionToolFindings(content);
 
-      // Auto-generate skill if task was novel
-      if (this.skillGenerator?.shouldGenerateSkill(content, this.toolCallLogForReflection)) {
-        const toolsForSkill = this.toolCallLogForReflection.map((t) => ({ name: t.name, args: {} as Record<string, unknown> }));
-        void this.skillGenerator?.generateSkill(this, content, toolsForSkill, assistantMessage.content);
-      }
+      void getRuntimeCapabilityManager()?.observeTurn({
+        sessionId: this.sessionId,
+        userText: content,
+        tools: this.toolCallLogForReflection,
+      });
 
       // Run reflection loop for continuous improvement
       if (this.toolCallLogForReflection.length >= 2) {
@@ -2999,6 +3007,240 @@ export class Agent {
    * - Multi-step loop (maxSteps = 20, auto-feeds tool results back to LLM)
    * - Structured events for UI visualization
    */
+
+  /**
+   * Engineering Crew pipeline — runs a substantial software-engineering task
+   * through the isolated Architect → Coder ⇄ Verifier → Reviewer workflow
+   * (design doc Section 4). The crew uses the engine's own `SubAgentManager` for
+   * LLM-backed role execution, with the verifier deny-listed from file-write
+   * tools so it cannot cheat. The result is surfaced as a single assistant
+   * message; if the crew is blocked or fails, the summary explains why rather
+   * than claiming false success.
+   */
+  private async runEngineeringCrew(objective: string, startTime: number, route?: RouterDecision): Promise<Message> {
+    const spawner = new SubAgentManagerSpawner(this.subAgents);
+    const crew = new EngineeringCrew(spawner, this.scopePath, route?.priorTaskId, {
+      modelId: this.config.provider.activeModel,
+      providerId: this.config.provider.activeProvider,
+    });
+    // #16: Store the active crew instance so the REST API can cancel it
+    this.activeCrew = crew;
+
+    this.emit({
+      type: 'category_detected',
+      primary: 'coding',
+      sub: 'engineering_crew',
+      confidence: 1.0,
+      reasoningMode: 'standard',
+      relevantToolCategories: [],
+    });
+
+    // Build session context: conversation history + prior plan state (if resuming)
+    const conversationHistory = this.messages
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .slice(-20)
+      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    let priorPlan = null;
+    if (route?.resumePriorRun && route.priorTaskId) {
+      // Try DB first, then checkpoint file
+      const store = this.getCrewStore();
+      if (store) {
+        priorPlan = await store.loadRun(route.priorTaskId);
+      }
+      if (!priorPlan) {
+        priorPlan = EngineeringCrew.loadCheckpoint(route.priorTaskId);
+      }
+    }
+
+    const sessionCtx: SessionContext = {
+      sessionId: this.sessionId,
+      conversationHistory,
+      priorPlan,
+      latestUserMessage: objective,
+    };
+    crew.setSessionContext(sessionCtx);
+
+    // Pass the DB store to the crew for per-round checkpointing (#2)
+    crew.setStore(this.getCrewStore());
+
+    // #12: Wire progress callback to emit real-time events on the Agent's event bus
+    crew.setProgressCallback((event) => {
+      this.emit({
+        type: 'loading_step_update',
+        stepId: event.taskId ? `crew-${event.taskId}-round-${event.round}` : `crew-round-${event.round}`,
+        label: `${event.role}: ${event.topic}`,
+        status: 'active',
+      } as EngineEvent);
+    });
+
+    // Resume or fresh start
+    if (route?.resumePriorRun && priorPlan) {
+      getLogger().info('ENGINEERING_CREW', `Resuming crew ${crew.taskId} with ${priorPlan.phases.length} prior phase(s)`);
+      crew.resume(priorPlan, objective);
+    } else {
+      crew.kickoff(objective);
+    }
+
+    let result: EngineeringCrewResult;
+    try {
+      result = await crew.run(30, 60 * 60_000);
+      if (route?.resumePriorRun) result.resumed = true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      getLogger().error('ENGINEERING_CREW', `Crew run threw: ${msg}`);
+      result = { success: false, blocked: false, summary: `Engineering Crew encountered an error: ${msg}`, rounds: 0, timedOut: false };
+    } finally {
+      // #16: Clear the active crew reference
+      this.activeCrew = null;
+    }
+
+    // Persist the crew run to the database for future resume
+    if (result.plan) {
+      const store = this.getCrewStore();
+      if (store) {
+        void store.saveRun(result.plan, this.sessionId, result.summary, result.rounds).catch(() => { /* best-effort */ });
+      }
+    }
+
+    const summary = this.formatCrewResult(result, crew.taskId);
+    const assistantMessage: Message = {
+      id: generateMessageId(),
+      sessionId: this.sessionId,
+      role: 'assistant',
+      content: summary,
+      toolCalls: null,
+      createdAt: new Date().toISOString(),
+      tokenCount: estimateOutputTokens(summary),
+    };
+    this.messages.push({ role: 'assistant', content: summary });
+    this.emit({ type: 'message_received', message: assistantMessage, elapsed: Date.now() - startTime });
+    return assistantMessage;
+  }
+
+  /**
+   * Build router context for the coding-task router — checks whether a prior
+   * Engineering Crew run exists for this session so the router can signal resume.
+   */
+  private async buildCrewRouterContext(): Promise<RouterContext> {
+    const ctx: RouterContext = { sessionId: this.sessionId };
+    const store = this.getCrewStore();
+    if (!store) return ctx;
+    try {
+      const incomplete = await store.findIncompleteRunBySession(this.sessionId);
+      if (incomplete) {
+        ctx.hasPriorRun = true;
+        ctx.hasIncompleteRun = true;
+        ctx.priorTaskId = incomplete.taskId;
+        ctx.priorObjective = incomplete.objective;
+      } else {
+        const latest = await store.findLatestRunBySession(this.sessionId);
+        if (latest) {
+          ctx.hasPriorRun = true;
+          ctx.priorObjective = latest.objective;
+        }
+      }
+    } catch { /* best-effort — router will just not resume */ }
+    return ctx;
+  }
+
+  /** Get the EngineeringCrewStore if a pg pool is available. */
+  private getCrewStore(): EngineeringCrewStore | null {
+    if (!this._pgPool) return null;
+    return new EngineeringCrewStore(this._pgPool as import('pg').Pool);
+  }
+
+  /**
+   * Build a lightweight LLM intent classifier for ambiguous routing decisions (#10).
+   * Uses a short prompt with the active provider to classify whether a coding message
+   * is substantial enough to warrant the full Engineering Crew pipeline.
+   * Returns undefined if no provider is available (router falls back to heuristics).
+   */
+  private buildLLMIntentClassifier(): LLMIntentClassifier | undefined {
+    if (!this.provider) return undefined;
+    return async (userMessage: string, priorObjective?: string) => {
+      const prompt = `Is this coding request a substantial software-engineering task that needs planning, implementation, and verification (answer YES), or a trivial fix/explanation that a single LLM turn can handle (answer NO)?
+
+${priorObjective ? `Prior work context: ${priorObjective.slice(0, 200)}` : ''}
+
+Request: "${userMessage.slice(0, 500)}"
+
+Answer strictly YES or NO.`;
+      try {
+        let text = '';
+        const stream = this.provider!.complete({
+          messages: [{ role: 'user', content: prompt }],
+          model: this.config.provider.activeModel,
+          temperature: 0,
+          maxTokens: 10,
+          stream: true,
+        });
+        for await (const chunk of stream) {
+          if (chunk.type === 'text_delta' && chunk.content) {
+            text += chunk.content;
+          }
+        }
+        return text.toUpperCase().includes('YES');
+      } catch {
+        return false; // On error, default to fast path
+      }
+    };
+  }
+
+  /** Format the Engineering Crew result into a user-facing assistant message. */
+  private formatCrewResult(result: EngineeringCrewResult, taskId: string): string {
+    const lines: string[] = [];
+    if (result.success) {
+      lines.push('**Engineering Crew — Task Complete**');
+      lines.push('');
+      lines.push(`All phases verified by the independent Verifier. Task ID: \`${taskId}\`.`);
+    } else if (result.blocked) {
+      lines.push('**Engineering Crew — Blocked**');
+      lines.push('');
+      lines.push('The crew could not complete this task due to a blocking issue. The summary below explains what needs to be resolved before retrying.');
+    } else if (result.timedOut) {
+      lines.push('**Engineering Crew — Timed Out**');
+      lines.push('');
+      lines.push('The crew did not finish within the allotted rounds/time.');
+    } else {
+      lines.push('**Engineering Crew — Incomplete**');
+      lines.push('');
+      lines.push('The crew could not complete this task. See the summary below for details.');
+    }
+    if (result.resumed) {
+      lines.push('');
+      lines.push('_This run resumed from a prior checkpoint._');
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    lines.push(result.summary);
+
+    if (result.plan) {
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+      lines.push('**Plan summary:**');
+      for (const phase of result.plan.phases) {
+        const icon = phase.status === 'verified' ? '[x]' : phase.status === 'blocked' ? '[!]' : '[ ]';
+        lines.push(`- ${icon} ${phase.title} (${phase.id}) — ${phase.status}`);
+        if (phase.verification && phase.verification.length > 0) {
+          for (const v of phase.verification) {
+            lines.push(`  - ${v.passed ? 'PASS' : 'FAIL'}: ${v.criterion}`);
+          }
+        }
+      }
+    }
+    // #5: Display cost tracking in the result
+    if (result.cost) {
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+      lines.push(`**Cost:** ${result.cost.totalTokens.toLocaleString()} tokens (~$${result.cost.estimatedCost.toFixed(4)})`);
+    }
+    return lines.join('\n');
+  }
+
   private async runCompletionLoop(startTime: number): Promise<Message> {
     const lastUserMsg = [...this.messages].reverse().find((m) => m.role === 'user');
     const lastUserText = typeof lastUserMsg?.content === 'string'
@@ -3056,11 +3298,15 @@ export class Agent {
       },
       async (instruction, toolsList, timeout, background) =>
         this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
-      (toolId, success, output, elapsed, args) => {
+      (toolId, success, output, elapsed, args, metadata) => {
         const path = typeof args?.path === 'string' ? args.path : undefined;
-        this.toolLedger.record({ name: toolId, success, output, elapsed, path });
+        const command = typeof args?.command === 'string' ? args.command
+          : typeof args?.cmd === 'string' ? args.cmd
+          : undefined;
+        const exitCode = typeof metadata?.exitCode === 'number' ? metadata.exitCode : undefined;
+        this.toolLedger.record({ name: toolId, success, output, elapsed, path, command, exitCode });
         this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
-        this.codingTurnGuard?.onToolExecuted(toolId, success, args ?? {}, this.currentCategory);
+        this.codingTurnGuard?.onToolExecuted(toolId, success, args ?? {}, this.currentCategory, exitCode);
         this.turnState.touch();
       },
       span,
@@ -3324,6 +3570,93 @@ export class Agent {
       const toolExecs = this.toolCallLogForReflection.filter(t => t.success).length;
       getLogger().info('AGENT', `Total tool executions in turn: ${this.toolCallLogForReflection.length}, successful: ${toolExecs}`);
 
+      // ─── HARD VERIFICATION GATE ───
+      // If the CodingTurnGuard says verification is required but hasn't passed,
+      // we must NOT let the turn finish. Inject a forced verification message
+      // and re-run the model with tools so it actually verifies its work.
+      // This is the structural enforcement that prevents claiming success without proof.
+      if (this.codingTurnGuard?.mustBlockFinish() && !this.options.skipEmptyResponseRetry) {
+        const forcedMsg = this.codingTurnGuard.getForcedVerificationMessage();
+        getLogger().warn('AGENT', `Verification gate BLOCKING turn finish — forcing verification before completion`);
+        this.emit({ type: 'verification_gate_blocked', reason: 'code written but not verified — forcing build/test/endpoint check' });
+        try {
+          const forcedResult = await withSpan('llm.verification_gate', 'llm', async (span) => {
+            span.setAttribute('gen_ai.system', this.config.provider.activeProvider);
+            span.setAttribute('gen_ai.request.model', this.config.provider.activeModel);
+            const gatePolicy = this.getToolPolicy();
+            const gateTools = createAiSdkTools(
+              this.toolRegistry!,
+              this.toolExecutor!,
+              this.sessionId,
+              (e) => this.emit(e),
+              async () => 'continue',
+              (instruction, toolsList, timeout, background) =>
+                this.runDelegatedSubAgent(instruction, toolsList, timeout ?? 120_000, background),
+              (toolId, success, output, elapsed, args, metadata) => {
+                const path = typeof args?.path === 'string' ? args.path : undefined;
+                const command = typeof args?.command === 'string' ? args.command
+                  : typeof args?.cmd === 'string' ? args.cmd
+                  : undefined;
+                const exitCode = typeof metadata?.exitCode === 'number' ? metadata.exitCode : undefined;
+                this.toolLedger.record({ name: toolId, success, output, elapsed, path, command, exitCode });
+                this.toolCallLogForReflection.push({ name: toolId, success, output, elapsed });
+                this.codingTurnGuard?.onToolExecuted(toolId, success, args ?? {}, this.currentCategory, exitCode);
+                this.turnState.touch();
+              },
+              span,
+              gatePolicy.allowedIds,
+              (toolId: string, args: Record<string, unknown>) => this.codingTurnGuard?.checkToolCall(toolId, args, this.currentCategory) ?? null,
+            );
+            const gateMessages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = [
+              ...aiMessages,
+              ...(text ? [{ role: 'assistant' as const, content: text }] : []),
+              { role: 'user' as const, content: forcedMsg },
+            ];
+            const gateStream = streamText({
+              model: createAiSdkModel(this.config, this.getApiKey()),
+              messages: gateMessages,
+              tools: gateTools,
+              toolChoice: 'required',
+              stopWhen: stepCountIs(15),
+              maxRetries: 1,
+            });
+            // Consume the gate stream — the stream handler processes tool results
+            // and the onToolExecuted callback in the main stream loop will fire
+            // via the tool execution callback in createAiSdkTools.
+            const gateHandler = createAiSdkStreamHandler(
+              this.emit.bind(this),
+              this.sessionId,
+              (inputTokens, outputTokens) => {
+                this.tokenTracker.addTokenUsage(inputTokens, outputTokens);
+              },
+              this._onPart,
+              this.config.provider.activeModel,
+            );
+            await consumeStreamWithWatchdog(gateStream.fullStream, (chunk) => {
+              gateHandler.handleEvent(chunk);
+            });
+            return gateHandler.getState().accumulatedContent || '';
+          });
+          // Append the verification results to the content
+          if (forcedResult) {
+            content = content
+              ? `${content}\n\n---\n**Verification:**\n${forcedResult}`
+              : forcedResult;
+          }
+          // Check if verification now passed
+          if (!this.codingTurnGuard?.mustBlockFinish()) {
+            getLogger().info('AGENT', 'Verification gate PASSED after forced verification round');
+          } else {
+            getLogger().warn('AGENT', 'Verification gate STILL not passed after forced round — allowing turn to end with warning');
+            content = content
+              ? `${content}\n\n[WARNING] Verification was not completed successfully. The code may not work as expected.`
+              : '[WARNING] Verification was not completed successfully. The code may not work as expected.';
+          }
+        } catch (gateError) {
+          getLogger().warn('AGENT', `Forced verification round failed: ${(gateError as Error).message}`);
+        }
+      }
+
       // Generic self-healing: if response is essentially empty (whitespace or <3 chars),
       // or the tool loop crashed (e.g. malformed tool-call arguments), retry once.
       // When tools already ran, retry WITHOUT tools to force a plain-text summary.
@@ -3392,6 +3725,12 @@ export class Agent {
               maxOutputTokens: turnMaxOutputTokens,
             });
             let retryOutput = '';
+            // Reset before consuming the retry stream — without this, the retry's text
+            // gets silently glued onto the prior (empty/too-short) response with no
+            // separator, producing a concatenated duplicate message. See the identical
+            // pattern in the transition-phrase continuation above and the comment on
+            // streamHandler.reset() in AiSdkStreamHandler.ts.
+            streamHandler.reset();
             await consumeStreamWithWatchdog(retryResult.fullStream, (chunk) => streamHandler.handleEvent(chunk));
             retryOutput = (streamHandler.getState().accumulatedContent || '').trim();
             span.setAttribute('llm.output_messages', JSON.stringify([{ role: 'assistant', content: retryOutput }]));
@@ -3484,6 +3823,11 @@ export class Agent {
                 toolChoice: contPolicy.choice,
                 ...(aiSdkProviderOptions ? { providerOptions: aiSdkProviderOptions } : {}),
               });
+              // Reset before consuming — `streamHandler` is reused across the original turn
+              // and this continuation, and without resetting, `accumulatedContent` below would
+              // be the ORIGINAL response text with the continuation's text appended directly
+              // (no separator), silently gluing two unrelated model responses into one message.
+              streamHandler.reset();
               await consumeStreamWithWatchdog(contResult.fullStream, (chunk) => streamHandler.handleEvent(chunk));
               return (streamHandler.getState().accumulatedContent || '').trim();
             });
@@ -3540,6 +3884,10 @@ export class Agent {
                 stopWhen: stepCountIs(Math.min(stepBudget, 40)),
                 toolChoice: contPolicy.choice,
               });
+              // Reset before consuming — see the identical comment on the transition-phrase
+              // continuation above; without this the continuation's text gets silently glued
+              // onto the prior (too-short) response with no separator.
+              streamHandler.reset();
               await consumeStreamWithWatchdog(contResult.fullStream, (chunk) => streamHandler.handleEvent(chunk));
               return (streamHandler.getState().accumulatedContent || '').trim();
             });
@@ -3608,6 +3956,10 @@ export class Agent {
                   toolChoice: contPolicy.choice,
                   ...(aiSdkProviderOptions ? { providerOptions: aiSdkProviderOptions } : {}),
                 });
+                // Reset before consuming — see the identical comment on the transition-phrase
+                // continuation above; without this the continuation's text gets silently
+                // glued onto the prior "I'll write it now" transition text with no separator.
+                streamHandler.reset();
                 await consumeStreamWithWatchdog(contResult.fullStream, (chunk) => streamHandler.handleEvent(chunk));
                 return (streamHandler.getState().accumulatedContent || '').trim();
               });
@@ -3786,6 +4138,14 @@ export class Agent {
                   return {};
                 },
               });
+              // Reset before consuming the completion-gate continuation stream — without
+              // this, the handler accumulates on top of the prior response, and the
+              // contAccum below already includes the prior content. The concatenation
+              // logic at the call site would then either duplicate the prior content
+              // (contAccum >= contentBefore branch) or glue two responses together
+              // (the else branch), producing the contradictory concatenated message
+              // documented in docs/engineering-crew/DESIGN.md Section 2.6.
+              streamHandler.reset();
               await consumeStreamWithWatchdog(contResult.fullStream, (chunk) => {
                 streamHandler.handleEvent(chunk);
                 if (chunk.type === 'text-delta') {
@@ -3796,10 +4156,10 @@ export class Agent {
               span.setAttribute('llm.output_messages', JSON.stringify([{ role: 'assistant', content: output }]));
               return output;
             });
-            if (contAccum.length >= contentBefore.length) {
-              // Handler accumulates across the turn — take the full buffer.
-              content = contAccum;
-            } else if (contAccum && contAccum !== contentBefore) {
+            // After the reset above, contAccum is ONLY the continuation's text, not the
+            // full accumulated buffer. Append it to the prior content — the continuation
+            // is meant to complete/extend the prior response, not replace it.
+            if (contAccum && contAccum !== contentBefore) {
               content = `${contentBefore}\n\n${contAccum}`.trim();
             }
           } catch (contErr) {
@@ -4149,8 +4509,6 @@ export class Agent {
       reflectionLoop: this.reflectionLoop ? {
         getCumulativeLearnings: () => this.reflectionLoop.getCumulativeLearnings(),
       } : null,
-      skillGenerator: this.skillGenerator ? (() => { const sg = this.skillGenerator; return { getAll: () => sg!.getAll() }; })() : null,
-      skillRegistry: this.skillRegistry ? (() => { const sr = this.skillRegistry; return { list: () => sr!.list() }; })() : null,
       contextTracker: this.contextTracker ? {
         getContextSummary: () => this.contextTracker.getContextSummary(),
         getRecentHistory: () => this.contextTracker.getRecentHistory(),
@@ -4179,6 +4537,7 @@ export class Agent {
         }
         return registry.getMetadataPromptBlock();
       },
+      getCapabilitiesPromptBlock: () => getRuntimeCapabilityManager()?.getPromptBlock() ?? '',
     };
   }
 
@@ -4234,6 +4593,20 @@ export class Agent {
       ? `${this.pendingInstruction}\n\n${block}`
       : block;
     this.interAgentAutoBlocks = [];
+  }
+
+  private async injectSyntheticIntelligenceTurn(userText: string): Promise<void> {
+    try {
+      const mgr = getRuntimeCapabilityManager();
+      if (!mgr) return;
+      const note = await mgr.prepareTurn(userText, this.sessionId);
+      if (!note) return;
+      this.pendingInstruction = this.pendingInstruction
+        ? `${this.pendingInstruction}\n\n${note}`
+        : note;
+    } catch (err) {
+      getLogger().warn('SI_TURN', err instanceof Error ? err.message : String(err));
+    }
   }
 
   private buildInterAgentDeliveryContext(): InterAgentDeliveryContext {
@@ -4692,7 +5065,6 @@ export class Agent {
 
   get agentBusInstance(): AgentBus { return this.agentBus; }
   get specialistRegistryInstance(): SpecialistRegistry { return this.specialistRegistry; }
-  get skillGeneratorInstance(): SkillGenerator | null { return this.skillGenerator; }
   get reflectionLoopInstance(): ReflectionLoop { return this.reflectionLoop; }
   /** Exposed for diagnostics — returns the pending checkpoint if any. */
   get pendingCheckpoint(): { resolve: (action: unknown) => void; reject: (err: Error) => void; checkpointId: string } | null { return this._pendingCheckpoint; }
@@ -5545,6 +5917,21 @@ export class Agent {
 
     // Stop all sub-agents
     this.subAgents.cancelAll();
+
+    // Stop pushing process lifecycle events into a session that's going away.
+    // Also kill any non-detached processes this session started — detached processes
+    // are intentionally left running (e.g. a user-started dev server they want to
+    // keep after the session ends). This prevents orphaned child processes from
+    // accumulating when an agent is disposed (design doc Section 4.6 lifecycle cleanup).
+    const procRegistry = getAgentProcessRegistry();
+    procRegistry.unregisterSessionEventBus(this.sessionId);
+    const sessionProcs = procRegistry.getBySession(this.sessionId);
+    for (const p of sessionProcs) {
+      if (!p.detached) {
+        getLogger().info('AGENT', `Disposing: killing PID ${p.pid} (${p.command}) for session ${this.sessionId}`);
+        procRegistry.kill(p.pid);
+      }
+    }
 
     // Close file watcher
     if (this.fileWatcher) {

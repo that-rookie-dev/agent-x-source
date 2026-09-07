@@ -28,8 +28,6 @@ export interface SectionContext {
   crewOrchestrator: { getMembers(): Array<{ crew: { id: string; name: string; title?: string; callsign: string; systemPrompt: string; traits?: string[]; emotion?: string; tools?: string[] }; expertise: string[] }> } | null;
   enabledCrewSessionIds: Set<string>;
   reflectionLoop: { getCumulativeLearnings(): string | null } | null;
-  skillGenerator: { getAll(): Array<{ name: string; description: string }> } | null;
-  skillRegistry: { list(): Array<{ name: string; description: string; trigger: string }> } | null;
   contextTracker: { getContextSummary(): string; getRecentHistory(): string } | null;
   personaName: string;
   turnFeedbackService: { buildPromptContext: () => string } | null;
@@ -50,6 +48,8 @@ export interface SectionContext {
   getGoalPromptBlock?: () => string;
   /** Executable skill metadata block (when enabled). */
   getExecutableSkillsPromptBlock?: () => string;
+  /** Synthetic Intelligence capabilities (prompt recipes / generated tools). Empty when none. */
+  getCapabilitiesPromptBlock?: () => string;
   /**
    * When true, incomplete todos are parked for a later turn — answer the new
    * user message only; do not resume or completion-gate the old checklist.
@@ -256,6 +256,8 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean; bypassP
     `- NEVER claim work is done, in progress, or "underway" unless you have actually called the tools to do it. Do not say "researching now" or "spinning up parallel streams" unless you are actually emitting those tool calls in the same step.`,
     `- NEVER claim a file exists unless you created it with a tool (pdf_create, gen_markdown, save_to_article, etc.) AND received a success result. If the tool failed, tell the user it failed — do not pretend it succeeded.`,
     `- When you create a file, verify it exists (file_read or file_find) before telling the user it is ready.`,
+    `- For software engineering: NEVER claim an application "works" or "is running" without (1) starting it with terminal_start, (2) reading the output with terminal_read to confirm no errors, AND (3) sending an actual HTTP request (curl) to the endpoint and getting a valid response. Compilation alone is NOT proof. A process starting is NOT proof. Only a successful end-to-end request is proof.`,
+    `- When a build, test, or runtime check fails: READ the error output, RESEARCH the root cause with web_search, implement a specific fix, and RE-VERIFY. Do not report the failure to the user without a fix attempt. Do not say "this is a known issue" without researching the solution.`,
     `- If a tool returns an error, report the error honestly and try an alternative approach. Do not paper over failures with reassuring language.`,
     `- All file paths must be relative to your workspace scope or use the scope path prefix. NEVER use absolute system paths like "/" or "/tmp". For generated deliverables, attachments, PDFs, and temp scratch files, you may use absolute paths inside the Agent-X app files/tmp directory, which is auto-approved and never prompts for permission.`,
     ``,
@@ -292,6 +294,16 @@ export function createRulesSection(opts?: { technicalExecutor?: boolean; bypassP
       `SHELL AS UNIVERSAL ADAPTER:`,
       `- Prefer dedicated tools when they exist (glob, grep, git_*, build_*, gh_*, browser_*, etc.).`,
       `- Use shell_exec when it is genuinely the fastest/only option (kubectl, terraform, cloud CLIs, debuggers, obscure CLIs).`,
+      ``,
+      `LIVE DEBUGGING WITH TERMINALS (for software engineering tasks):`,
+      `- When building or debugging an application, use terminal_start (NOT shell_background) to start dev servers, build watchers, or long-running processes.`,
+      `- terminal_start gives you a terminalId — use terminal_read to READ the output back and see if the app started, crashed, or logged errors.`,
+      `- This is CRITICAL: shell_background starts a process but you CANNOT read its output. terminal_start + terminal_read lets you see logs, errors, and startup output.`,
+      `- After starting a server: terminal_read to check it started → if errors, read the logs → research the error → fix the code → rebuild → restart → re-test.`,
+      `- Use log_tail to read application log files (e.g. app.log, stderr.log) when the app writes to files instead of stdout.`,
+      `- NEVER claim an app is "running" or "working" without: (1) terminal_read showing successful startup, AND (2) an actual HTTP request (shell_exec curl or http_request) returning a valid response.`,
+      `- When you see a runtime error (exception, crash, tensor allocation failure, port conflict): RESEARCH it with web_search, find the root cause, propose a specific fix, implement it, and re-test. Do NOT give up and say "known issue".`,
+      `- Use terminal_kill to stop terminals when done. Clean up after yourself.`,
       ``,
     ] : [
       `AUDIENCE & TONE:`,
@@ -1178,46 +1190,6 @@ export function createLearningsSection(ctx: SectionContext): PromptSection<strin
 }
 
 // ─────────────────────────────────────────────────────────────
-// Skills — from SkillGenerator, dynamic
-// ─────────────────────────────────────────────────────────────
-
-export function createSkillsSection(ctx: SectionContext): PromptSection<Array<{ name: string; description: string }>> {
-  return {
-    key: 'core/skills',
-    load: () => ctx.skillGenerator?.getAll() ?? [],
-    render: (skills) => {
-      if (skills.length === 0) return '';
-      return `[SKILLS]\n${skills.map(s => `- ${s.name}: ${s.description}`).join('\n')}\n[/SKILLS]`;
-    },
-    diff: (prev, current) => {
-      if (JSON.stringify(prev) === JSON.stringify(current)) return null;
-      if (current.length === 0) return `[SKILLS — REMOVED]\nNo skills currently available.\n[/SKILLS]`;
-      return `[SKILLS — UPDATED]\n${current.map(s => `- ${s.name}: ${s.description}`).join('\n')}\n[/SKILLS]`;
-    },
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
-// Formal skills — from SkillRegistry, dynamic
-// ─────────────────────────────────────────────────────────────
-
-export function createFormalSkillsSection(ctx: SectionContext): PromptSection<Array<{ name: string; description: string; trigger: string }>> {
-  return {
-    key: 'core/formal-skills',
-    load: () => ctx.skillRegistry?.list() ?? [],
-    render: (skills) => {
-      if (skills.length === 0) return '';
-      return `[FORMAL_SKILLS]\n${skills.map(s => `- ${s.name}: ${s.description} [trigger: ${s.trigger}]`).join('\n')}\n[/FORMAL_SKILLS]`;
-    },
-    diff: (prev, current) => {
-      if (JSON.stringify(prev) === JSON.stringify(current)) return null;
-      if (current.length === 0) return `[FORMAL_SKILLS — REMOVED]\n[/FORMAL_SKILLS]`;
-      return `[FORMAL_SKILLS — UPDATED]\n${current.map(s => `- ${s.name}: ${s.description} [trigger: ${s.trigger}]`).join('\n')}\n[/FORMAL_SKILLS]`;
-    },
-  };
-}
-
-// ─────────────────────────────────────────────────────────────
 // Channel focus — Telegram connection awareness
 // ─────────────────────────────────────────────────────────────
 
@@ -1851,6 +1823,15 @@ export function createExecutableSkillsSection(ctx: SectionContext): PromptSectio
     key: 'core/executable-skills',
     load: () => ctx.getExecutableSkillsPromptBlock?.() ?? '',
     render: (block) => (block ? `[EXECUTABLE SKILLS]\n${block}\n[/EXECUTABLE SKILLS]` : ''),
+    diff: (prev, current) => (prev === current ? null : current),
+  };
+}
+
+export function createCapabilitiesSection(ctx: SectionContext): PromptSection<string> {
+  return {
+    key: 'core/capabilities',
+    load: () => ctx.getCapabilitiesPromptBlock?.() ?? '',
+    render: (block) => (block ? `[CAPABILITIES]\n${block}\n[/CAPABILITIES]` : ''),
     diff: (prev, current) => (prev === current ? null : current),
   };
 }

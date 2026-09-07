@@ -6,6 +6,7 @@ import { getEngine } from '../engine.js';
 import { getTelegramInboundStatus } from '../channels-sync.js';
 import type { ApiContext } from '../services/ApiService.js';
 import os from 'node:os';
+import { getRuntimeCapabilityManager } from '@agentx/engine';
 
 export function router(ctx: ApiContext): Router {
   const router = Router();
@@ -66,6 +67,25 @@ export function router(ctx: ApiContext): Router {
       agentActive,
       telegramConnected,
       telegramBot,
+      syntheticIntelligence: (() => {
+        try {
+          const mgr = getRuntimeCapabilityManager();
+          if (!mgr) {
+            return { enabled: false, store: 'none', sandbox: 'process', generator: 'unavailable', alerts: [] };
+          }
+          const h = mgr.health();
+          return {
+            store: h.store,
+            sandbox: h.sandbox,
+            generator: h.generator,
+            enabled: h.enabled,
+            alerts: h.alerts,
+            consent: h.consent,
+          };
+        } catch {
+          return { enabled: false, store: 'none', sandbox: 'process', generator: 'unavailable', alerts: [] };
+        }
+      })(),
       gateway: eng?.gateway ? {
         focus: eng.gateway.focus.getFocus(),
         channels: eng.gateway.registry.listChannels(),

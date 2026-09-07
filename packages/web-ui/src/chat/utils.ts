@@ -2,6 +2,7 @@
 
 import {
   attachDeepSearchPartsFromTools,
+  attachDownloadPartsFromTools,
   attachChartPartsFromTools,
   attachVisualPartsFromTools,
   collapseOverlappingTextParts,
@@ -58,7 +59,16 @@ export function reconcileStreamingMessageParts<T extends MessagePart>(
 ): T[] | undefined {
   const base = liveParts?.length ? liveParts : incomingParts;
   if (!base?.length) return base;
-  return attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(base, toolCalls), toolCalls), toolCalls) as T[];
+  return attachVisualPartsFromTools(
+    attachChartPartsFromTools(
+      attachDownloadPartsFromTools(
+        attachDeepSearchPartsFromTools(base, toolCalls),
+        toolCalls,
+      ),
+      toolCalls,
+    ),
+    toolCalls,
+  ) as T[];
 }
 
 export function sanitizeForJson(text: string): string {

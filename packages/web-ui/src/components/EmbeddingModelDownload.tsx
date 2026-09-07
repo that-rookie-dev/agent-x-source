@@ -56,6 +56,8 @@ export interface ModelProgressState {
   percentage: number;
   error?: string;
   errorKind?: EmbeddingDownloadErrorKind;
+  /** Live status line (e.g. preparing the bundled Python environment). */
+  detail?: string;
 }
 
 function mapStatusModels(models: EmbeddingModelStatus[]): ModelProgressState[] {
@@ -439,7 +441,9 @@ function ModelProgressBar({ model }: { model: ModelProgressState }) {
           fontSize: '0.62rem',
           color: colors.text.dim,
         }}>
-          {model.downloadedMB.toFixed(1)} / {model.totalMB.toFixed(0)} MB
+          {model.detail && isDownloading
+            ? model.detail
+            : `${model.downloadedMB.toFixed(1)} / ${model.totalMB.toFixed(0)} MB`}
         </Typography>
         <Typography sx={{
           fontFamily: '"JetBrains Mono", monospace',

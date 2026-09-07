@@ -2,6 +2,7 @@ import { stripToolNoise } from './text-sanitize.js';
 import { appendStreamText, repairStreamTextGlitches } from './stream-text.js';
 import { attachDeepSearchPartsFromTools } from './deep-search-parts.js';
 import { attachChartPartsFromTools } from './chart-parts.js';
+import { attachDownloadPartsFromTools } from './download-parts.js';
 import { attachVisualPartsFromTools } from './visual-parts.js';
 import type { VisualItem } from '../types/visual.js';
 import type { StorableMessage } from '../types/storage.js';
@@ -24,10 +25,11 @@ export interface PersistedToolCall {
 import type { QuestionnaireRecord } from '../types/questionnaire.js';
 import type { CrewRosterPickerRecord } from '../types/crew-roster-picker.js';
 import type { DeepSearchProgress, DeepSearchResultBundle } from '../types/deep-search.js';
+import type { DownloadProgress, DownloadResult } from '../types/download.js';
 import type { PermissionOutcomeRecord } from '../types/permission-outcome.js';
 
 export interface MessagePart extends Record<string, unknown> {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart' | 'thinking' | 'permission' | 'response_document' | 'visual';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'download' | 'chart' | 'thinking' | 'permission' | 'response_document' | 'visual';
   id: string;
   content?: string;
   questionnaire?: QuestionnaireRecord;
@@ -45,6 +47,12 @@ export interface MessagePart extends Record<string, unknown> {
   deepSearch?: {
     bundle?: DeepSearchResultBundle;
     progress?: DeepSearchProgress;
+    running?: boolean;
+  };
+  /** Download tool progress / result card. */
+  download?: {
+    progress?: DownloadProgress;
+    result?: DownloadResult;
     running?: boolean;
   };
   tool?: PersistedToolCall;
@@ -965,7 +973,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMes
     if (!shouldRebuildStoredParts(content, mapped, toolCalls) && !missingThinkingChronology) {
       return withThinkingAndSubAgents(msg, sessionParts, {
         content,
-        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls), toolCalls),
+        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDownloadPartsFromTools(attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls), toolCalls)),
         toolCalls,
       });
     }
@@ -981,7 +989,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMes
     ) {
       return withThinkingAndSubAgents(msg, sessionParts, {
         content,
-        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls), toolCalls),
+        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDownloadPartsFromTools(attachDeepSearchPartsFromTools(mapped, toolCalls), toolCalls), toolCalls)),
         toolCalls,
       });
     }
@@ -997,7 +1005,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMes
     if (parts.length > 0 && !shouldRebuildStoredParts(content, parts, effectiveTools)) {
       return withThinkingAndSubAgents(msg, sessionParts, {
         content,
-        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, effectiveTools), effectiveTools), effectiveTools),
+        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDownloadPartsFromTools(attachDeepSearchPartsFromTools(parts, effectiveTools), effectiveTools), effectiveTools)),
         toolCalls: effectiveTools,
       });
     }
@@ -1012,7 +1020,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMes
     ) {
       return withThinkingAndSubAgents(msg, sessionParts, {
         content,
-        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, effectiveTools), effectiveTools), effectiveTools),
+        parts: attachVisualPartsFromTools(attachChartPartsFromTools(attachDownloadPartsFromTools(attachDeepSearchPartsFromTools(parts, effectiveTools), effectiveTools), effectiveTools)),
         toolCalls: effectiveTools,
       });
     }
@@ -1023,7 +1031,7 @@ export function normalizeMessageForUi(msg: Record<string, unknown> | StorableMes
     return withThinkingAndSubAgents(msg, sessionParts, {
       content,
       parts: parts.length > 0
-        ? attachVisualPartsFromTools(attachChartPartsFromTools(attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls), toolCalls)
+        ? attachVisualPartsFromTools(attachChartPartsFromTools(attachDownloadPartsFromTools(attachDeepSearchPartsFromTools(parts, toolCalls), toolCalls), toolCalls))
         : undefined,
       toolCalls,
     });

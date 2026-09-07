@@ -8,6 +8,17 @@ export class ToolRegistry {
     this.tools.set(tool.id, tool);
   }
 
+  /**
+   * Register a generated SI tool. Built-in tools of the same id win and are left in place.
+   * Returns false when a non-generated tool already occupies the id.
+   */
+  registerGeneratedTool(tool: ToolDefinition): boolean {
+    const existing = this.tools.get(tool.id);
+    if (existing && existing.source !== 'generated') return false;
+    this.register(tool);
+    return true;
+  }
+
   get(id: string): ToolDefinition | undefined {
     return this.tools.get(id);
   }

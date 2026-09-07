@@ -31,7 +31,7 @@ export const PROVIDERS: Record<string, ProviderConfig> = {
     type: 'local',
     apiKeyRequired: false,
     baseUrlConfigurable: true,
-    defaultBaseUrl: 'http://localhost:11434',
+    defaultBaseUrl: 'http://localhost:11434/v1',
   },
   lmstudio: {
     id: 'lmstudio',

@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../api';
 import type { TodoItem } from '../api';
-import { upsertDeepSearchPart, type MessagePart } from '@agentx/shared/browser';
+import { upsertDeepSearchPart, upsertDownloadPart, type MessagePart } from '@agentx/shared/browser';
 
 export interface ToolCall {
   id: string;
@@ -32,7 +32,7 @@ export interface SubAgent {
 import type { QuestionnaireRecord } from '@agentx/shared/browser';
 
 export interface PartEntry extends Record<string, unknown> {
-  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'chart' | 'thinking' | 'permission' | 'response_document' | 'visual';
+  type: 'text' | 'tool' | 'subagent' | 'questionnaire' | 'crew_roster_picker' | 'deep_search' | 'download' | 'chart' | 'thinking' | 'permission' | 'response_document' | 'visual';
   id: string;
   content?: string;
   tool?: ToolCall;
@@ -48,6 +48,11 @@ export interface PartEntry extends Record<string, unknown> {
   deepSearch?: {
     bundle?: import('@agentx/shared/browser').DeepSearchResultBundle;
     progress?: import('@agentx/shared/browser').DeepSearchProgress;
+    running?: boolean;
+  };
+  download?: {
+    progress?: import('@agentx/shared/browser').DownloadProgress;
+    result?: import('@agentx/shared/browser').DownloadResult;
     running?: boolean;
   };
 }
@@ -125,4 +130,8 @@ export type SessionListTab = 'agent_x' | 'crew_private';
 
 export function upsertDeepSearchPartEntry(parts: PartEntry[], payload: Parameters<typeof upsertDeepSearchPart>[1]): PartEntry[] {
   return upsertDeepSearchPart(parts as MessagePart[], payload) as PartEntry[];
+}
+
+export function upsertDownloadPartEntry(parts: PartEntry[], payload: Parameters<typeof upsertDownloadPart>[1]): PartEntry[] {
+  return upsertDownloadPart(parts as MessagePart[], payload) as PartEntry[];
 }

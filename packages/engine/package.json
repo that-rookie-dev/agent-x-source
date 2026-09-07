@@ -29,6 +29,7 @@
     "@ai-sdk/openai-compatible": "^2.0.50",
     "@ai-sdk/perplexity": "^3.0.35",
     "@ai-sdk/xai": "^3.0.95",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/canvas": "1.0.2",
@@ -44,6 +45,7 @@
     "ai": "^6.0.205",
     "discord.js": "^14.26.4",
     "docxtemplater": "^3.69.0",
+    "esbuild": "0.27.7",
     "exceljs": "^4.4.0",
     "file-type": "^19.6.0",
     "graphology": "^0.26.0",
@@ -85,7 +87,7 @@
     "typescript": "^5.5.0"
   },
   "optionalDependencies": {
-    "redis": "^6.1.0",
-    "playwright": "^1.50.0"
+    "playwright": "^1.50.0",
+    "redis": "^6.1.0"
   }
 }

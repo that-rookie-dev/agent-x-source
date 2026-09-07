@@ -24,7 +24,15 @@ import {
   VOICE_USER_TRANSCRIPT_DEDUP_MS,
 } from '@agentx/shared';
 import { VoicePermissionGate } from '../../voice-permission-gate.js';
-import { WebSocketVoiceTransport, ToolService, summarizePermissionArgs, buildCrewPrivateIdentityPrompt, getPersonaStore, setCustomCrewCreateAgent } from '@agentx/engine';
+import {
+  WebSocketVoiceTransport,
+  ToolService,
+  summarizePermissionArgs,
+  buildCrewPrivateIdentityPrompt,
+  getPersonaStore,
+  setCustomCrewCreateAgent,
+  applyInstructedActionConsent,
+} from '@agentx/engine';
 import type { VoiceEngineSession, VoiceEngineState } from './types.js';
 import type { VoiceSessionSpeaker } from '@agentx/engine';
 import { getVoiceService } from '../../voice-runtime.js';
@@ -104,6 +112,8 @@ export class XaiRealtimeSession implements VoiceEngineSession {
   /** Wall clock when assistant audio first started — used to ignore early false barge-ins. */
   private speakingStartedAt = 0;
   private assistantText = '';
+  private lastAssistantUtterance = '';
+  private lastUserUtterance = '';
   private userTranscript = '';
   /** Dedup xAI transcription.completed (same item / same text within a short window). */
   private handledTranscriptItemIds = new Set<string>();
@@ -186,7 +196,16 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     this.xaiUrl = baseWithQuery;
     const scopePath = getAgentFilesDir();
     this.toolService = ToolService.createDefault(scopePath);
-    this.toolService.getToolExecutor().setVoiceTurnActive(true);
+    const voiceExecutor = this.toolService.getToolExecutor();
+    voiceExecutor.setVoiceTurnActive(true);
+    voiceExecutor.setCurrentUserMessageProvider(() => this.lastUserUtterance);
+    try {
+      const mainExec = getEngine().agent?.getToolExecutor();
+      if (mainExec) {
+        voiceExecutor.setUserConfigRules(mainExec.getUserConfigRules());
+        voiceExecutor.setAlwaysPromptPermissions(mainExec.getAlwaysPromptPermissions());
+      }
+    } catch { /* engine may still be booting */ }
     this.bindLiveCrewAgent();
     const callsign = this.config.user?.callsign?.trim() || 'Root';
     this.defaultRootSpeaker = {
@@ -671,6 +690,14 @@ export class XaiRealtimeSession implements VoiceEngineSession {
         'Never spell a full web URL — say the site name and what the file is.',
       );
       parts.push(
+        'ACTION EXECUTION: You can run Agent-X tools on this call (save_to_article, article_list, ' +
+        'web_search, file_write, integrations, and the rest of the toolkit). ' +
+        'When the user asks you to do something, call the matching tool in that same turn. ' +
+        'If they already said yes / please / save it / go ahead / do not ask again, call the tool immediately. ' +
+        'Never re-ask for confirmation after they have agreed. ' +
+        'Never claim you saved, sent, or completed an action unless the tool returned success.',
+      );
+      parts.push(
         'CLARIFICATION RULES: When you need more information, ask the question directly ' +
         'in your voice response — one question at a time. Wait for the user to answer ' +
         'before asking the next question. Never present multiple questions at once. ' +
@@ -1012,6 +1039,18 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       case 'response.function_call_arguments.done':
         await this.handleFunctionCall(event);
         break;
+      case 'response.output_item.done': {
+        const item = event.item as Record<string, unknown> | undefined;
+        const itemType = String(item?.type ?? '');
+        if (item && (itemType === 'function_call' || itemType === 'tool_call')) {
+          await this.handleFunctionCall({
+            call_id: item.call_id,
+            name: item.name,
+            arguments: item.arguments,
+          });
+        }
+        break;
+      }
       case 'response.done':
         await this.handleResponseDone(event);
         break;
@@ -1308,6 +1347,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     }
 
     this.persistUserMessage(text);
+    this.applyUserActionConsent(text);
     if ((this.chatSessionId ?? '__channel__:voice') === '__channel__:voice') {
       const { maybePresentWhatsAppVisual } = await import('../../visual-present.js');
       maybePresentWhatsAppVisual(text);
@@ -1341,7 +1381,23 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     });
   }
 
+  private applyUserActionConsent(text: string): void {
+    this.lastUserUtterance = text;
+    const result = applyInstructedActionConsent(
+      this.toolService.getToolExecutor(),
+      text,
+      this.lastAssistantUtterance,
+    );
+    if (result.granted.length || result.waived || result.explicit || result.affirmative) {
+      getLogger().info(
+        'XAI_VOICE',
+        `Action consent user="${text.slice(0, 80)}" explicit=${result.explicit} affirmative=${result.affirmative} waived=${result.waived} granted=${result.granted.length}`,
+      );
+    }
+  }
+
   private persistUserMessage(text: string): void {
+    this.lastUserUtterance = text;
     this.ensureChatSessionRecord();
     const id = this.chatSessionId ?? '__channel__:voice';
     const speaker = this.currentSpeaker ?? (this.voiceprintEnabled ? null : this.defaultRootSpeaker);
@@ -1389,10 +1445,15 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     this.persistCurrentAssistantUtterance();
     this.currentResponseId = this.eventResponseId(event);
     this.assistantText = '';
-    this.toolCalls = [];
-    this.pendingToolCallIndex = 0;
-    this.toolCallProcessing = false;
-    this.responseDoneReceived = false;
+    // xAI emits a new response.created for post-tool speech and VAD turns.
+    // Wiping tool state here dropped in-flight save_to_article / function outputs.
+    const toolsInFlight = this.toolCallProcessing || this.toolCalls.length > 0;
+    if (!toolsInFlight) {
+      this.toolCalls = [];
+      this.pendingToolCallIndex = 0;
+      this.toolCallProcessing = false;
+      this.responseDoneReceived = false;
+    }
     this.responseAudioDone = false;
     this.playbackFinished = false;
     this.responseFinished = false;
@@ -1457,10 +1518,12 @@ export class XaiRealtimeSession implements VoiceEngineSession {
     const name = String(event.name ?? '');
     const argsString = String(event.arguments ?? '{}');
     if (!call_id || !name) return;
+    if (this.toolCalls.some((c) => c.call_id === call_id)) return;
     let args: Record<string, unknown> = {};
     try { args = JSON.parse(argsString) as Record<string, unknown>; } catch {
       getLogger().warn('XAI_VOICE', `Failed to parse function arguments for ${name}`);
     }
+    getLogger().info('XAI_VOICE', `function_call ${name} call_id=${call_id}`);
     this.toolCalls.push({ call_id, name, args });
     if (this.responseDoneReceived) void this.processToolCalls();
   }
@@ -1486,6 +1549,10 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       this.pendingToolCallIndex = start + i + 1;
       const perm = permResults[i];
       if (!perm || perm.decision === 'deny') {
+        getLogger().warn(
+          'XAI_VOICE',
+          `tool ${item.name} denied decision=${perm?.decision ?? 'none'} error=${perm?.error ?? ''}`,
+        );
         item.result = {
           success: false,
           output: perm && 'instruction' in perm && perm.instruction
@@ -1497,6 +1564,10 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       }
       try {
         item.result = await this.toolService.execute(item.name, item.args, sessionId);
+        getLogger().info(
+          'XAI_VOICE',
+          `tool ${item.name} executed success=${item.result.success}`,
+        );
       } catch (err) {
         item.result = {
           success: false,
@@ -1595,6 +1666,9 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       return;
     }
     this.clearPlaybackContinueTimer();
+    // Flush even if a later response.created cleared the done flag — tools
+    // already ran and the model is waiting on function_call_output.
+    this.responseDoneReceived = true;
     const outputs = this.toolCalls.filter((c) => c.result);
     for (const call of outputs) {
       const result = call.result!;
@@ -1667,6 +1741,7 @@ export class XaiRealtimeSession implements VoiceEngineSession {
       const divider = takeCallDividerForPersist(id);
       if (divider) metadata.callDivider = divider;
     }
+    this.lastAssistantUtterance = text;
     try { persistMessageDirect(id, 'assistant', text, { metadata }); } catch { /* best-effort */ }
     this.markVoiceActive();
   }

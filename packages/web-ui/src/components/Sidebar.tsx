@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
@@ -13,18 +13,20 @@ import ExtensionIcon from '@mui/icons-material/Extension';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import SettingsIcon from '@mui/icons-material/Settings';
 import GroupsIcon from '@mui/icons-material/Groups';
+import EngineeringIcon from '@mui/icons-material/Engineering';
 // import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import LogoutIcon from '@mui/icons-material/Logout';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import DarkModeOutlinedIcon from '@mui/icons-material/DarkModeOutlined';
 import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import ContrastIcon from '@mui/icons-material/Contrast';
 import Badge from '@mui/material/Badge';
 import { useColorScheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
-import { auth, setAuthToken } from '../api';
+import { auth, capabilities, setAuthToken } from '../api';
 import { invalidateApiCache, invalidateCoreSessionCache } from '../perf/api-cache';
 import { useAppCore } from '../store/AppContext';
 import { usePersonaName } from '../hooks/usePersonaName';
@@ -46,6 +48,20 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
   const navigate = useNavigate();
   const { mode, setMode } = useColorScheme();
   const personaName = usePersonaName();
+  const [pendingCapabilities, setPendingCapabilities] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const stats = await capabilities.stats();
+        if (!cancelled) setPendingCapabilities(stats.pendingApprovals ?? 0);
+      } catch { /* ignore */ }
+    };
+    void tick();
+    const id = setInterval(() => { void tick(); }, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   const navItems: { id: PanelId; icon: ReactNode; label: string }[] = [
     { id: 'dashboard', icon: <DashboardIcon sx={{ fontSize: 16 }} />, label: 'Dashboard' },
@@ -56,7 +72,9 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
     { id: 'articles', icon: <ArticleOutlinedIcon sx={{ fontSize: 16 }} />, label: 'Articles' },
     { id: 'automation', icon: <ScheduleIcon sx={{ fontSize: 16 }} />, label: 'Automation' },
     { id: 'crews', icon: <GroupsIcon sx={{ fontSize: 16 }} />, label: 'Crews' },
+    { id: 'engineering-crew', icon: <EngineeringIcon sx={{ fontSize: 16 }} />, label: 'Engineering Crew' },
     { id: 'knowledge-base', icon: <LibraryBooksIcon sx={{ fontSize: 16 }} />, label: 'Knowledge Base' },
+    { id: 'synthetic', icon: <AutoAwesomeIcon sx={{ fontSize: 16 }} />, label: 'Capabilities' },
     { id: 'mcp-store', icon: <ExtensionIcon sx={{ fontSize: 16 }} />, label: 'MCP Store' },
     { id: 'settings', icon: <SettingsIcon sx={{ fontSize: 16 }} />, label: 'Settings' },
   ];
@@ -118,6 +136,21 @@ export function Sidebar({ active, onNavigate, highlightCrews, unreadNotification
               <Badge
                 badgeContent={unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
                 color="error"
+                sx={{
+                  '& .MuiBadge-badge': {
+                    fontSize: '0.5rem',
+                    height: 14,
+                    minWidth: 14,
+                    fontFamily: "'JetBrains Mono', monospace",
+                  },
+                }}
+              >
+                {item.icon}
+              </Badge>
+            ) : item.id === 'synthetic' && pendingCapabilities > 0 ? (
+              <Badge
+                badgeContent={pendingCapabilities > 99 ? '99+' : pendingCapabilities}
+                color={pendingCapabilities >= 5 ? 'error' : 'warning'}
                 sx={{
                   '& .MuiBadge-badge': {
                     fontSize: '0.5rem',

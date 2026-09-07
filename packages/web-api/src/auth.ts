@@ -97,6 +97,7 @@ const SSE_TOKEN_PATHS = new Set([
   '/api/chat/stream',
   '/api/logs/stream',
   '/api/neural-cortex/graph/events',
+  '/api/events/capabilities',
 ]);
 
 /**

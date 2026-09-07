@@ -32,6 +32,12 @@ const externalPackages = [
   'trafilatura',
   'httpcloak',
   'playwright',
+  '@homebridge/node-pty-prebuilt-multiarch',
+];
+
+/** Must be present next to the bundled web-api entry or the packaged app fails to start. */
+const requiredExternalPackages = [
+  '@homebridge/node-pty-prebuilt-multiarch',
 ];
 
 const copied = new Set();
@@ -145,6 +151,13 @@ if (hfDir) {
 
 for (const pkg of externalPackages) {
   copyPackage(pkg, lookupDirs);
+}
+
+for (const pkg of requiredExternalPackages) {
+  const dest = join(targetModulesDir, ...pkg.split('/'), 'package.json');
+  if (!existsSync(dest)) {
+    throw new Error(`copy-runtime-deps: required package ${pkg} was not copied into dist/node_modules`);
+  }
 }
 
 const esbuildPlatform = esbuildPlatformPackageName();

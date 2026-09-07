@@ -24,6 +24,7 @@ import type { CrewMatchCandidate } from '@agentx/shared/browser';
 import { TurnFeedbackBar } from './TurnFeedbackBar';
 import type { TurnFeedbackRating } from '@agentx/shared/browser';
 import { DeepSearchMessageBlock } from './DeepSearchMessageBlock';
+import { DownloadMessageBlock } from './DownloadMessageBlock';
 import { formatVoiceTimingMs } from '../voice/timing';
 import { ChartBlock } from './ChartBlock';
 import { VisualInlineBlock } from '../visual/VisualInlineBlock';
@@ -331,6 +332,16 @@ function renderParts(
             bundle={part.deepSearch.bundle}
             progress={part.deepSearch.progress}
             running={part.deepSearch.running}
+          />
+        );
+      case 'download':
+        if (!part.download) return null;
+        return (
+          <DownloadMessageBlock
+            key={part.id}
+            progress={part.download.progress}
+            result={part.download.result}
+            running={part.download.running}
           />
         );
       case 'questionnaire':

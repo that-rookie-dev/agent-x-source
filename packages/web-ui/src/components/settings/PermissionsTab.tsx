@@ -77,6 +77,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   scheduler: 'Scheduler',
   agent_orchestration: 'Agent Orchestration',
   agent_meta: 'Agent Meta',
+  internal: 'Internal',
 };
 
 function categoryLabel(category: string): string {

@@ -297,17 +297,20 @@ export function createSettingsRouter(): Router {
       const eng = getEngine();
       const cfg = eng.configManager.load();
       const overrides = cfg.permissions ?? {};
-      const nativeTools = eng.toolkit.registry.list().map((t) => ({
-        id: t.id,
-        name: t.name,
-        description: t.description,
-        category: t.category,
-        riskLevel: t.riskLevel,
-        defaultDecision: (t.riskLevel === 'low' ? 'allow' : 'ask') as 'allow' | 'ask',
-        currentDecision: (overrides[t.id] ?? (t.riskLevel === 'low' ? 'allow' : 'ask')) as 'allow' | 'deny' | 'ask',
-        overridden: t.id in overrides,
-        source: 'native' as const,
-      }));
+      const nativeTools = eng.toolkit.registry
+        .list()
+        .filter((t) => t.category !== 'internal')
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          riskLevel: t.riskLevel,
+          defaultDecision: (t.riskLevel === 'low' ? 'allow' : 'ask') as 'allow' | 'ask',
+          currentDecision: (overrides[t.id] ?? (t.riskLevel === 'low' ? 'allow' : 'ask')) as 'allow' | 'deny' | 'ask',
+          overridden: t.id in overrides,
+          source: 'native' as const,
+        }));
       const mcpTools: typeof nativeTools = [];
       for (const { providerId, tools } of eng.integrationHub.getAllConnectedToolDefinitions()) {
         const provider = eng.integrationHub.getProvider(providerId);

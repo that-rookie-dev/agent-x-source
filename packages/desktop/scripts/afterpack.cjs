@@ -222,6 +222,15 @@ function bundleEsbuildDeps(webApiDir, pnpmStore, context) {
   bundleScopedPackage(webApiDir, pnpmStore, platformPkg);
 }
 
+function bundleNodePty(webApiDir, pnpmStore) {
+  const pkgName = '@homebridge/node-pty-prebuilt-multiarch';
+  bundleScopedPackage(webApiDir, pnpmStore, pkgName);
+  const destDir = join(webApiDir, 'node_modules', ...pkgName.split('/'));
+  if (!existsSync(join(destDir, 'package.json'))) {
+    throw new Error(`afterPack: ${pkgName} missing from web-api/node_modules — packaged app will fail to start`);
+  }
+}
+
 module.exports = async function afterPack(context) {
   const pnpmStore = resolvePnpmStore(context);
   if (pnpmStore) {
@@ -243,6 +252,7 @@ module.exports = async function afterPack(context) {
       bundleOnnxRuntimeDeps(webApiDir, pnpmStore);
       bundlePdfjsDist(webApiDir, pnpmStore);
       bundleEsbuildDeps(webApiDir, pnpmStore, context);
+      bundleNodePty(webApiDir, pnpmStore);
     }
   }
 

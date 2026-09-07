@@ -25,8 +25,6 @@ import {
   createSchedulingSection,
   createThirdPartyServicesSection,
   createLearningsSection,
-  createSkillsSection,
-  createFormalSkillsSection,
   createChannelFocusSection,
   createChannelSuperSessionSection,
   createChannelLinkedContextSection,
@@ -45,6 +43,7 @@ import {
   createHarnessSection,
   createGoalSection,
   createExecutableSkillsSection,
+  createCapabilitiesSection,
   type SectionContext,
 } from '../prompt/assembly/index.js';
 import { createDocumentStudioSection } from './document-studio-prompts.js';
@@ -122,8 +121,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
         .register(createCurrentTimeSection(secCtx))
         .register(createWorkingDirectorySection(secCtx))
         .register(createLearningsSection(secCtx))
-        .register(createSkillsSection(secCtx))
-        .register(createFormalSkillsSection(secCtx))
         .register(createSessionNarrativeSection(secCtx))
         .register(createTurnFeedbackSection(secCtx))
         .register(createUserSection(secCtx))
@@ -156,8 +153,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createCurrentTimeSection(secCtx))
       .register(createSchedulingSection())
       .register(createLearningsSection(secCtx))
-      .register(createSkillsSection(secCtx))
-      .register(createFormalSkillsSection(secCtx))
       .register(createMultiCrewSection(secCtx))
       .register(createCrewRosterGuideSection())
       .register(createUserSection(secCtx))
@@ -167,6 +162,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createHarnessSection(secCtx))
       .register(createGoalSection(secCtx))
       .register(createExecutableSkillsSection(secCtx))
+      .register(createCapabilitiesSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
     if (systemOverride) {
       ctx.promptAssembly.register(createSystemOverrideSection(systemOverride));
@@ -219,8 +215,6 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createCurrentTimeSection(secCtx))
       .register(createSchedulingSection())
       .register(createLearningsSection(secCtx))
-      .register(createSkillsSection(secCtx))
-      .register(createFormalSkillsSection(secCtx))
       .register(createChannelFocusSection(secCtx))
       .register(createMultiCrewSection(secCtx))
       .register(createCrewRosterGuideSection())
@@ -233,6 +227,7 @@ export function registerPromptSections(ctx: PromptRegistrationContext, systemOve
       .register(createHarnessSection(secCtx))
       .register(createGoalSection(secCtx))
       .register(createExecutableSkillsSection(secCtx))
+      .register(createCapabilitiesSection(secCtx))
       .register(createInstructionsSection(secCtx.scopePath));
   }
 

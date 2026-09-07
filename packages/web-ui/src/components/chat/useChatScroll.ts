@@ -393,6 +393,11 @@ export function useChatScroll({
       scrollMessagesToBottom('smooth');
       // Second tick after layout settles (thoughts / tools expanding height).
       requestAnimationFrame(() => scrollMessagesToBottom('smooth'));
+      // Third tick after useDeferredValue catches up — the urgent render may
+      // show stale (deferred) messages, and the deferred render commits a
+      // frame later with the new content. Without this, the scroll targets
+      // the OLD bottom and the user sees older messages after the DOM updates.
+      window.setTimeout(() => scrollMessagesToBottom('smooth'), 60);
       return;
     }
     if (scrollToBottomTimerRef.current !== null) {

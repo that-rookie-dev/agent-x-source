@@ -34,9 +34,6 @@ export { AgentBus, getAgentBus, setAgentBus } from './agent/AgentBus.js';
 export type { AgentMessage, AgentSubscription } from './agent/AgentBus.js';
 export { SpecialistRegistry } from './agent/SpecialistRegistry.js';
 export type { Specialist, SpecialistType } from './agent/SpecialistRegistry.js';
-export { SkillGenerator } from './agent/SkillGenerator.js';
-export { BUNDLED_SKILLS, getBundledSkills, findBundledSkill } from './agent/BundledSkills.js';
-export type { GeneratedSkill } from './agent/SkillGenerator.js';
 export { ReflectionLoop } from './agent/ReflectionLoop.js';
 export type { ReflectionResult } from './agent/ReflectionLoop.js';
 export { Agent, AgentFacade } from './agent/Agent.js';
@@ -82,6 +79,14 @@ export { createServiceContext, getChannelServiceInstance, setChannelServiceInsta
 export { ToolService } from './services/tool/ToolService.js';
 export { ToolCacheService } from './services/tool/ToolCacheService.js';
 export { ToolPermissionService } from './services/tool/ToolPermissionService.js';
+export {
+  applyInstructedActionConsent,
+  detectsAffirmativeActionConsent,
+  detectsExplicitDeliverableRequest,
+  detectsSessionProactiveConsentWaiver,
+  lastAssistantOfferedAction,
+  PROACTIVE_DELIVERABLE_TOOLS,
+} from './services/tool/proactive-deliverable-consent.js';
 export type { IToolService, ToolCall } from './services/tool/IToolService.js';
 export type { PermissionResult, ToolPermissionHost } from './services/tool/ToolPermissionService.js';
 export type { IJobQueue, IJob, JobEnqueueOptions, JobContext, JobHandler } from './queue/IJobQueue.js';
@@ -96,6 +101,33 @@ export {
   setArticleStoreInstance,
   getArticleStoreInstance,
 } from './articles/ArticleStore.js';
+export {
+  RuntimeCapabilityManager,
+  getRuntimeCapabilityManager,
+  setRuntimeCapabilityManager,
+  initRuntimeCapabilityManager,
+  PostgresCapabilityStore,
+  InMemoryCapabilityStore,
+  DefaultCapabilityGenerator,
+  SandboxManager,
+  DockerCapabilitySandbox,
+  DefaultCapabilityGraduator,
+  DefaultCapabilityObserver,
+  ToolRegistrar,
+  SkillActivator,
+  UsageTracker,
+  AutoDeprecator,
+  CapabilityMerger,
+  detectsCapabilityCreateIntent,
+  buildCapabilityGenerator,
+  CapabilityError,
+  CapabilityNotFoundError,
+  CapabilityValidationError,
+  CapabilityGenerationError,
+  CapabilityGraduationError,
+  siMetrics,
+  reviewGeneratedCode,
+} from './synthetic/index.js';
 // Attachments
 export { AttachmentService, getAttachmentService } from './attachments/index.js';
 export {
@@ -173,6 +205,9 @@ export { IntegrationHub, createCustomProvider, importMcpConfig, parseMcpImportCo
 export type { McpSession } from './integrations/index.js';
 export { fileRead, fileWrite, fileDelete, folderCreate, folderDelete, folderList, folderMove } from './tools/index.js';
 export { shellExec, shellBackground, processKill, processList, setShellSandbox } from './tools/index.js';
+export { getAgentProcessRegistry, AgentProcessRegistry, type AgentProcess } from './tools/AgentProcessRegistry.js';
+export { TerminalManager, type TerminalSessionInfo, type TerminalOutputChunk } from './tools/TerminalManager.js';
+export { setUiApiInvoker, setUiRouteLister, getUiApiInvoker, getUiRouteLister, type UiApiRequest, type UiApiResponse, type UiRouteInfo } from './tools/UiApiHost.js';
 export { gitStatus, gitDiff, gitLog, gitCommit, gitAdd, gitBranch, gitCheckout, gitStash, gitBlame, gitShow } from './tools/index.js';
 export { codeSearch, codeDefinitions, codeReplace, codeInsert, codeSymbols } from './tools/index.js';
 export { packageInstall, packageRemove, packageList, packageOutdated, packageRun } from './tools/index.js';
@@ -823,3 +858,25 @@ export type {
   ChannelType,
   ChannelEvent,
 } from './observability/index.js';
+
+// ─── Engineering Crew (isolated software-engineering pipeline) ───
+export { EngineeringCrew } from './engineering-crew/EngineeringCrew.js';
+export type { EngineeringCrewResult, EngineeringCrewConfig, SessionContext } from './engineering-crew/EngineeringCrew.js';
+export type { PlanArtifact, PlanPhase, VerificationOutcome, EngineeringCrewMessage, PrdDocument, DesignDocument, TaskList, Task, CodeDocument, TestDocument, RunResult, RoleReactMode } from './engineering-crew/types.js';
+export { CrewMemory, taskListToPhases } from './engineering-crew/types.js';
+export { routeCodingTask } from './engineering-crew/CodingTaskRouter.js';
+export type { RouterDecision, RouterContext, LLMIntentClassifier } from './engineering-crew/CodingTaskRouter.js';
+export { EngineeringCrewStore } from './engineering-crew/EngineeringCrewStore.js';
+export { SubAgentManagerSpawner, ContextAwareSpawner } from './engineering-crew/SubAgentSpawner.js';
+export type { SubAgentSpawner, SpawnResult, SpawnTokenUsage } from './engineering-crew/SubAgentSpawner.js';
+export type { CrewProgressCallback, CrewProgressEvent } from './engineering-crew/CrewEnvironment.js';
+export { ProductManagerRole } from './engineering-crew/ProductManagerRole.js';
+export { ArchitectRole } from './engineering-crew/ArchitectRole.js';
+export { ProjectManagerRole } from './engineering-crew/ProjectManagerRole.js';
+export { EngineerRole } from './engineering-crew/EngineerRole.js';
+export { QaEngineerRole } from './engineering-crew/QaEngineerRole.js';
+export { ReviewerRole } from './engineering-crew/ReviewerRole.js';
+export { ProjectRepo } from './engineering-crew/ProjectRepo.js';
+export { CoderRole } from './engineering-crew/CoderRole.js';
+export { VerifierRole } from './engineering-crew/VerifierRole.js';
+

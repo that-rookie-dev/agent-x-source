@@ -4,6 +4,10 @@ export interface ToolLedgerEntry {
   output: string;
   elapsed: number;
   path?: string;
+  /** Raw shell/build command string, when the tool call carried one (e.g. `shell_exec`). */
+  command?: string;
+  /** Process exit code, when captured (e.g. `shell_exec`'s `ToolResult.metadata.exitCode`). */
+  exitCode?: number;
   timestamp: number;
 }
 

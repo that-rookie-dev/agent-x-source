@@ -6,11 +6,11 @@ export function defaultLocalPort(providerId: string): string {
   return '11434';
 }
 
-/** Build the provider base URL from host + port. LM Studio uses OpenAI-compat `/v1`. */
+/** Build the provider base URL from host + port. Ollama and LM Studio use OpenAI-compat `/v1`. */
 export function buildLocalBaseUrl(providerId: string, host: string, port: string): string {
   const h = (host.trim() || 'localhost').replace(/\/+$/, '');
   const p = (port.trim() || defaultLocalPort(providerId)).replace(/^:/, '');
-  if (providerId === 'lmstudio') return `http://${h}:${p}/v1`;
+  if (providerId === 'lmstudio' || providerId === 'ollama') return `http://${h}:${p}/v1`;
   return `http://${h}:${p}`;
 }
 
