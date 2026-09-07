@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  CompletionRequest,
-  CompletionChunk,
-  ModelInfo,
-  ProviderId,
+import {
+  ollamaNativeBaseUrl,
+  type CompletionRequest,
+  type CompletionChunk,
+  type ModelInfo,
+  type ProviderId,
 } from '@agentx/shared';
 import type { ProviderInterface } from './ProviderInterface.js';
 
@@ -14,7 +15,7 @@ export class OllamaProvider implements ProviderInterface {
   private baseUrl: string;
 
   constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl ?? 'http://localhost:11434';
+    this.baseUrl = ollamaNativeBaseUrl(baseUrl);
   }
 
   async validate(): Promise<boolean> {

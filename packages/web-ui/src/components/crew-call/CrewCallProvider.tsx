@@ -562,6 +562,7 @@ export function CrewCallProvider({ children }: { children: ReactNode }) {
         transcript={transcript}
         elapsedMs={elapsedMs}
         comms={comms}
+        sessionId={sessionId}
         historyHasMore={historyHasMore}
         historyLoading={historyLoading}
         onLoadEarlier={loadEarlierHistory}

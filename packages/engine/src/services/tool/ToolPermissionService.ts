@@ -202,6 +202,11 @@ export class ToolPermissionService {
       return { decision: 'deny', error: 'PERMISSION_DENIED' };
     }
 
+    const permissionExempt = isPermissionExemptTool(toolId, definition?.category);
+    if (permissionExempt) {
+      return { decision: 'allow' };
+    }
+
     const path = scopePath ?? '*';
     const ruleResult = evaluateRules(
       `tool:${toolId}`,
@@ -215,8 +220,7 @@ export class ToolPermissionService {
       return { decision: 'deny', error: 'MODE_RESTRICTED' };
     }
 
-    const permissionExempt = isPermissionExemptTool(toolId);
-    if (permissionExempt || ruleResult === 'allow') {
+    if (ruleResult === 'allow') {
       return { decision: 'allow' };
     }
 

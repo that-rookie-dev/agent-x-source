@@ -704,6 +704,15 @@ export function createAiSdkStreamHandler(
       state.clarificationUsed = false;
       state.deferredEmptyFinalize = false;
       state.toolCallCount = 0;
+      // Also clear the live streaming view — callers that reset() and then feed a fresh
+      // continuation stream into the same handler (see Agent.ts's transition/action/text
+      // continuation blocks) expect this to fully replace the prior turn's text, not append
+      // to it. Without this, `emit({ type: 'stream_chunk', fullContent: ... })` on the next
+      // text-delta would resume from the pre-reset `accumulatedContent` for the *UI*, and —
+      // more importantly — the final persisted message content would silently concatenate
+      // two unrelated model responses with no separator (see docs/engineering-crew/DESIGN.md
+      // Section 2.6).
+      emit({ type: 'stream_clear' });
     },
   };
 }

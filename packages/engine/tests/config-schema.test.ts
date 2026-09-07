@@ -49,6 +49,12 @@ describe('ConfigSchema', () => {
       featureRouting: {
         memoryExtraction: 'local',
         memoryConsolidation: 'local',
+        capabilityGeneration: 'local',
+      },
+      syntheticIntelligence: {
+        enabled: false,
+        allowUserPromptGeneration: true,
+        sandboxMode: 'process',
       },
     };
 
@@ -56,6 +62,7 @@ describe('ConfigSchema', () => {
 
     expect(parsed.localModel).toEqual(config.localModel);
     expect(parsed.featureRouting).toEqual(config.featureRouting);
+    expect(parsed.syntheticIntelligence).toEqual(config.syntheticIntelligence);
     expect(parsed.user).toEqual(config.user);
   });
 

@@ -28,6 +28,8 @@ import {
   useChatSessionSettersContext,
   useChatNavigationHandlersContext,
 } from './ChatSessionProvider';
+import { ChatRunningApps } from './ChatRunningApps';
+import { ChatTerminals } from './ChatTerminals';
 
 export interface ChatRightSidebarProps {
   // Style helpers
@@ -320,6 +322,24 @@ export const ChatRightSidebar = React.memo(function ChatRightSidebar(props: Chat
         </Box>
         )}
       </Box>
+      )}
+
+      {/* ─── Running apps / background processes ─── */}
+      {currentSessionId && (
+        <ChatRunningApps
+          sessionId={currentSessionId}
+          sidebarSectionHeaderWithDividerSx={sidebarSectionHeaderWithDividerSx}
+          sidebarSectionContentSx={sidebarSectionContentSx}
+        />
+      )}
+
+      {/* ─── Terminals (Engineering Crew live debugging) ─── */}
+      {currentSessionId && (
+        <ChatTerminals
+          sessionId={currentSessionId}
+          sidebarSectionHeaderWithDividerSx={sidebarSectionHeaderWithDividerSx}
+          sidebarSectionContentSx={sidebarSectionContentSx}
+        />
       )}
 
       {/* ─── Tasks (live todo_write checklist) ─── */}

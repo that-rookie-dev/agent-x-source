@@ -31,6 +31,7 @@ import {
   applyPerformanceGovernor,
   ArticleStore,
   setArticleStoreInstance,
+  initRuntimeCapabilityManager,
   InMemoryQueue,
   PgBossQueue,
   registerNoOpJobWorkers,
@@ -51,6 +52,9 @@ import {
   type AgentMetricsApi,
   setAdoptionDbPool,
   runAdoptionStartupSweeps,
+  RuntimeCapabilityManager,
+  getRuntimeCapabilityManager,
+  setRuntimeCapabilityManager,
 } from '@agentx/engine';
 import type { AgentXConfig, TelemetryBus, StorageAdapter, ChannelBindingId, ChannelSessionBinding, ClientSituation } from '@agentx/shared';
 import {
@@ -118,6 +122,11 @@ let state: EngineState | null = null;
 let channelsBootstrappedAfterAuth = false;
 /** Optional SSE/log hook while storage connects, migrates, and seeds (setup wizard). */
 let storageProgressCallback: ((line: string) => void) | undefined;
+
+/** Active SI manager, or null while not yet initialized. */
+let siManager: RuntimeCapabilityManager | null = null;
+/** In-flight SI manager init promise so multiple callers share one attempt. */
+let siInitPromise: Promise<RuntimeCapabilityManager | null> | null = null;
 
 /**
  * Adapter that exposes the web-api {@link ApiService.getAgentMetrics} values to
@@ -425,6 +434,9 @@ export function getEngine(): EngineState {
       if (!store) return;
       if (state?.pgPool) {
         setArticleStoreInstance(new ArticleStore(state.pgPool));
+        await ensureSiManager().catch((err) => {
+          getLogger().warn('SI_INIT', err instanceof Error ? err.message : String(err));
+        });
       }
       // Ensure CrewManager is bound to the live adapter (covers deferred→ready swaps).
       if (state) state.crewManager.setStore(store);
@@ -501,6 +513,7 @@ export function getEngine(): EngineState {
     })
     .catch((e) => {
       console.error('Storage connect/migrate failed; crew catalog tables may be unavailable', e);
+      siManager = null;
     });
 
   return state!;
@@ -539,6 +552,61 @@ export async function awaitEngineStorageReady(): Promise<void> {
   await awaitStorageForApi();
 }
 
+async function loadSiManager(eng: EngineState): Promise<RuntimeCapabilityManager | null> {
+  if (eng.storageDeferred) {
+    await eng.storageReady.catch(() => {});
+  }
+  if (!eng.pgPool) return null;
+  let configured = false;
+  try {
+    configured = eng.configManager.isConfigured();
+  } catch {
+    configured = false;
+  }
+  if (!configured) return null;
+  try {
+    const cfg = eng.configManager.load();
+    const mgr = await initRuntimeCapabilityManager({
+      pool: eng.pgPool,
+      config: cfg,
+      toolkit: { registry: eng.toolkit.registry, executor: eng.toolkit.executor },
+    });
+    const { attachCapabilityEventBridge } = await import('../capability-events.js');
+    attachCapabilityEventBridge();
+    // Only adopt this manager if the engine hasn't been swapped out from under us.
+    if (state === eng) siManager = mgr;
+    return mgr;
+  } catch (err) {
+    getLogger().warn('SI_INIT', err instanceof Error ? err.message : String(err));
+    const fallback = getRuntimeCapabilityManager();
+    if (state === eng) siManager = fallback;
+    return fallback;
+  }
+}
+
+/**
+ * Return the current SI manager, initializing it on demand if storage is ready.
+ * Multiple callers share one in-flight init attempt.
+ */
+export async function ensureSiManager(): Promise<RuntimeCapabilityManager | null> {
+  if (siManager) return siManager;
+  if (siInitPromise) return siInitPromise;
+  const eng = getEngine();
+  siInitPromise = loadSiManager(eng).finally(() => {
+    siInitPromise = null;
+  });
+  return siInitPromise;
+}
+
+/**
+ * Wait for the RuntimeCapabilityManager to finish initialization after storage is ready.
+ * Returns null if there is no pool or init failed.
+ */
+export async function awaitSiManager(): Promise<RuntimeCapabilityManager | null> {
+  await awaitStorageForApi();
+  return ensureSiManager();
+}
+
 /** Store the latest client situation from the app UI (location + timezone). */
 export function setCurrentClientSituation(situation: ClientSituation | null): void {
   const eng = getEngine();
@@ -572,6 +640,9 @@ export function setEngineDEK(dek: Buffer | null): void {
     // Update the configured flag now that the DEK is available —
     // encrypted configs become readable after auth.
     state.configured = state.configManager.isConfigured();
+    if (state.configured) {
+      void ensureSiManager().catch(() => {});
+    }
     try {
       if (normalized) {
         applyWebSearchConfigFromAgentConfig(state.configManager.load());
@@ -737,6 +808,9 @@ export async function clearEngineDurable(): Promise<void> {
     state.boundSessionAgents.clear();
   }
   state = null;
+  siManager = null;
+  siInitPromise = null;
+  setRuntimeCapabilityManager(null);
   resetCatalogSeedInflight();
 
   shutdownRoot.span.setAttribute('shutdown.duration_ms', Date.now() - shutdownStart);

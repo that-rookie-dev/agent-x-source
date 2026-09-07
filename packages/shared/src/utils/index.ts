@@ -15,6 +15,7 @@ export * from './paths.js';
 export * from './tokens.js';
 export * from './model-limits.js';
 export * from './commandcode-routing.js';
+export * from './ollama-urls.js';
 export * from './messaging-permission.js';
 export * from './voice-permission.js';
 export * from './validation.js';

@@ -125,7 +125,9 @@ export function bindPermissionHandler(ctx: PermissionContext): void {
   ctx.processPermissionQueue = processQueue;
 
   ctx.toolExecutor.setPermissionRequestHandler(async (toolId, path, riskLevel, context) => {
-    if (isPermissionExemptTool(toolId)) return 'allow_once';
+    const executor = ctx.toolExecutor as { getRegistry?(): { get(id: string): { category?: string } | undefined } } | undefined;
+    const definition = executor?.getRegistry?.()?.get(toolId);
+    if (isPermissionExemptTool(toolId, definition?.category)) return 'allow_once';
     if (ctx.userCancelledTurn || ctx.toolExecutor?.isTurnAborted()) return 'deny';
     const voiceTurn = ctx.toolExecutor?.getVoiceTurnActive?.() === true;
     if (!voiceTurn) {

@@ -199,6 +199,86 @@ async function ensureVoiceVenv(): Promise<string> {
   return venvPy;
 }
 
+const HF_HUB_INSTALL_SPEC = 'huggingface-hub[hf_xet]>=0.28.0';
+
+let downloadRuntimeInstall: Promise<void> | null = null;
+
+async function huggingfaceHubAvailable(): Promise<boolean> {
+  const venvPy = venvPython();
+  if (!existsSync(venvPy)) return false;
+  try {
+    await execVoiceCommand(venvPy, ['-c', 'import huggingface_hub'], {
+      label: 'check-huggingface-hub',
+      timeout: 15_000,
+      env: pythonEnv(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resetCachedVoiceRuntimes(): Promise<void> {
+  voiceState.assetManager = null;
+  voiceState.sidecarManager = null;
+  const { resetVoiceService } = await import('../voice-runtime.js');
+  resetVoiceService();
+}
+
+/**
+ * Ensure a writable voice venv exists and can download Hugging Face assets.
+ * Uses bundled AGENTX_PYTHON_PATH when present. Does not install the full
+ * torch/speechbrain stack — that stays on the Voice kit deploy path.
+ */
+async function ensureVoiceDownloadRuntime(
+  onProgress?: (detail: string, progress: number) => void,
+): Promise<void> {
+  if (await huggingfaceHubAvailable()) {
+    // Recreate so downloads use the venv interpreter, not a stale system python3.
+    voiceState.assetManager = null;
+    return;
+  }
+
+  if (!downloadRuntimeInstall) {
+    downloadRuntimeInstall = (async () => {
+      onProgress?.('Creating voice Python environment…', 2);
+      const venvPy = await ensureVoiceVenv();
+
+      onProgress?.('Installing Hugging Face download tools…', 4);
+      await execVoiceCommand(venvPy, ['-m', 'pip', 'install', '--upgrade', 'pip'], {
+        label: 'pip-upgrade-download-runtime',
+        timeout: 5 * 60_000,
+        env: pythonEnv(),
+      });
+
+      await execVoiceCommand(venvPy, ['-m', 'pip', 'install', HF_HUB_INSTALL_SPEC], {
+        label: 'pip-install-huggingface-hub',
+        timeout: 15 * 60_000,
+        env: pythonEnv(),
+        onOutput: (_stream, line) => {
+          if (line.includes('Collecting') || line.includes('Downloading') || line.includes('Installing')) {
+            onProgress?.(line, 6);
+            voiceInfo('huggingface-hub pip progress', { line });
+          }
+        },
+      });
+
+      await resetCachedVoiceRuntimes();
+
+      if (!(await huggingfaceHubAvailable())) {
+        throw new Error(
+          'Voice Python environment could not install Hugging Face download tools. Check network access and retry.',
+        );
+      }
+      voiceInfo('Voice download runtime ready', { venvPy });
+    })().finally(() => {
+      downloadRuntimeInstall = null;
+    });
+  }
+
+  await downloadRuntimeInstall;
+}
+
 /** Install the sidecar's runtime dependencies into the writable venv. */
 async function installVoiceDependencies(onProgress?: (detail: string, progress: number) => void): Promise<void> {
   onProgress?.('Checking voice virtualenv…', 2);
@@ -236,10 +316,7 @@ async function installVoiceDependencies(onProgress?: (detail: string, progress: 
 
   onProgress?.(lastPipLine || 'Voice engine packages installed', 14);
   voiceInfo('Voice engine packages installed', { venvPy, sidecarPackageDir: SIDE_CAR_PACKAGE_DIR });
-  voiceState.assetManager = null;
-  voiceState.sidecarManager = null;
-  const { resetVoiceService } = await import('../voice-runtime.js');
-  resetVoiceService();
+  await resetCachedVoiceRuntimes();
 }
 
 const voiceJobStatuses = new Map<string, { status: 'pending' | 'running' | 'verifying' | 'complete' | 'error' | 'cancelled'; progress?: number; error?: string; detail?: string; downloadedMB?: number; totalMB?: number }>();
@@ -353,6 +430,7 @@ export {
   venvPython,
   activePython,
   ensureVoiceVenv,
+  ensureVoiceDownloadRuntime,
   installVoiceDependencies,
   voiceJobStatuses,
   voiceState,

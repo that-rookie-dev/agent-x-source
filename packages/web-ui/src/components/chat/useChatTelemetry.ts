@@ -12,6 +12,9 @@ import {
   parseDeepSearchProgressLine,
   parseDeepSearchProgressFromStream,
   deepSearchBundleFromMetadata,
+  parseDownloadProgressLine,
+  parseDownloadProgressFromStream,
+  downloadResultFromMetadata,
   dedupeToolParts,
   appendThinkingDeltaToParts,
   sealTrailingThinkingPart,
@@ -21,7 +24,7 @@ import {
 } from '@agentx/shared/browser';
 import { chat, todos, adoption, type TelemetryEvent, type Crew, type ConnectionState, type CrewSuggestionEvaluation, type IntegrationActionPreview, type TodoItem } from '../../api';
 import type { UIMessage, PartEntry, ToolCall, SubAgent } from '../../chat/types';
-import { upsertDeepSearchPartEntry } from '../../chat/types';
+import { upsertDeepSearchPartEntry, upsertDownloadPartEntry } from '../../chat/types';
 import { updateLastMessage, attachChildSessionToAssistant, isTimeoutWarning, replaceWarning, clearTimeoutWarnings } from './message-helpers';
 import { shouldOfferCrewRosterPicker } from '../../chat/crew-suggestion-flow';
 import { normalizeTodoItems } from '../../chat/todoItems';
@@ -1800,6 +1803,17 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
               });
             }
           }
+          if (matched?.name === 'http_download') {
+            const progress = parseDownloadProgressLine(outputText.trim())
+              ?? parseDownloadProgressFromStream(matched.streamOutput);
+            if (progress) {
+              partsWithSearch = upsertDownloadPartEntry(partsWithSearch, {
+                toolCallId: outputCallId,
+                progress,
+                running: progress.phase !== 'done' && progress.phase !== 'error',
+              });
+            }
+          }
           return updateLastMessage(prev, { toolCalls: newToolCalls, parts: partsWithSearch });
         }
         case 'tool_complete': {
@@ -1873,6 +1887,19 @@ export function useChatTelemetry(params: UseChatTelemetryParams): void {
                 bundle,
                 progress,
                 running: !bundle,
+              });
+            }
+          }
+          if (toolName === 'http_download') {
+            const resolvedId = callId || finalParts.find((p) => p.type === 'tool' && p.tool?.name === 'http_download')?.tool?.id;
+            if (resolvedId) {
+              const result = downloadResultFromMetadata(meta);
+              const progress = (meta?.downloadProgress as import('@agentx/shared/browser').DownloadProgress | undefined);
+              finalParts = upsertDownloadPartEntry(finalParts, {
+                toolCallId: resolvedId,
+                result,
+                progress,
+                running: result ? false : progress?.phase !== 'done' && progress?.phase !== 'error',
               });
             }
           }

@@ -146,7 +146,10 @@ async function fetchWithKeepAlive(input: RequestInfo | URL, init?: RequestInitWi
     port: url.port || (isHttps ? '443' : '80'),
     path: url.pathname + url.search,
     method,
-    headers,
+    headers: {
+      ...(headers['user-agent'] || headers['User-Agent'] ? {} : { 'user-agent': 'Agent-X/1.0' }),
+      ...headers,
+    },
     agent,
     signal: init?.signal ?? undefined,
   };

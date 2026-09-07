@@ -316,6 +316,35 @@ describe('ToolPermissionService', () => {
     expect(result.decision).toBe('allow');
   });
 
+  it('allows save_to_article after a short spoken yes-please', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      id: 'save_to_article',
+      name: 'Save to Articles',
+      description: 'save',
+      modelDescription: 'save',
+      category: 'documents',
+      riskLevel: 'low',
+      schema: { type: 'object', properties: {} },
+      composable: false,
+      source: 'builtin',
+    });
+    const manager = new PermissionManager();
+    manager.setBypassPermissions(false);
+    const service = new ToolPermissionService();
+    const consented = new Set(['save_to_article']);
+    const host = buildHost({
+      getRegistry: () => registry,
+      getPermissionManager: () => manager,
+      getVoiceTurnActive: () => true,
+      getPendingToolConsent: () => consented,
+      getCurrentUserMessage: () => 'Yes, please.',
+    });
+
+    const result = await service.requestPermission(host, 'save_to_article', { title: 'MVP Scope' }, '__channel__:voice');
+    expect(result.decision).toBe('allow');
+  });
+
   it('allows save_to_article when session waived low-risk consent', async () => {
     const registry = new ToolRegistry();
     registry.register({

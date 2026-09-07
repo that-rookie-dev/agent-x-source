@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { getDataDir, getConfigDir, getCacheDir, agentXConfigSchema, voiceConfigSchema, authManager, buildPublicSystemCapabilities, resolvePerformanceSettings, buildPerformanceShowcase, getLogger, normalizeClientSituation, mergeUserConfig, isUserGender } from '@agentx/shared';
 import type { AgentXConfig } from '@agentx/shared';
-import { getEngine, destroyAgent, clearEngine, applyPerformanceSettings, applyAdoptionSettings, setCurrentClientSituation, getCurrentClientSituation } from '../../engine.js';
+import { getEngine, destroyAgent, clearEngine, applyPerformanceSettings, applyAdoptionSettings, setCurrentClientSituation, getCurrentClientSituation, ensureSiManager } from '../../engine.js';
 import { getOrCreateBoundSessionAgent } from '../../engine/agent-lifecycle.js';
 import { getResidentSessionManager } from '@agentx/engine';
 import { isResidentSessionsEnabled } from '@agentx/shared';
@@ -109,6 +109,10 @@ export function createSystemRouter(): Router {
         ...(callsign ? { user: mergeUserConfig(existing.user, patch) } : {}),
       };
       eng.configManager.save(merged);
+      // Config is now complete; start the SI manager if it wasn't initialized earlier.
+      void ensureSiManager().catch((err) => {
+        getLogger().warn('SETUP_COMPLETE', err instanceof Error ? err.message : String(err));
+      });
       res.json({ ok: true, setupComplete: true });
     } catch (err) {
       getLogger().error('POST_API_SETUP_COMPLETE', err instanceof Error ? err : String(err));

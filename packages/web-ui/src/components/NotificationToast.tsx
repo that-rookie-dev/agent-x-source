@@ -1,47 +1,35 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
 import { colors } from '../theme';
+import { notify as storeNotify, getNotifications, subscribe } from '../stores/notifications.js';
 
-interface Toast {
-  id: number;
-  type: 'error' | 'warning' | 'escalation' | 'checkpoint' | 'automation';
-  message: string;
-  timestamp: number;
-}
+export type ToastType = 'error' | 'warning' | 'escalation' | 'checkpoint' | 'automation';
 
-let _addToast: ((t: Omit<Toast, 'id' | 'timestamp'>) => void) | null = null;
-
-export function notify(type: Toast['type'], message: string) {
-  _addToast?.({ type, message });
+export function notify(
+  type: ToastType,
+  message: string,
+  opts?: { persist?: boolean; onClick?: () => void },
+) {
+  storeNotify(type, message, opts);
 }
 
 export function NotificationToast() {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  let nextId = 0;
-
-  const addToast = useCallback((t: Omit<Toast, 'id' | 'timestamp'>) => {
-    const id = nextId++;
-    setToasts(prev => [...prev.slice(-4), { ...t, id, timestamp: Date.now() }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(toast => toast.id !== id));
-    }, 8000);
-  }, []);
+  const [toasts, setToasts] = useState<ReturnType<typeof getNotifications>>([]);
 
   useEffect(() => {
-    _addToast = addToast;
-    return () => { _addToast = null; };
-  }, [addToast]);
+    return subscribe(() => setToasts(getNotifications().filter((n) => !n.skipToast).slice(-4)));
+  }, []);
 
   const dismiss = (id: number) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   if (toasts.length === 0) return null;
 
-  const colorMap: Record<Toast['type'], string> = {
+  const colorMap: Record<ToastType, string> = {
     error: colors.accent.red,
     warning: colors.text.primary,
     escalation: colors.accent.red,
@@ -49,7 +37,7 @@ export function NotificationToast() {
     automation: colors.text.primary,
   };
 
-  const labelMap: Record<Toast['type'], string> = {
+  const labelMap: Record<ToastType, string> = {
     error: 'ERROR',
     warning: 'WARNING',
     escalation: 'ESCALATED',
@@ -64,7 +52,7 @@ export function NotificationToast() {
       pointerEvents: 'none',
       '& > *': { pointerEvents: 'auto' },
     }}>
-      {toasts.map(t => (
+      {toasts.map((t) => (
         <Box key={t.id} sx={{
           p: 1.5, borderRadius: 1,
           bgcolor: colors.bg.secondary,
@@ -74,7 +62,7 @@ export function NotificationToast() {
           animation: 'slideIn 0.3s ease',
           '@keyframes slideIn': { from: { opacity: 0, transform: 'translateY(10px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
         }}>
-          <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }} onClick={t.onClick} style={{ cursor: t.onClick ? 'pointer' : 'default' }}>
             <Typography sx={{ color: colorMap[t.type], fontSize: '0.58rem', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", mb: 0.3, letterSpacing: '0.08em' }}>
               {labelMap[t.type]}
             </Typography>

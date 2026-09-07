@@ -3,6 +3,7 @@ import {
   providerIdSchema,
   localModelConfigSchema,
   featureRoutingConfigSchema,
+  syntheticIntelligenceConfigSchema,
   notificationChannelsConfigSchema,
   toolsConfigSchema,
   voiceConfigSchema,
@@ -143,6 +144,7 @@ export const agentXConfigSchema = z.preprocess(migrateConfigPerformanceKey, z.ob
   voice: voiceConfigSchema,
   localModel: localModelConfigSchema,
   featureRouting: featureRoutingConfigSchema,
+  syntheticIntelligence: syntheticIntelligenceConfigSchema,
   performance: z.object({
     preset: z.preprocess((raw) => {
       if (raw === 'performance') return 'moderate';

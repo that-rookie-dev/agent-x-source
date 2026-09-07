@@ -35,10 +35,12 @@ import {
 } from './host/index.js';
 import { createTelephonyRouter } from './telephony/index.js';
 import { setupTelephonyMediaWebSocket } from './telephony/media-bridge.js';
+import { setupTerminalWebSocket } from './terminal-ws.js';
 import { startVoiceCallRetentionScheduler, stopVoiceCallRetentionScheduler } from './telephony/retention.js';
 import { registerEmbeddedPostgresController } from './pg-lifecycle-bridge.js';
 import { registerAutomationRoutes, bootstrapAutomationFromEngine, shutdownAutomation } from './automation/index.js';
 import { registerArticleRoutes } from './articles-api.js';
+import { registerCapabilityRoutes } from './capabilities-api.js';
 import { initAgentXOverviewBridge, shutdownAgentXOverviewBridge } from './agent-x-overview-bridge.js';
 import { createApiService } from './services/ApiService.js';
 import { getKnowledgeBaseService } from './services/knowledge-base.js';
@@ -57,6 +59,7 @@ import { devRouter } from './routes/observability/dev.js';
 import { loadGlobalDevMode } from './middleware/dev-mode.js';
 import { createPromptBenchmarkRouter } from './routes/prompt-benchmark.js';
 import { createStaticRouter } from './routes/legacy/static.js';
+import { registerInternalUiInvoker } from './internal-ui.js';
 import { DATA_DIR, SESSIONS_DIR, UPLOADS_DIR, UI_DIST } from './api-helpers.js';
 
 const PORT = Number(process.env['AGENTX_PORT'] || process.env['PORT']) || 3333;
@@ -233,6 +236,7 @@ app.use('/api', createHostRouter());
 app.use('/api', createTelephonyRouter());
 registerAutomationRoutes(app);
 registerArticleRoutes(app);
+registerCapabilityRoutes(app);
 
 // New route modules
 app.use('/', healthRouter({ api }));
@@ -306,6 +310,7 @@ const server = createServer(app);
 setupWebSocket(server);
 setupVoiceWebSocket(server);
 setupTelephonyMediaWebSocket();
+setupTerminalWebSocket();
 attachWebSocketUpgradeRouter(server);
 
 export { app, server, registerEmbeddedPostgresController };
@@ -420,6 +425,7 @@ export function startServer(port = PORT): ReturnType<typeof server.listen> {
         );
       }),
     );
+    registerInternalUiInvoker();
     getLogger().info('SERVER', `Agent-X web API listening on ${HOST}:${port} (v${VERSION})`);
     startupSpan.end();
   });

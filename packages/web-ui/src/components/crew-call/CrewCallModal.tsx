@@ -23,6 +23,7 @@ import { LastShownChip } from '../../visual/LastShownChip';
 import { callTheme, formatCallDuration } from './crew-call-theme';
 import { resolveCallParticlePhase } from './resolve-call-particle-phase';
 import type { CrewCallPhase, CrewCallTarget, CrewCallTranscriptLine } from './types';
+import { VoiceDownloadProgress } from './VoiceDownloadProgress';
 
 type Comms = ReturnType<typeof useVoiceCommsSession>;
 
@@ -34,6 +35,7 @@ export interface CrewCallModalProps {
   transcript: CrewCallTranscriptLine[];
   elapsedMs: number;
   comms: Comms;
+  sessionId?: string | null;
   historyHasMore: boolean;
   historyLoading: boolean;
   onLoadEarlier: () => void;
@@ -70,6 +72,7 @@ export function CrewCallModal({
   transcript,
   elapsedMs,
   comms,
+  sessionId,
   historyHasMore,
   historyLoading,
   onLoadEarlier,
@@ -395,6 +398,7 @@ export function CrewCallModal({
               {statusLine}
             </Typography>
           </Box>
+          <VoiceDownloadProgress sessionId={sessionId} />
         </Box>
 
         {/* Transcript */}

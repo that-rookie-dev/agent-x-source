@@ -21,6 +21,13 @@ export const PERMISSION_EXEMPT_AUTOMATION_TOOLS = new Set([
   'automation_list',
 ]);
 
+/** Internal agent-only UI control tools — never shown in the permissions list. */
+export const PERMISSION_EXEMPT_INTERNAL_TOOLS = new Set([
+  'ui_api',
+  'ui_list_routes',
+  'ui_state',
+]);
+
 /** Channel send tools — sending messages and files to the active conversation is a first-class
  * channel capability and should never require a separate permission prompt.
  * The file content is still scoped by the agent's scopePath and the path validation in ToolExecutor.
@@ -41,7 +48,9 @@ export const PERMISSION_EXEMPT_CHANNEL_TOOLS = new Set([
  * Only read/analyze/fetch tools qualify — shell, writes, and integration
  * auth/write tools must always go through the permission flow.
  */
-export function isPermissionExemptTool(toolId: string): boolean {
+export function isPermissionExemptTool(toolId: string, category?: string): boolean {
+  if (category === 'internal') return true;
+  if (PERMISSION_EXEMPT_INTERNAL_TOOLS.has(toolId)) return true;
   if (PERMISSION_EXEMPT_WEB_TOOLS.has(toolId)) return true;
   if (PERMISSION_EXEMPT_AUTOMATION_TOOLS.has(toolId)) return true;
   if (PERMISSION_EXEMPT_CHANNEL_TOOLS.has(toolId)) return true;

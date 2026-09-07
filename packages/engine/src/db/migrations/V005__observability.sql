@@ -4,11 +4,13 @@
 -- DOMAIN SEGREGATION: every row is tagged with `domain` ∈ ('APP','AGENT'):
 --   AGENT = AI/LLM turn lifecycle (turns, journey, llm calls, tool decisions, crew, retrieval)
 --   APP   = normal application operations (HTTP, auth, DB, WebSocket, channels, automation, startup)
+--
+-- This is the final clean baseline. All objects use CREATE ... IF NOT EXISTS.
 
 CREATE SCHEMA IF NOT EXISTS observability;
 
 -- 1. TRACES — one row per turn (AGENT) or per app request/operation (APP)
-CREATE TABLE observability.traces (
+CREATE TABLE IF NOT EXISTS observability.traces (
   trace_id        TEXT PRIMARY KEY,
   root_span_id    TEXT NOT NULL,
   domain          TEXT NOT NULL CHECK(domain IN ('APP','AGENT')) DEFAULT 'AGENT',
@@ -29,13 +31,13 @@ CREATE TABLE observability.traces (
   cost_usd        NUMERIC(12,6) NOT NULL DEFAULT 0
 );
 
-CREATE INDEX idx_traces_session_started ON observability.traces (session_id, started_at DESC);
-CREATE INDEX idx_traces_status_started ON observability.traces (status, started_at DESC);
-CREATE INDEX idx_traces_kind_started ON observability.traces (kind, started_at DESC);
-CREATE INDEX idx_traces_domain_started ON observability.traces (domain, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traces_session_started ON observability.traces (session_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traces_status_started ON observability.traces (status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traces_kind_started ON observability.traces (kind, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_traces_domain_started ON observability.traces (domain, started_at DESC);
 
 -- 2. SPANS — the tree (llm, tool, tool_decision, journey_stage, agent, retrieval, internal)
-CREATE TABLE observability.spans (
+CREATE TABLE IF NOT EXISTS observability.spans (
   span_id         TEXT PRIMARY KEY,
   trace_id        TEXT NOT NULL REFERENCES observability.traces(trace_id) ON DELETE CASCADE,
   parent_span_id  TEXT,
@@ -50,12 +52,12 @@ CREATE TABLE observability.spans (
   events          JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 
-CREATE INDEX idx_spans_trace_started ON observability.spans (trace_id, started_at);
-CREATE INDEX idx_spans_parent ON observability.spans (parent_span_id);
-CREATE INDEX idx_spans_domain ON observability.spans (domain);
+CREATE INDEX IF NOT EXISTS idx_spans_trace_started ON observability.spans (trace_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_spans_parent ON observability.spans (parent_span_id);
+CREATE INDEX IF NOT EXISTS idx_spans_domain ON observability.spans (domain);
 
 -- 3. LOGS — structured, linked to trace/span, tagged by domain
-CREATE TABLE observability.logs (
+CREATE TABLE IF NOT EXISTS observability.logs (
   id           BIGSERIAL PRIMARY KEY,
   trace_id     TEXT,
   span_id      TEXT,
@@ -68,13 +70,13 @@ CREATE TABLE observability.logs (
   payload      JSONB
 );
 
-CREATE INDEX idx_logs_trace_ts ON observability.logs (trace_id, ts);
-CREATE INDEX idx_logs_ts ON observability.logs (ts DESC);
-CREATE INDEX idx_logs_session_ts ON observability.logs (session_id, ts DESC);
-CREATE INDEX idx_logs_domain_ts ON observability.logs (domain, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_trace_ts ON observability.logs (trace_id, ts);
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON observability.logs (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_session_ts ON observability.logs (session_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_domain_ts ON observability.logs (domain, ts DESC);
 
 -- 4. METRIC SAMPLES — time-series for UI charts
-CREATE TABLE observability.metric_samples (
+CREATE TABLE IF NOT EXISTS observability.metric_samples (
   id         BIGSERIAL PRIMARY KEY,
   ts         TIMESTAMPTZ NOT NULL,
   name       TEXT NOT NULL,
@@ -82,11 +84,11 @@ CREATE TABLE observability.metric_samples (
   labels     JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX idx_metrics_name_ts ON observability.metric_samples (name, ts DESC);
-CREATE INDEX idx_metrics_domain_ts ON observability.metric_samples ((labels->>'domain'), ts DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_name_ts ON observability.metric_samples (name, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_domain_ts ON observability.metric_samples ((labels->>'domain'), ts DESC);
 
 -- 5. CONFIG — single row (id=1) with OTLP and alerting settings
-CREATE TABLE observability.config (
+CREATE TABLE IF NOT EXISTS observability.config (
   id                      INT PRIMARY KEY DEFAULT 1 CHECK(id = 1),
   retention_days          INT NOT NULL DEFAULT 30 CHECK(retention_days BETWEEN 1 AND 90),
   capture_prompts         BOOLEAN NOT NULL DEFAULT TRUE,
@@ -104,7 +106,7 @@ CREATE TABLE observability.config (
 INSERT INTO observability.config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 -- 6. Cost analytics rollup (materialized view, refreshed on-demand)
-CREATE MATERIALIZED VIEW observability.cost_rollup_daily AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS observability.cost_rollup_daily AS
   SELECT
     date_trunc('day', started_at)::date              AS day,
     COALESCE(provider, 'unknown')                    AS provider,
@@ -120,11 +122,11 @@ CREATE MATERIALIZED VIEW observability.cost_rollup_daily AS
   GROUP BY 1, 2, 3, 4
   ORDER BY 1 DESC, 2, 3;
 
-CREATE UNIQUE INDEX idx_cost_rollup_daily
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_rollup_daily
   ON observability.cost_rollup_daily (day, provider, model, domain);
 
 -- 7. Alerts — persisted alert events
-CREATE TABLE observability.alerts (
+CREATE TABLE IF NOT EXISTS observability.alerts (
   id          BIGSERIAL PRIMARY KEY,
   triggered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   type        TEXT NOT NULL CHECK(type IN ('error_rate', 'latency_p95')),
@@ -137,5 +139,5 @@ CREATE TABLE observability.alerts (
   resolved_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_alerts_unresolved ON observability.alerts (resolved, triggered_at DESC) WHERE NOT resolved;
-CREATE INDEX idx_alerts_triggered ON observability.alerts (triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON observability.alerts (resolved, triggered_at DESC) WHERE NOT resolved;
+CREATE INDEX IF NOT EXISTS idx_alerts_triggered ON observability.alerts (triggered_at DESC);

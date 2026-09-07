@@ -50,6 +50,15 @@ export {
 } from './utils/deep-search-parts.js';
 export type { DeepSearchPartPayload } from './utils/deep-search-parts.js';
 
+export {
+  upsertDownloadPart,
+  attachDownloadPartsFromTools,
+  parseDownloadProgressFromStream,
+  parseDownloadProgressLine,
+  downloadResultFromMetadata,
+} from './utils/download-parts.js';
+export type { DownloadPartPayload } from './utils/download-parts.js';
+
 export { attachChartPartsFromTools } from './utils/chart-parts.js';
 export { attachVisualPartsFromTools, visualItemFromPart } from './utils/visual-parts.js';
 export {
@@ -454,6 +463,8 @@ export type {
   DeepSearchResultBundle,
   DeepSearchRequest,
 } from './types/deep-search.js';
+
+export type { DownloadProgress, DownloadResult } from './types/download.js';
 
 // Observability types (Phase 5+) — needed by the web-ui observability app.
 export type {

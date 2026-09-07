@@ -1,9 +1,11 @@
--- Core schema: sessions, messages, crews, tokens, tasks, events, persona,
--- emotions, memories, skills, credentials, background tasks.
+-- Core schema: sessions, child_sessions, messages, message_parts, token_logs, checkpoints,
+-- session_crew_states, tool_executions, session_events, permission_rules, agent_tasks, crews,
+-- crew_feedback, turn_feedback, session_resume_state, bot_credentials, agent_persona,
+-- task_snapshots, agent_experiences, agent_growth_state, agent_emotions, agent_emotional_state,
+-- agent_memories, agent_diary, agent_identity, background_tasks.
 --
--- This is the squashed baseline representing the final state of all core
--- tables. No ALTER TABLE migrations needed — all columns are in their final
--- form from creation.
+-- This is the final clean baseline. All objects use CREATE ... IF NOT EXISTS; no historical
+-- ALTER TABLE / DROP TABLE / DROP CONSTRAINT corrections remain.
 
 -- Ensure pgcrypto is available for gen_random_uuid() (built-in on PG 13+).
 DO $$ BEGIN
@@ -14,7 +16,7 @@ END $$;
 
 -- ─── Sessions ───────────────────────────────────────────────────────────────
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL DEFAULT 'New Session',
   provider_id TEXT NOT NULL,
@@ -41,9 +43,9 @@ CREATE TABLE sessions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_sessions_crew_private ON sessions(host_crew_id, context_kind);
+CREATE INDEX IF NOT EXISTS idx_sessions_crew_private ON sessions(host_crew_id, context_kind);
 
-CREATE TABLE child_sessions (
+CREATE TABLE IF NOT EXISTS child_sessions (
   id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   kind TEXT NOT NULL DEFAULT 'sub_agent',
@@ -53,11 +55,11 @@ CREATE TABLE child_sessions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_child_sessions_parent ON child_sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_child_sessions_parent ON child_sessions(parent_session_id);
 
 -- ─── Messages ───────────────────────────────────────────────────────────────
 
-CREATE TABLE messages (
+CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
@@ -75,12 +77,12 @@ CREATE TABLE messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_messages_session ON messages(session_id);
-CREATE INDEX idx_messages_session_created ON messages(session_id, created_at);
-CREATE INDEX idx_messages_session_active ON messages(session_id, created_at) WHERE archived_at IS NULL;
-CREATE INDEX idx_messages_platform_chat_id ON messages(platform_chat_id) WHERE platform_chat_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_session_active ON messages(session_id, created_at) WHERE archived_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_platform_chat_id ON messages(platform_chat_id) WHERE platform_chat_id IS NOT NULL;
 
-CREATE TABLE message_parts (
+CREATE TABLE IF NOT EXISTS message_parts (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   message_id TEXT,
@@ -96,13 +98,13 @@ CREATE TABLE message_parts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_parts_session ON message_parts(session_id);
-CREATE INDEX idx_message_parts_message_id ON message_parts(message_id);
-CREATE INDEX idx_message_parts_session_created ON message_parts(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_parts_session ON message_parts(session_id);
+CREATE INDEX IF NOT EXISTS idx_message_parts_message_id ON message_parts(message_id);
+CREATE INDEX IF NOT EXISTS idx_message_parts_session_created ON message_parts(session_id, created_at);
 
 -- ─── Token logs ─────────────────────────────────────────────────────────────
 
-CREATE TABLE token_logs (
+CREATE TABLE IF NOT EXISTS token_logs (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   message_id TEXT,
@@ -116,11 +118,11 @@ CREATE TABLE token_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_token_logs_session ON token_logs(session_id);
+CREATE INDEX IF NOT EXISTS idx_token_logs_session ON token_logs(session_id);
 
 -- ─── Checkpoints ────────────────────────────────────────────────────────────
 
-CREATE TABLE checkpoints (
+CREATE TABLE IF NOT EXISTS checkpoints (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   label TEXT NOT NULL,
@@ -128,11 +130,11 @@ CREATE TABLE checkpoints (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_checkpoints_session ON checkpoints(session_id);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_session ON checkpoints(session_id);
 
 -- ─── Session crew states ────────────────────────────────────────────────────
 
-CREATE TABLE session_crew_states (
+CREATE TABLE IF NOT EXISTS session_crew_states (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   crew_id TEXT NOT NULL,
@@ -144,11 +146,11 @@ CREATE TABLE session_crew_states (
   UNIQUE(session_id, crew_id)
 );
 
-CREATE INDEX idx_session_crew_states_session ON session_crew_states(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_crew_states_session ON session_crew_states(session_id);
 
 -- ─── Tool executions ────────────────────────────────────────────────────────
 
-CREATE TABLE tool_executions (
+CREATE TABLE IF NOT EXISTS tool_executions (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   agent_task_id TEXT,
@@ -160,24 +162,29 @@ CREATE TABLE tool_executions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_tool_executions_session ON tool_executions(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name ON tool_executions(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_created_at ON tool_executions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_name_created ON tool_executions(tool_name, created_at DESC);
 
 -- ─── Session events ─────────────────────────────────────────────────────────
 
-CREATE TABLE session_events (
+CREATE TABLE IF NOT EXISTS session_events (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   sequence INTEGER NOT NULL,
-  event_type TEXT NOT NULL,
+  event_type TEXT,
   payload TEXT NOT NULL,
+  generation INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_session_events_session ON session_events(session_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_session_events_replay ON session_events(session_id, generation, sequence);
 
 -- ─── Permission rules ───────────────────────────────────────────────────────
 
-CREATE TABLE permission_rules (
+CREATE TABLE IF NOT EXISTS permission_rules (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   action TEXT NOT NULL,
@@ -189,7 +196,7 @@ CREATE TABLE permission_rules (
 
 -- ─── Agent tasks ────────────────────────────────────────────────────────────
 
-CREATE TABLE agent_tasks (
+CREATE TABLE IF NOT EXISTS agent_tasks (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   parent_id TEXT,
@@ -203,11 +210,11 @@ CREATE TABLE agent_tasks (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_agent_tasks_session ON agent_tasks(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
 
 -- ─── Crews ──────────────────────────────────────────────────────────────────
 
-CREATE TABLE crews (
+CREATE TABLE IF NOT EXISTS crews (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL DEFAULT '',
   title TEXT,
@@ -223,21 +230,18 @@ CREATE TABLE crews (
   source TEXT NOT NULL DEFAULT 'custom',
   catalog_id TEXT,
   search_text TEXT NOT NULL DEFAULT '',
+  search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(search_text, ''))) STORED,
   suggestable BOOLEAN NOT NULL DEFAULT TRUE,
   certifications TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- FTS column on crews (generated tsvector)
-ALTER TABLE crews ADD COLUMN search_tsv tsvector
-  GENERATED ALWAYS AS (to_tsvector('english', coalesce(search_text, ''))) STORED;
+CREATE INDEX IF NOT EXISTS idx_crews_tsv ON crews USING GIN (search_tsv);
+CREATE INDEX IF NOT EXISTS idx_crews_source ON crews(source);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_crews_catalog_id ON crews(catalog_id) WHERE catalog_id IS NOT NULL;
 
-CREATE INDEX idx_crews_tsv ON crews USING GIN (search_tsv);
-CREATE INDEX idx_crews_source ON crews(source);
-CREATE UNIQUE INDEX idx_crews_catalog_id ON crews(catalog_id) WHERE catalog_id IS NOT NULL;
-
-CREATE TABLE crew_feedback (
+CREATE TABLE IF NOT EXISTS crew_feedback (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   crew_id TEXT NOT NULL,
@@ -246,11 +250,11 @@ CREATE TABLE crew_feedback (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_crew_feedback_crew ON crew_feedback(crew_id);
+CREATE INDEX IF NOT EXISTS idx_crew_feedback_crew ON crew_feedback(crew_id);
 
 -- ─── Turn feedback ──────────────────────────────────────────────────────────
 
-CREATE TABLE turn_feedback (
+CREATE TABLE IF NOT EXISTS turn_feedback (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   message_id TEXT NOT NULL,
@@ -263,12 +267,12 @@ CREATE TABLE turn_feedback (
   UNIQUE(session_id, message_id)
 );
 
-CREATE INDEX idx_turn_feedback_session ON turn_feedback(session_id);
-CREATE INDEX idx_turn_feedback_crew ON turn_feedback(crew_id);
+CREATE INDEX IF NOT EXISTS idx_turn_feedback_session ON turn_feedback(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_feedback_crew ON turn_feedback(crew_id);
 
 -- ─── Session resume state ───────────────────────────────────────────────────
 
-CREATE TABLE session_resume_state (
+CREATE TABLE IF NOT EXISTS session_resume_state (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
   kind TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -278,7 +282,7 @@ CREATE TABLE session_resume_state (
 
 -- ─── Bot credentials ────────────────────────────────────────────────────────
 
-CREATE TABLE bot_credentials (
+CREATE TABLE IF NOT EXISTS bot_credentials (
   platform TEXT PRIMARY KEY,
   config_enc TEXT NOT NULL,
   iv TEXT NOT NULL,
@@ -287,24 +291,9 @@ CREATE TABLE bot_credentials (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ─── Skills ─────────────────────────────────────────────────────────────────
-
-CREATE TABLE skills (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
-  trigger_patterns_json TEXT NOT NULL DEFAULT '[]',
-  prompt TEXT NOT NULL DEFAULT '',
-  tools_json TEXT NOT NULL DEFAULT '[]',
-  is_bundled INTEGER NOT NULL DEFAULT 0,
-  usage_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- ─── Agent persona ──────────────────────────────────────────────────────────
 
-CREATE TABLE agent_persona (
+CREATE TABLE IF NOT EXISTS agent_persona (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   name TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
@@ -317,7 +306,7 @@ CREATE TABLE agent_persona (
 
 -- ─── Task snapshots ─────────────────────────────────────────────────────────
 
-CREATE TABLE task_snapshots (
+CREATE TABLE IF NOT EXISTS task_snapshots (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   session_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
@@ -330,7 +319,7 @@ CREATE TABLE task_snapshots (
 
 -- ─── Agent growth / emotions / memories ─────────────────────────────────────
 
-CREATE TABLE agent_experiences (
+CREATE TABLE IF NOT EXISTS agent_experiences (
   id TEXT PRIMARY KEY,
   session_id TEXT,
   category TEXT,
@@ -345,7 +334,7 @@ CREATE TABLE agent_experiences (
   created_at TEXT
 );
 
-CREATE TABLE agent_growth_state (
+CREATE TABLE IF NOT EXISTS agent_growth_state (
   id INTEGER PRIMARY KEY DEFAULT 1,
   level TEXT DEFAULT 'Fresh',
   wisdom_score REAL DEFAULT 0,
@@ -359,7 +348,7 @@ CREATE TABLE agent_growth_state (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE agent_emotions (
+CREATE TABLE IF NOT EXISTS agent_emotions (
   id TEXT PRIMARY KEY,
   mood TEXT,
   intensity REAL,
@@ -371,10 +360,10 @@ CREATE TABLE agent_emotions (
   created_at TEXT
 );
 
-CREATE INDEX idx_agent_emotions_source ON agent_emotions(source);
-CREATE INDEX idx_agent_emotions_session ON agent_emotions(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_emotions_source ON agent_emotions(source);
+CREATE INDEX IF NOT EXISTS idx_agent_emotions_session ON agent_emotions(session_id);
 
-CREATE TABLE agent_emotional_state (
+CREATE TABLE IF NOT EXISTS agent_emotional_state (
   id INTEGER PRIMARY KEY DEFAULT 1,
   current_mood TEXT NOT NULL DEFAULT 'neutral',
   mood_intensity REAL NOT NULL DEFAULT 0.3,
@@ -387,7 +376,7 @@ CREATE TABLE agent_emotional_state (
 
 INSERT INTO agent_emotional_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
-CREATE TABLE agent_memories (
+CREATE TABLE IF NOT EXISTS agent_memories (
   id TEXT PRIMARY KEY,
   content TEXT,
   category TEXT,
@@ -395,7 +384,7 @@ CREATE TABLE agent_memories (
   created_at TEXT
 );
 
-CREATE TABLE agent_diary (
+CREATE TABLE IF NOT EXISTS agent_diary (
   id TEXT PRIMARY KEY,
   entry TEXT,
   importance INTEGER,
@@ -404,14 +393,14 @@ CREATE TABLE agent_diary (
   created_at TEXT
 );
 
-CREATE TABLE agent_identity (
+CREATE TABLE IF NOT EXISTS agent_identity (
   id INTEGER PRIMARY KEY DEFAULT 1,
   interaction_count INTEGER DEFAULT 0
 );
 
 -- ─── Background tasks ───────────────────────────────────────────────────────
 
-CREATE TABLE background_tasks (
+CREATE TABLE IF NOT EXISTS background_tasks (
   id TEXT PRIMARY KEY,
   parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   child_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
@@ -430,6 +419,6 @@ CREATE TABLE background_tasks (
   completed_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_background_tasks_parent_session ON background_tasks(parent_session_id);
-CREATE INDEX idx_background_tasks_status ON background_tasks(status);
-CREATE INDEX idx_background_tasks_created_at ON background_tasks(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_parent_session ON background_tasks(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_created_at ON background_tasks(created_at DESC);

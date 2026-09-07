@@ -1,4 +1,4 @@
-import type { ModelCapability, ProviderId } from '@agentx/shared';
+import { ollamaOpenAiBaseUrl, type ModelCapability, type ProviderId } from '@agentx/shared';
 import type { ModalityProbeId, ModalityProbeResult } from './types.js';
 import { humanizeHttpError, humanizeProbeError } from './probe-errors.js';
 
@@ -34,6 +34,7 @@ export interface ModalityProbeConfig {
 type ProbeOutcome = Pick<ModalityProbeResult, 'detected' | 'source' | 'tested' | 'probeStatus' | 'note' | 'details'>;
 
 function openAiBaseUrl(providerId: string, baseUrl?: string): string {
+  if (providerId === 'ollama') return ollamaOpenAiBaseUrl(baseUrl);
   if (baseUrl) return baseUrl.replace(/\/$/, '');
   switch (providerId as ProviderId) {
     case 'groq': return 'https://api.groq.com/openai/v1';

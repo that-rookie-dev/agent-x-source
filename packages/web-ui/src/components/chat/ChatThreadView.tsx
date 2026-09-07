@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
@@ -151,8 +151,18 @@ function ChatThreadViewComponent(props: ChatThreadViewProps) {
     }
     return false;
   }, [deferredVisibleMessagesWithFlags]);
+  // Track message count changes — when a new message is added, use the live
+  // (non-deferred) value so the DOM updates immediately and auto-scroll can
+  // target the true bottom. Without this, useDeferredValue keeps the old
+  // messages visible during the urgent render, the scroll targets the OLD
+  // bottom, and then the deferred render shows new messages — leaving the
+  // user looking at older content instead of the latest message.
+  const prevMsgCountRef = useRef(visibleMessagesWithFlags.length);
+  const msgCountChanged = visibleMessagesWithFlags.length !== prevMsgCountRef.current;
+  if (msgCountChanged) prevMsgCountRef.current = visibleMessagesWithFlags.length;
   const threadMessagesWithFlags = (
     streaming
+    || msgCountChanged
     || (liveTipHasRichDoc && !deferredTipHasRichDoc)
   )
     ? visibleMessagesWithFlags

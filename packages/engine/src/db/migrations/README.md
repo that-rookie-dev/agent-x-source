@@ -9,7 +9,7 @@ migrations are never rolled back, only new ones are added.
 1. **SQL files** live in this directory with the naming convention:
    ```
    V001__descriptive_name.sql
-   V002__add_column_xyz.sql
+   V002__descriptive_name.sql
    ```
    The version number (`V001`, `V002`, ...) determines execution order.
 
@@ -27,31 +27,43 @@ migrations are never rolled back, only new ones are added.
 
 ## Current state
 
-The migrations were squashed into 5 domain-organized files (from the original
-27 incremental migrations). Since there are no production users, the entire
-schema history was collapsed into a clean baseline reflecting the final state
-of all tables — no `ALTER TABLE` corrections or rename migrations.
+The migrations were squashed into 7 domain-organized baselines. Since there are
+no production users, the entire schema history was collapsed into clean final
+files — no `ALTER TABLE` corrections, `DROP TABLE` migrations, or rename
+migrations remain.
 
-- **V001__core** — Sessions, messages, crews, tokens, tasks, events, persona,
-  emotions, memories, skills, credentials, background tasks
-- **V002__crew_catalog** — Crew Hub catalog, app metadata, session preferences
-- **V003__automation_markdown_kb** — Automation, notifications, markdown docs,
-  knowledge base, pgvector, voice state, document templates, document studio
-- **V004__whatsapp** — WhatsApp channel tables
-- **V005__observability** — Observability schema (traces, spans, logs, metrics,
-  OTLP, alerting, cost analytics)
-- **V006__prime_adoption** — Harness, goals, durable turns, session leases,
-  command journal, inter-agent messaging, resident sessions
+- **V001__core** — Sessions, child sessions, messages, message parts, token logs,
+  checkpoints, session crew states, tool executions, session events, permission
+  rules, agent tasks, crews (with inline `search_tsv`), crew feedback, turn
+  feedback, session resume state, bot credentials, agent persona, task snapshots,
+  agent experiences / growth / emotions / memories / diary / identity, and
+  background tasks.
+- **V002__crew_catalog** — Crew Hub catalog (with inline `search_tsv`), app
+  metadata, and session crew preferences.
+- **V003__automation_kb_articles_voice** — Automation tasks / run logs / runs /
+  session confirmations, notifications, articles, knowledge base (with optional
+  pgvector), voice realtime state, document templates, document studio, and
+  voice call / host security tables.
+- **V004__whatsapp** — WhatsApp session, credentials, signal keys, LID mapping,
+  messages, webhooks, webhook failures, standing orders, and contacts.
+- **V005__observability** — Observability schema (traces, spans, logs, metric
+  samples, config, OTLP settings, cost rollup materialized view, and alerts).
+- **V006__prime_adoption** — Harness, harness refinements, session goals,
+  durable turns, turn checkpoints, session leases, command journal, agent
+  messages, session generations, and resident sessions.
+- **V007__capabilities** — Synthetic Intelligence capability store: capabilities,
+  observed patterns, capability audit events, capability gates, capability usage,
+  and capability test cases.
 
 ## Adding a new migration
 
 1. Create a new SQL file with the next version number:
    ```
-   V006__add_new_feature_table.sql
+   V008__new_feature.sql
    ```
 
-2. Write the SQL using `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE ... ADD
-   COLUMN IF NOT EXISTS` for idempotency.
+2. Write the SQL using `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`
+   / `CREATE MATERIALIZED VIEW IF NOT EXISTS` for idempotency.
 
 3. Rebuild the engine:
    ```

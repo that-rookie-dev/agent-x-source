@@ -82,6 +82,7 @@ export type EngineEvent =
   | { type: 'steer_message'; taskId: string; instruction: string }
   | { type: 'reminder_fired'; taskId: string; name: string; message: string }
   | { type: 'background_task_complete'; taskId: string; childSessionId?: string; tokensUsed?: number; elapsedMs?: number; summary: string; instruction?: string; inboundChannel?: string; inboundThreadId?: string; success?: boolean }
+  | { type: 'process_status_changed'; pid: number; command: string; status: 'running' | 'exited' | 'crashed'; exitCode?: number | null; port?: number; startedAgo?: number; logTail?: string }
   | { type: 'subagent_result'; taskId: string; childSessionId: string; tokensUsed: number; elapsedMs: number }
   | { type: 'reasoning_start' }
   | { type: 'reasoning_glimpse'; text: string }
@@ -187,6 +188,7 @@ export type EngineEvent =
   | { type: 'prompt_section_inventory'; sections: Array<{ key: string; layer: string; length: number }> }
   | { type: 'tool_policy_applied'; choice: 'auto' | 'none' | 'required'; allowedIds?: string[]; stepCap: number; category: string; sub?: string }
   | { type: 'verification_gate_triggered'; filePath: string; reason: string }
+  | { type: 'verification_gate_blocked'; reason: string }
   | { type: 'read_before_write_blocked'; filePath: string; reason: string }
   | { type: 'safety_gate_blocked'; operation: string; reason: string }
   | { type: 'completion_finished'; message: string }

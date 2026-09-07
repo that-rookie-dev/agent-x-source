@@ -46,13 +46,15 @@ const SettingsPanel = lazy(() => import('../components/SettingsPanel').then(m =>
 const AutomationPanel = lazy(() => import('../components/AutomationPanel').then(m => ({ default: m.AutomationPanel })));
 const OrchestratorPanel = lazy(() => import('../components/OrchestratorPanel').then(m => ({ default: m.OrchestratorPanel })));
 const CrewsPanel = lazy(() => import('../components/CrewsPanel').then(m => ({ default: m.CrewsPanel })));
+const EngineeringCrewPanel = lazy(() => import('../components/EngineeringCrewPanel').then(m => ({ default: m.EngineeringCrewPanel })));
 const McpStorePage = lazy(() => import('../components/integrations/McpStorePage').then(m => ({ default: m.McpStorePage })));
 const NotificationsPanel = lazy(() => import('../components/NotificationsPanel').then(m => ({ default: m.NotificationsPanel })));
 const ArticlesPanel = lazy(() => import('../components/ArticlesPanel').then(m => ({ default: m.ArticlesPanel })));
 const KnowledgeBasePanel = lazy(() => import('../components/KnowledgeBasePanel').then(m => ({ default: m.KnowledgeBasePanel })));
+const SyntheticPanel = lazy(() => import('../components/SyntheticPanel').then(m => ({ default: m.SyntheticPanel })));
 const CallsPanel = lazy(() => import('../components/calls').then(m => ({ default: m.CallsPanel })));
 
-export type PanelId = 'dashboard' | 'chat' | 'calls' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'orchestrator' | 'crews' | 'mcp-store' | 'notifications' | 'articles' | 'knowledge-base';
+export type PanelId = 'dashboard' | 'chat' | 'calls' | 'agent-x' | 'tools' | 'plugins' | 'settings' | 'automation' | 'orchestrator' | 'crews' | 'engineering-crew' | 'mcp-store' | 'notifications' | 'articles' | 'knowledge-base' | 'synthetic';
 
 // Error boundary to prevent panel crashes from taking down the app
 class PanelErrorBoundary extends Component<{ children: ReactNode }, { error: string | null; stack: string | null }> {
@@ -118,10 +120,12 @@ function PanelSwitch({ activePanel }: { activePanel: PanelId }) {
     case 'automation': return <AutomationPanel />;
     case 'orchestrator': return <OrchestratorPanel />;
     case 'crews': return <CrewsPanel />;
+    case 'engineering-crew': return <EngineeringCrewPanel />;
     case 'mcp-store': return <McpStorePage />;
     case 'notifications': return <NotificationsPanel />;
     case 'articles': return <ArticlesPanel />;
     case 'knowledge-base': return <KnowledgeBasePanel />;
+    case 'synthetic': return <SyntheticPanel />;
     default: return null;
   }
 }

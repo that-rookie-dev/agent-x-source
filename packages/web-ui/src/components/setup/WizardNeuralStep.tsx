@@ -67,6 +67,7 @@ export function WizardNeuralStep({ totalMemoryGB, onReadyChange, onAvailabilityE
       totalMB,
       percentage,
       error: ecapa?.error,
+      detail: ecapa?.detail,
     };
   }, [ecapa]);
 

@@ -50,8 +50,8 @@ export default defineConfig({
   // when bundled into the web-api ESM entry.
   // NOTE: playwright must stay external — it downloads/spawns native Chromium
   // binaries and has a separate child process entry-point built in the engine.
-  noExternal: [/^(?!onnxruntime-|pdfjs-dist|@napi-rs\/keyring|@napi-rs\/canvas|esbuild|@aws-sdk\/client-s3|trafilatura|httpcloak|playwright).*$/],
-  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist', '@napi-rs/keyring', '@napi-rs/canvas', 'esbuild', '@aws-sdk/client-s3', 'trafilatura', 'httpcloak', 'playwright'],
+  noExternal: [/^(?!onnxruntime-|pdfjs-dist|@napi-rs\/keyring|@napi-rs\/canvas|esbuild|@aws-sdk\/client-s3|trafilatura|httpcloak|playwright|@homebridge\/node-pty-prebuilt-multiarch).*$/],
+  external: ['onnxruntime-node', 'onnxruntime-web', 'onnxruntime-common', 'pdfjs-dist', '@napi-rs/keyring', '@napi-rs/canvas', 'esbuild', '@aws-sdk/client-s3', 'trafilatura', 'httpcloak', 'playwright', '@homebridge/node-pty-prebuilt-multiarch'],
   banner: {
     js: "import { createRequire as __bannerCr } from 'module'; const require = __bannerCr(import.meta.url); import { fileURLToPath as __futp } from 'node:url'; import { dirname as __dn } from 'node:path'; const __filename = __futp(import.meta.url); const __dirname = __dn(__filename);",
   },
