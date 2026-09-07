@@ -1,6 +1,9 @@
 /**
  * Terminal tools tests — verifies the terminal_start/terminal_read/terminal_send/
  * terminal_kill/terminal_list tools work correctly for live debugging.
+ *
+ * Live PTY cases are skipped on Windows: node-pty's ConPTY helper aborts the
+ * vitest worker in GitHub Actions (`AttachConsole failed`) even when assertions pass.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { TerminalManager } from '../../src/tools/TerminalManager.js';
@@ -50,7 +53,7 @@ function makeContext(scopePath: string, sessionId = 'test-session'): ToolExecuti
   } as ToolExecutionContext;
 }
 
-describe('TerminalManager', () => {
+describe.skipIf(process.platform === 'win32')('TerminalManager', () => {
   it('starts a terminal and tracks it', async () => {
     const session = manager.start({
       command: 'echo hello',
@@ -115,7 +118,7 @@ describe('TerminalManager', () => {
   });
 });
 
-describe('terminal tools', () => {
+describe.skipIf(process.platform === 'win32')('terminal tools', () => {
   const testSessionId = 'terminal-tools-test';
 
   beforeEach(() => {
@@ -170,6 +173,10 @@ describe('terminal tools', () => {
     expect(killResult.success).toBe(true);
     expect(killResult.output).toContain('killed');
   });
+});
+
+describe('terminal tools validation', () => {
+  const testSessionId = 'terminal-tools-validation';
 
   it('rejects commands outside scope', async () => {
     const ctx = makeContext(join(tmpdir(), 'scoped'), testSessionId);
