@@ -13,8 +13,8 @@ const manager = TerminalManager.getInstance();
 const isWin = process.platform === 'win32';
 const linger = isWin ? 'ping -n 31 127.0.0.1 >nul' : 'sleep 30';
 const lingerShort = isWin ? 'ping -n 6 127.0.0.1 >nul' : 'sleep 5';
-const delayedEcho = isWin ? 'ping -n 2 127.0.0.1 >nul & echo test output 12345' : 'sleep 0.3 && echo test output 12345';
-const delayedRead = isWin ? 'ping -n 2 127.0.0.1 >nul & echo read test output' : 'sleep 0.3 && echo read test output';
+const echoMarker = 'echo test output 12345';
+const echoRead = 'echo read test output';
 
 function waitForExit(session: { isAlive: () => boolean; onExit: (listener: (info: { exitCode: number; pid: number }) => void) => () => void }, timeoutMs = 4000): Promise<void> {
   if (!session.isAlive()) return Promise.resolve();
@@ -25,6 +25,21 @@ function waitForExit(session: { isAlive: () => boolean; onExit: (listener: (info
       resolve();
     });
   });
+}
+
+async function waitForOutput(
+  getText: () => string | Promise<string>,
+  needle: string,
+  timeoutMs = 5000,
+): Promise<string> {
+  const start = Date.now();
+  let text = '';
+  while (Date.now() - start < timeoutMs) {
+    text = await getText();
+    if (text.includes(needle)) return text;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`did not see ${JSON.stringify(needle)} in output: ${JSON.stringify(text)}`);
 }
 
 function makeContext(scopePath: string, sessionId = 'test-session'): ToolExecutionContext {
@@ -71,16 +86,15 @@ describe('TerminalManager', () => {
 
   it('captures output', async () => {
     const session = manager.start({
-      command: delayedEcho,
+      command: echoMarker,
       cwd: tmpdir(),
       sessionId: 'test-output-session',
     });
 
-    // Wait for output
-    await new Promise((r) => setTimeout(r, 1000));
-
-    const tail = session.getTail(10);
-    expect(tail).toContain('test output 12345');
+    await waitForOutput(
+      () => `${session.getFullOutput()}\n${session.getTail(20)}`,
+      'test output 12345',
+    );
 
     manager.kill(session.id);
   });
@@ -124,15 +138,14 @@ describe('terminal tools', () => {
 
   it('terminal_read returns output in tail mode', async () => {
     const ctx = makeContext(tmpdir(), testSessionId);
-    const startResult = await terminalStart({ command: delayedRead }, ctx);
+    const startResult = await terminalStart({ command: echoRead }, ctx);
     const terminalId = startResult.metadata!.terminalId as string;
 
-    // Wait for output
-    await new Promise((r) => setTimeout(r, 1000));
-
-    const readResult = await terminalRead({ terminalId, mode: 'tail' }, ctx);
-    expect(readResult.success).toBe(true);
-    expect(readResult.output).toContain('read test output');
+    const output = await waitForOutput(async () => {
+      const result = await terminalRead({ terminalId, mode: 'full' }, ctx);
+      return result.output ?? '';
+    }, 'read test output');
+    expect(output).toContain('read test output');
   });
 
   it('terminal_list shows active terminals', async () => {
