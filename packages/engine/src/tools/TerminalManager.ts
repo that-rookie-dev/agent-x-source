@@ -115,6 +115,7 @@ class TerminalSession {
       const lines = data.split('\n');
       for (const line of lines) {
         // Strip ANSI escape sequences for the tail preview
+        // eslint-disable-next-line no-control-regex -- strip ANSI CSI and OSC sequences from tail preview
         const clean = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
         if (clean.trim()) {
           this.tailLines.push(clean);

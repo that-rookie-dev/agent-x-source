@@ -42,6 +42,7 @@ function sanitizeArgs(args: Record<string, unknown>, maxBytes = 32_768): Record<
   } catch {
     return {};
   }
+  // eslint-disable-next-line no-control-regex -- strip C0 control characters from sandbox args
   raw = raw.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
   if (raw.length > maxBytes) {
     throw new Error(`Sandbox arguments exceed ${maxBytes} bytes`);
@@ -59,6 +60,7 @@ function truncate(text: string, max: number): string {
 }
 
 function stripBinary(text: string): string {
+  // eslint-disable-next-line no-control-regex -- strip C0 control characters from sandbox output
   return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
 }
 

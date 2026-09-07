@@ -31,7 +31,7 @@ const MAX_REDIRECTS = 10;
  */
 async function fetchWithRedirects(input: string | URL | Request, init?: RequestInit, maxRedirects = MAX_REDIRECTS): Promise<Response> {
   let currentInput = input;
-  let currentInit = init ? { ...init } : undefined;
+  const currentInit = init ? { ...init } : undefined;
   let redirects = 0;
 
   while (true) {

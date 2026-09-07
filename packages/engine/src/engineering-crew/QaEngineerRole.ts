@@ -49,7 +49,7 @@ function isBlockedCommand(command: string): boolean {
     /\brm\s+-[rf].*\s+\//i,
     /\bmkfs\b/i,
     /\bdd\s+if=/i,
-    /[>\|]\s*\/dev\/[sh]d[a-z]/i,
+    /[>|]\s*\/dev\/[sh]d[a-z]/i,
     /\bcurl\s+.*\s*\|\s*(ba)?sh/i,
     /\bwget\s+.*\s*\|\s*(ba)?sh/i,
     /\bshutdown\b/i,
